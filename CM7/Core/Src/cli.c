@@ -1,8 +1,18 @@
+/* includes */
 #include "cmsis_os.h"
 #include <string.h>
 #include <stdio.h>
 #include "cli.h"
 #include "stm32h7xx_ll_usart.h"
+#include "netif.h"
+#include "sockets.h"
+#include "ip_addr.h"
+
+/* variables */
+extern struct netif gnetif;
+
+/* functions definitions */
+static int get_network_info(char *buffer);
 
 
 /*
@@ -18,21 +28,21 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
         case '\r':
             if (cli->cmd_len) {
                 /* try to execute command */
-                if (strncmp(cli->cmd_buffer, "status", 6) == 0) {
+                if (strncmp(cli->cmd_buffer, "status", strlen(cli->cmd_buffer)) == 0) {
                     cli->response_buffer[0] = '\r'; cli->response_buffer[1] = '\n';
                     vTaskList(cli->response_buffer + 2);
                     cli->response_len = strlen(cli->response_buffer) + 2;
                     if (cli->response_len < 0)
                         res = 1;
-                } else if (strncmp(cli->cmd_buffer, "?", 1) == 0) {
+                } else if (strncmp(cli->cmd_buffer, "?", strlen(cli->cmd_buffer)) == 0) {
                     /* print to response buffer all available commands */
                     cli->response_len = sprintf(cli->response_buffer, 
                         "\r\nstatus - print system status\r\n"
                         "ip     - ip subcommands\r\n"
                         "?      - print available commands\r\n"
                     );
-                } else if (strncmp(cli->cmd_buffer, "ip", 2) == 0) {
-                    cli->response_len = sprintf(cli->response_buffer, "\r\nnot implemented\r\n");
+                } else if (strncmp(cli->cmd_buffer, "ip", strlen(cli->cmd_buffer)) == 0) {
+                    cli->response_len = get_network_info(cli->response_buffer);
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, "\r\nunknown command - %s\r\n", cli->cmd_buffer);
                 }
@@ -51,6 +61,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
             break;
         case '\t':
             /* try to print available commands based on the current input */
+            res = 1;
             break;
         default:
             if (c >= 32 && c <= 126) {
@@ -72,4 +83,35 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
     }
 
     return res;
+}
+
+/*
+ * it is implemented with temp variable and memcpy
+ * because ip4addr_ntoa has static local variable which gets overwritten
+ * with the latest argument passted to the function
+ * if a ip4addr_ntoa call placed inside of the sprintf multiple times.
+ */
+static int get_network_info(char *buffer) {
+    char ip_addr[16] = {0};
+    char netmask[16] = {0};
+    char gw[16] = {0};
+    char *temp = NULL;
+
+    if (netif_is_up(&gnetif)) {
+        /* copy ip addr */
+        temp = ip4addr_ntoa(&gnetif.ip_addr);
+        memcpy(ip_addr, temp, strlen(temp));
+
+        /* copy netmask */
+        temp = ip4addr_ntoa(&gnetif.netmask);
+        memcpy(netmask, temp, strlen(temp));
+
+        /* copy gateway */
+        temp = ip4addr_ntoa(&gnetif.gw);
+        memcpy(gw, temp, strlen(temp));
+
+        return sprintf(buffer, "\r\nEth0 is up\r\nIP addr: %s\r\nNetmask: %s\r\nGateway: %s\r\n", ip_addr, netmask, gw);
+    } else {
+        return sprintf(buffer, "\r\nEth0 is down\r\n");
+    }
 }
