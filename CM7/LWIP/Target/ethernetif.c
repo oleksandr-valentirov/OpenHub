@@ -55,6 +55,7 @@
 /* ETH_RX_BUFFER_SIZE parameter is defined in lwipopts.h */
 
 /* USER CODE BEGIN 1 */
+
 /* USER CODE END 1 */
 
 /* Private variables ---------------------------------------------------------*/
@@ -102,15 +103,15 @@ static uint8_t RxAllocStatus;
 
 #if defined ( __ICCARM__ ) /*!< IAR Compiler */
 
-#pragma location=0x30040000
+#pragma location=0x30000000
 ETH_DMADescTypeDef  DMARxDscrTab[ETH_RX_DESC_CNT]; /* Ethernet Rx DMA Descriptors */
-#pragma location=0x30040060
+#pragma location=0x30000080
 ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptors */
 
 #elif defined ( __CC_ARM )  /* MDK ARM Compiler */
 
-__attribute__((at(0x30040000))) ETH_DMADescTypeDef  DMARxDscrTab[ETH_RX_DESC_CNT]; /* Ethernet Rx DMA Descriptors */
-__attribute__((at(0x30040060))) ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptors */
+__attribute__((at(0x30000000))) ETH_DMADescTypeDef  DMARxDscrTab[ETH_RX_DESC_CNT]; /* Ethernet Rx DMA Descriptors */
+__attribute__((at(0x30000080))) ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptors */
 
 #elif defined ( __GNUC__ ) /* GNU Compiler */
 
@@ -120,7 +121,7 @@ ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT] __attribute__((section(".TxDecr
 #endif
 
 #if defined ( __ICCARM__ ) /*!< IAR Compiler */
-#pragma location = 0x30040200
+#pragma location = 0x30000100
 extern u8_t memp_memory_RX_POOL_base[];
 
 #elif defined ( __CC_ARM ) /* MDK ARM Compiler */
@@ -131,10 +132,16 @@ __attribute__((section(".Rx_PoolSection"))) extern u8_t memp_memory_RX_POOL_base
 #endif
 
 /* USER CODE BEGIN 2 */
-ETH_DMADescTypeDef DMARxDscrTab[ETH_RX_DESC_CNT] __attribute__((section(".RxDecripSection"))); /* Ethernet Rx DMA Descriptors */
-ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT] __attribute__((section(".TxDecripSection")));   /* Ethernet Tx DMA Descriptors */
-uint8_t Rx_Buff[ETH_RX_DESC_CNT][ETH_RX_BUFFER_SIZE] __attribute__((section(".RxArraySection"))); 
+#if defined ( __ICCARM__ ) /*!< IAR Compiler */
+#pragma location = 0x30040200
+extern u8_t memp_memory_RX_POOL_base[];
 
+#elif defined ( __CC_ARM )  /* MDK ARM Compiler */
+__attribute__((at(0x30040200))) extern u8_t memp_memory_RX_POOL_base[];
+
+#elif defined ( __GNUC__ ) /* GNU Compiler */
+__attribute__((section(".Rx_PoolSection"))) extern u8_t memp_memory_RX_POOL_base[];
+#endif
 /* USER CODE END 2 */
 
 osSemaphoreId RxPktSemaphore = NULL;   /* Semaphore to signal incoming packets */
@@ -677,9 +684,6 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef* ethHandle)
     GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
     HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
-    /* Peripheral interrupt init */
-    HAL_NVIC_SetPriority(ETH_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(ETH_IRQn);
   /* USER CODE BEGIN ETH_MspInit 1 */
 
   /* USER CODE END ETH_MspInit 1 */
@@ -716,9 +720,6 @@ void HAL_ETH_MspDeInit(ETH_HandleTypeDef* ethHandle)
     HAL_GPIO_DeInit(GPIOB, GPIO_PIN_13);
 
     HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11|GPIO_PIN_13);
-
-    /* Peripheral interrupt Deinit*/
-    HAL_NVIC_DisableIRQ(ETH_IRQn);
 
   /* USER CODE BEGIN ETH_MspDeInit 1 */
 

@@ -4,15 +4,32 @@
 #include <stdio.h>
 #include "cli.h"
 #include "stm32h7xx_ll_usart.h"
-#include "netif.h"
-#include "sockets.h"
-#include "ip_addr.h"
+#include "networking.h"
 
 /* variables */
-extern struct netif gnetif;
+
 
 /* functions definitions */
 static int get_network_info(char *buffer);
+
+
+void CLI_Task(void const * argument) {
+    UNUSED(argument);
+    cli_data_t cli;
+
+    memset(&cli, 0, sizeof(cli_data_t));
+    for (;;) {
+        if (CLI_ProcessCmd(&cli, (char)getchar()) || cli.response_len <= 0) {
+            /* log an error */
+        } else {
+            for (uint8_t i = 0; i < cli.response_len; i++) {
+                putchar(cli.response_buffer[i]);
+            }
+            fflush(stdout);
+        }
+        osDelay(25);
+    }
+}
 
 
 /*
@@ -85,6 +102,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
     return res;
 }
 
+
 /*
  * it is implemented with temp variable and memcpy
  * because ip4addr_ntoa has static local variable which gets overwritten
@@ -97,18 +115,12 @@ static int get_network_info(char *buffer) {
     char gw[16] = {0};
     char *temp = NULL;
 
-    if (netif_is_up(&gnetif)) {
+    if (0) {
         /* copy ip addr */
-        temp = ip4addr_ntoa(&gnetif.ip_addr);
-        memcpy(ip_addr, temp, strlen(temp));
 
         /* copy netmask */
-        temp = ip4addr_ntoa(&gnetif.netmask);
-        memcpy(netmask, temp, strlen(temp));
 
         /* copy gateway */
-        temp = ip4addr_ntoa(&gnetif.gw);
-        memcpy(gw, temp, strlen(temp));
 
         return sprintf(buffer, "\r\nEth0 is up\r\nIP addr: %s\r\nNetmask: %s\r\nGateway: %s\r\n", ip_addr, netmask, gw);
     } else {

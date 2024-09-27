@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "cli.h"
 #include <string.h>
+#include "lwip/udp.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +53,7 @@ COM_InitTypeDef BspCOMInit;
 
 osThreadId defaultTaskHandle;
 osThreadId cliTaskHandle;
-uint32_t cliTaskBuffer[ 1024 ];
+uint32_t cliTaskBuffer[ 512 ];
 osStaticThreadDef_t cliTaskControlBlock;
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
@@ -63,7 +64,7 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_UART4_Init(void);
 void StartDefaultTask(void const * argument);
-void CLITask(void const * argument);
+extern void CLI_Task(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -166,11 +167,11 @@ Error_Handler();
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of cliTask */
-  osThreadStaticDef(cliTask, CLITask, osPriorityIdle, 0, 1024, cliTaskBuffer, &cliTaskControlBlock);
+  osThreadStaticDef(cliTask, CLI_Task, osPriorityIdle, 0, 512, cliTaskBuffer, &cliTaskControlBlock);
   cliTaskHandle = osThreadCreate(osThread(cliTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -390,45 +391,32 @@ void StartDefaultTask(void const * argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
+  const char* message = "Hello UDP message!\n\r";
+
+  osDelay(1000);
+
+  ip_addr_t PC_IPADDR;
+  IP_ADDR4(&PC_IPADDR, 192, 168, 88, 1);
+
+  struct udp_pcb* my_udp = udp_new();
+  udp_connect(my_udp, &PC_IPADDR, 55151);
+  struct pbuf* udp_buffer = NULL;
   /* Infinite loop */
   for(;;) {
-    BSP_LED_Toggle(LED_GREEN);
-    osDelay(500);
+    osDelay(1000);
+    /* !! PBUF_RAM is critical for correct operation !! */
+    udp_buffer = pbuf_alloc(PBUF_TRANSPORT, strlen(message), PBUF_RAM);
+
+    if (udp_buffer != NULL) {
+      // printf("p ref %i\r\n", udp_buffer->ref);
+      memcpy(udp_buffer->payload, message, strlen(message));
+      udp_send(my_udp, udp_buffer);
+      pbuf_free(udp_buffer);
+    } else {
+      printf("failed\r\n");
+    }
   }
   /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_CLITask */
-/**
-* @brief Function implementing the cliTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_CLITask */
-void CLITask(void const * argument)
-{
-  /* USER CODE BEGIN CLITask */
-  cli_data_t cli;
-
-  memset(&cli, 0, sizeof(cli_data_t));
-  /* Infinite loop */
-  for(;;) {
-    if (CLI_ProcessCmd(&cli, (char)getchar()) || cli.response_len <= 0) {
-      if (cli.response_len < 0) {
-        if(0) {
-          /* log an error */
-        }
-      }
-    } else {
-      for (uint8_t i = 0; i < cli.response_len; i++) {
-        putchar(cli.response_buffer[i]);
-      }
-      fflush(stdout);
-    }
-
-    osDelay(25);
-  }
-  /* USER CODE END CLITask */
 }
 
  /* MPU Configuration */
@@ -441,13 +429,18 @@ void MPU_Config(void)
 
   /** Initializes and configures the Region and the memory to be protected
   */
-  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER0, 0x0, 0x30040000, LL_MPU_REGION_SIZE_32KB|LL_MPU_TEX_LEVEL1|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_NOT_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
+  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER0, 0x87, 0x0, LL_MPU_REGION_SIZE_4GB|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_NO_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
   LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER0);
 
   /** Initializes and configures the Region and the memory to be protected
   */
-  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER1, 0x0, 0x30040000, LL_MPU_REGION_SIZE_256B|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_BUFFERABLE);
+  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER1, 0x0, 0x30020000, LL_MPU_REGION_SIZE_128KB|LL_MPU_TEX_LEVEL1|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_NOT_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
   LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER1);
+
+  /** Initializes and configures the Region and the memory to be protected
+  */
+  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER2, 0x0, 0x30040000, LL_MPU_REGION_SIZE_512B|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
+  LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER2);
   /* Enables the MPU */
   LL_MPU_Enable(LL_MPU_CTRL_PRIVILEGED_DEFAULT);
 

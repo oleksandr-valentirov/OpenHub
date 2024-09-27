@@ -15,8 +15,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ./Core/Inc
     ./LWIP/App
     ./LWIP/Target
-    ../Middlewares/Third_Party/wolfSSL_wolfSSL_wolfSSL/wolfssl/
-    ../Middlewares/Third_Party/wolfSSL_wolfSSH_wolfSSH/wolfssh/
     ../Middlewares/Third_Party/LwIP/src/include
     ../Middlewares/Third_Party/LwIP/system
     ../Drivers/STM32H7xx_HAL_Driver/Inc

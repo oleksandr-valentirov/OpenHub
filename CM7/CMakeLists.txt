@@ -51,15 +51,12 @@ set(CMAKE_CXX_COMPILER_FORCED "true")
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
     # Add user defined symbols
+    DATA_IN_D2_SRAM
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
-    USB_DEVICE/App
-    USB_DEVICE/Target
-    # ../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/inc
-    ../Middlewares/ST/STM32_USB_Device_Library/Core/inc
 )
 
 # Add sources to executable
@@ -67,6 +64,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/cli.c
     Core/Src/newlib_stubs.c
+    Core/Src/networking.c
 )
 
 # Link directories setup
