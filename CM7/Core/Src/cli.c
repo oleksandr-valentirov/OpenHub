@@ -5,12 +5,16 @@
 #include "cli.h"
 #include "stm32h7xx_ll_usart.h"
 #include "networking.h"
+#include "netif.h"
 
 /* variables */
-
+const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
+const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
+extern struct netif gnetif;
 
 /* functions definitions */
 static int get_network_info(char *buffer);
+static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
 
 
 void CLI_Task(void const * argument) {
@@ -38,30 +42,50 @@ void CLI_Task(void const * argument) {
  */
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
     uint8_t res = 0;
+    char *strtok_temp = NULL;
 
     cli->response_len = 0;
     switch (c) {
         case '\n':
         case '\r':
-            if (cli->cmd_len) {
+            strtok_temp = strtok(cli->cmd_buffer, " ");
+            if (cli->cmd_len && strtok_temp != NULL) {
                 /* try to execute command */
-                if (strncmp(cli->cmd_buffer, "status", strlen(cli->cmd_buffer)) == 0) {
+                if (strncmp(strtok_temp, "status", strlen("status")) == 0 && strtok(NULL, " ") == NULL) {
                     cli->response_buffer[0] = '\r'; cli->response_buffer[1] = '\n';
                     vTaskList(cli->response_buffer + 2);
                     cli->response_len = strlen(cli->response_buffer) + 2;
                     if (cli->response_len < 0)
                         res = 1;
-                } else if (strncmp(cli->cmd_buffer, "?", strlen(cli->cmd_buffer)) == 0) {
+                } else if (strncmp(strtok_temp, "?", strlen("?")) == 0 && strtok(NULL, " ") == NULL) {
                     /* print to response buffer all available commands */
                     cli->response_len = sprintf(cli->response_buffer, 
-                        "\r\nstatus - print system status\r\n"
-                        "ip     - ip subcommands\r\n"
-                        "?      - print available commands\r\n"
+                        "\r\nstatus\t\t\t- print system status\r\n"
+                        "ip [set]\t\t- ip subcommands\r\n"
+                        "cfg <save | load>\t- cfg subcommand\r\n"
+                        "?\t\t\t- print available commands\r\n"
                     );
-                } else if (strncmp(cli->cmd_buffer, "ip", strlen(cli->cmd_buffer)) == 0) {
-                    cli->response_len = get_network_info(cli->response_buffer);
+                } else if (strncmp(strtok_temp, "ip", strlen("ip")) == 0) {
+                    strtok_temp = strtok(NULL, " ");
+                    if (strtok_temp == NULL)
+                        cli->response_len = get_network_info(cli->response_buffer);
+                    else if (strncmp(strtok_temp, "set", strlen("set")) == 0)
+                        cli->response_len = set_server_ip_addr(strtok(NULL, " "), strtok(NULL, " "), strtok(NULL, " "), cli->response_buffer);
+                } else if (strncmp(strtok_temp, "cfg", strlen("cfg")) == 0) {
+                    strtok_temp = strtok(NULL, " ");
+                    if (strncmp(strtok_temp, "save", strlen("save")) == 0) {
+                        cli->response_len = sprintf(cli->response_buffer, not_implemented_msg);
+                    } else if (strncmp(strtok_temp, "load", strlen("load")) == 0) {
+                        cli->response_len = sprintf(cli->response_buffer, not_implemented_msg);
+                    } else {
+                        cli->response_len = sprintf(cli->response_buffer,
+                            "\r\ncfg <save | load>\r\n"
+                            "save - saves current config to the pre-defined memory section\r\n"
+                            "load - loads config from the pre-defined memory section\r\n"
+                        );
+                    }
                 } else {
-                    cli->response_len = sprintf(cli->response_buffer, "\r\nunknown command - %s\r\n", cli->cmd_buffer);
+                    cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                 }
                 if (cli->response_len < 0)
                     res = 1;
@@ -109,21 +133,51 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
  * with the latest argument passted to the function
  * if a ip4addr_ntoa call placed inside of the sprintf multiple times.
  */
-static int get_network_info(char *buffer) {
+static int get_network_info(char *resp_buffer) {
     char ip_addr[16] = {0};
     char netmask[16] = {0};
     char gw[16] = {0};
     char *temp = NULL;
 
-    if (0) {
-        /* copy ip addr */
+    /* copy ip addr */
+    temp = ip4addr_ntoa(&gnetif.ip_addr);
+    memcpy(ip_addr, temp, strlen(temp));
+    /* copy netmask */
+    temp = ip4addr_ntoa(&gnetif.netmask);
+    memcpy(netmask, temp, strlen(temp));
+    /* copy gateway */
+    temp = ip4addr_ntoa(&gnetif.gw);
+    memcpy(gw, temp, strlen(temp));
 
-        /* copy netmask */
+    return sprintf(resp_buffer, "\r\nIP addr: %s\r\nNetmask: %s\r\nGateway: %s\r\n", ip_addr, netmask, gw);
+}
 
-        /* copy gateway */
+static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer) {
+    int resp_len = 0;
+    uint8_t server_num_int = 0;
 
-        return sprintf(buffer, "\r\nEth0 is up\r\nIP addr: %s\r\nNetmask: %s\r\nGateway: %s\r\n", ip_addr, netmask, gw);
+    if (server_num && strlen(server_num) <= 3 && server_num[0] == 's' && server_num[1] >= '0' && server_num[1] <= '2' && addr && name) {
+        server_num_int = server_num[1] - 48;
+
+        if (ip4addr_aton(addr, &(servers[server_num_int].ip)) == 0)
+            return sprintf(resp_buffer, "\r\nError: failed to convert IP address.\r\n");
+
+        if (strlen(name) <= USER_SERVER_NAME_LEN) {
+            for (uint8_t i = 0; i < USER_SERVER_NAME_LEN; i++)
+                servers[server_num_int].name[i] = name[i];
+        } else
+            return sprintf(resp_buffer, "\r\nError: Server name length ios bigger the %i chars.\r\n", USER_SERVER_NAME_LEN);
+
     } else {
-        return sprintf(buffer, "\r\nEth0 is down\r\n");
+        resp_len = sprintf(resp_buffer,
+            "\r\nip set s<server num> <ip> <name>\r\n"
+            "ip set s0 192.168.88.37 my_main_server\r\n"
+            "subcommand sets IP address of remote server\r\n\r\n"
+            "server num - number of a server, range is [0 - 5]\r\n"
+            "ip         - server IP address\r\n"
+            "name       - server name WITHOUT spaces\r\n"
+        );
     }
+
+    return resp_len;
 }
