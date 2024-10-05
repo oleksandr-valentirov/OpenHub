@@ -6,15 +6,18 @@
 #include "stm32h7xx_ll_usart.h"
 #include "networking.h"
 #include "netif.h"
+#include "stm32h7xx_hal_cryp.h"
 
 /* variables */
 const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
 const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
 extern struct netif gnetif;
+extern CRYP_HandleTypeDef hcryp;
 
 /* functions definitions */
 static int get_network_info(char *buffer);
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
+static int encrypt_data(char *data, char* key, char *resp_buffer);
 
 
 void CLI_Task(void const * argument) {
@@ -84,6 +87,8 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                             "load - loads config from the pre-defined memory section\r\n"
                         );
                     }
+                } else if (strncmp(strtok_temp, "encrypt", strlen("encrypt")) == 0) {
+                    cli->response_len = encrypt_data(strtok(NULL, " "), strtok(NULL, " "), cli->response_buffer);
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                 }
@@ -180,4 +185,30 @@ static int set_server_ip_addr(char *server_num, char *addr, char *name, char *re
     }
 
     return resp_len;
+}
+
+static int encrypt_data(char *data, char* key, char *resp_buffer) {
+    UNUSED(key);
+    size_t data_len = strlen(data);
+    uint8_t output[64];
+    HAL_StatusTypeDef status = HAL_OK;
+
+    if (data_len > 64)
+        return sprintf(resp_buffer, "%s: text is longer than 64 bytes\r\n", __func__);
+
+    switch (hcryp.State) {
+        case HAL_CRYP_STATE_BUSY:
+            return sprintf(resp_buffer, "%s: CRYP is busy\r\n", __func__);
+        case HAL_CRYP_STATE_RESET:
+            return sprintf(resp_buffer, "%s: CRYP not yet initialized or disabled\r\n", __func__);
+        case HAL_CRYP_STATE_READY:
+            status = HAL_CRYP_Encrypt(&hcryp, (uint32_t*)data, (uint16_t)data_len, (uint32_t *)output, 1000);
+            if (status != HAL_OK)
+                return sprintf(resp_buffer, "%s: HAL_CRYP_Encrypt bad status %i\r\n", __func__, status);
+            break;
+        default:
+            return sprintf(resp_buffer, "%s: not implemented hcryp.State %i\r\n", __func__, hcryp.State);
+    }
+
+    return sprintf(resp_buffer, "\r\noutput>>%s\r\n", (char *)output);
 }

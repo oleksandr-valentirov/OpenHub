@@ -24,6 +24,9 @@
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
+extern DMA_HandleTypeDef hdma_cryp_in;
+
+extern DMA_HandleTypeDef hdma_cryp_out;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
@@ -77,6 +80,93 @@ void HAL_MspInit(void)
   /* USER CODE BEGIN MspInit 1 */
 
   /* USER CODE END MspInit 1 */
+}
+
+/**
+* @brief CRYP MSP Initialization
+* This function configures the hardware resources used in this example
+* @param hcryp: CRYP handle pointer
+* @retval None
+*/
+void HAL_CRYP_MspInit(CRYP_HandleTypeDef* hcryp)
+{
+  if(hcryp->Instance==CRYP)
+  {
+  /* USER CODE BEGIN CRYP_MspInit 0 */
+
+  /* USER CODE END CRYP_MspInit 0 */
+    /* Peripheral clock enable */
+    __HAL_RCC_CRYP_CLK_ENABLE();
+
+    /* CRYP DMA Init */
+    /* CRYP_IN Init */
+    hdma_cryp_in.Instance = DMA1_Stream0;
+    hdma_cryp_in.Init.Request = DMA_REQUEST_CRYP_IN;
+    hdma_cryp_in.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    hdma_cryp_in.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_cryp_in.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_cryp_in.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_cryp_in.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_cryp_in.Init.Mode = DMA_NORMAL;
+    hdma_cryp_in.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_cryp_in.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_cryp_in) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(hcryp,hdmain,hdma_cryp_in);
+
+    /* CRYP_OUT Init */
+    hdma_cryp_out.Instance = DMA1_Stream1;
+    hdma_cryp_out.Init.Request = DMA_REQUEST_CRYP_OUT;
+    hdma_cryp_out.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_cryp_out.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_cryp_out.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_cryp_out.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_cryp_out.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_cryp_out.Init.Mode = DMA_NORMAL;
+    hdma_cryp_out.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_cryp_out.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_cryp_out) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(hcryp,hdmaout,hdma_cryp_out);
+
+  /* USER CODE BEGIN CRYP_MspInit 1 */
+
+  /* USER CODE END CRYP_MspInit 1 */
+
+  }
+
+}
+
+/**
+* @brief CRYP MSP De-Initialization
+* This function freeze the hardware resources used in this example
+* @param hcryp: CRYP handle pointer
+* @retval None
+*/
+void HAL_CRYP_MspDeInit(CRYP_HandleTypeDef* hcryp)
+{
+  if(hcryp->Instance==CRYP)
+  {
+  /* USER CODE BEGIN CRYP_MspDeInit 0 */
+
+  /* USER CODE END CRYP_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_CRYP_CLK_DISABLE();
+
+    /* CRYP DMA DeInit */
+    HAL_DMA_DeInit(hcryp->hdmain);
+    HAL_DMA_DeInit(hcryp->hdmaout);
+  /* USER CODE BEGIN CRYP_MspDeInit 1 */
+
+  /* USER CODE END CRYP_MspDeInit 1 */
+  }
+
 }
 
 /* USER CODE BEGIN 1 */

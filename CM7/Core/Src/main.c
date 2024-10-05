@@ -51,6 +51,12 @@
 
 COM_InitTypeDef BspCOMInit;
 
+CRYP_HandleTypeDef hcryp;
+__ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
+                            0x00000000,0x00000000,0x00000000,0x00000000};
+DMA_HandleTypeDef hdma_cryp_in;
+DMA_HandleTypeDef hdma_cryp_out;
+
 osThreadId defaultTaskHandle;
 osThreadId cliTaskHandle;
 uint32_t cliTaskBuffer[ 512 ];
@@ -62,7 +68,9 @@ osStaticThreadDef_t cliTaskControlBlock;
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_UART4_Init(void);
+static void MX_CRYP_Init(void);
 void StartDefaultTask(void const * argument);
 extern void CLI_Task(void const * argument);
 
@@ -144,7 +152,9 @@ Error_Handler();
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_UART4_Init();
+  MX_CRYP_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -239,6 +249,7 @@ void SystemClock_Config(void)
   }
   LL_RCC_PLL_SetSource(LL_RCC_PLLSOURCE_HSE);
   LL_RCC_PLL1P_Enable();
+  LL_RCC_PLL1Q_Enable();
   LL_RCC_PLL1_SetVCOInputRange(LL_RCC_PLLINPUTRANGE_8_16);
   LL_RCC_PLL1_SetVCOOutputRange(LL_RCC_PLLVCORANGE_WIDE);
   LL_RCC_PLL1_SetM(1);
@@ -276,6 +287,36 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief CRYP Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRYP_Init(void)
+{
+
+  /* USER CODE BEGIN CRYP_Init 0 */
+
+  /* USER CODE END CRYP_Init 0 */
+
+  /* USER CODE BEGIN CRYP_Init 1 */
+
+  /* USER CODE END CRYP_Init 1 */
+  hcryp.Instance = CRYP;
+  hcryp.Init.DataType = CRYP_DATATYPE_32B;
+  hcryp.Init.KeySize = CRYP_KEYSIZE_128B;
+  hcryp.Init.pKey = (uint32_t *)pKeyCRYP;
+  hcryp.Init.Algorithm = CRYP_AES_ECB;
+  if (HAL_CRYP_Init(&hcryp) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CRYP_Init 2 */
+
+  /* USER CODE END CRYP_Init 2 */
+
 }
 
 /**
@@ -342,6 +383,26 @@ static void MX_UART4_Init(void)
   /* USER CODE BEGIN UART4_Init 2 */
 
   /* USER CODE END UART4_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* Init with LL driver */
+  /* DMA controller clock enable */
+  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
 
 }
 

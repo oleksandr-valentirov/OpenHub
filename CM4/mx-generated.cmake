@@ -46,12 +46,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_dma.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_usart.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_usart_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_spi.c
     ../Common/Src/system_stm32h7xx_dualcore_boot_cm4_cm7.c
     ./Core/Src/sysmem.c
     ./Core/Src/syscalls.c

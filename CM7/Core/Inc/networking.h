@@ -16,5 +16,4 @@ typedef struct user_server {
 
 extern struct user_server servers[USER_SERVERS_MAX_NUM];
 
-void NetSwitchPHY(uint8_t eth_enabled);
 void Ping_Task(void *argument);
