@@ -26,6 +26,7 @@
 #include "cli.h"
 #include <string.h>
 #include "lwip/udp.h"
+#include "crypt.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,10 +58,18 @@ __ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
 DMA_HandleTypeDef hdma_cryp_in;
 DMA_HandleTypeDef hdma_cryp_out;
 
+RNG_HandleTypeDef hrng;
+
 osThreadId defaultTaskHandle;
 osThreadId cliTaskHandle;
 uint32_t cliTaskBuffer[ 512 ];
 osStaticThreadDef_t cliTaskControlBlock;
+osThreadId cryptTaskHandle;
+uint32_t cryptTaskBuffer[ 512 ];
+osStaticThreadDef_t cryptTaskControlBlock;
+osMessageQId cryptQueueHandle;
+uint8_t cryptQueueBuffer[ 64 * sizeof( crypt_queue_element_t ) ];
+osStaticMessageQDef_t cryptQueueControlBlock;
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
 
@@ -71,8 +80,10 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_UART4_Init(void);
 static void MX_CRYP_Init(void);
+static void MX_RNG_Init(void);
 void StartDefaultTask(void const * argument);
 extern void CLI_Task(void const * argument);
+extern void Crypt_Task(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -155,6 +166,7 @@ Error_Handler();
   MX_DMA_Init();
   MX_UART4_Init();
   MX_CRYP_Init();
+  MX_RNG_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -171,6 +183,11 @@ Error_Handler();
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* definition and creation of cryptQueue */
+  osMessageQStaticDef(cryptQueue, 64, crypt_queue_element_t, cryptQueueBuffer, &cryptQueueControlBlock);
+  cryptQueueHandle = osMessageCreate(osMessageQ(cryptQueue), NULL);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -183,6 +200,10 @@ Error_Handler();
   /* definition and creation of cliTask */
   osThreadStaticDef(cliTask, CLI_Task, osPriorityIdle, 0, 512, cliTaskBuffer, &cliTaskControlBlock);
   cliTaskHandle = osThreadCreate(osThread(cliTask), NULL);
+
+  /* definition and creation of cryptTask */
+  osThreadStaticDef(cryptTask, Crypt_Task, osPriorityNormal, 0, 512, cryptTaskBuffer, &cryptTaskControlBlock);
+  cryptTaskHandle = osThreadCreate(osThread(cryptTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -316,6 +337,33 @@ static void MX_CRYP_Init(void)
   /* USER CODE BEGIN CRYP_Init 2 */
 
   /* USER CODE END CRYP_Init 2 */
+
+}
+
+/**
+  * @brief RNG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RNG_Init(void)
+{
+
+  /* USER CODE BEGIN RNG_Init 0 */
+
+  /* USER CODE END RNG_Init 0 */
+
+  /* USER CODE BEGIN RNG_Init 1 */
+
+  /* USER CODE END RNG_Init 1 */
+  hrng.Instance = RNG;
+  hrng.Init.ClockErrorDetection = RNG_CED_ENABLE;
+  if (HAL_RNG_Init(&hrng) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RNG_Init 2 */
+
+  /* USER CODE END RNG_Init 2 */
 
 }
 

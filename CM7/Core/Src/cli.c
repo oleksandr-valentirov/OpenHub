@@ -2,22 +2,31 @@
 #include "cmsis_os.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include "cli.h"
-#include "stm32h7xx_ll_usart.h"
 #include "networking.h"
+#include "crypt.h"
+
+/* HAL/LL */
+#include "stm32h7xx_ll_usart.h"
+#include "stm32h7xx_hal_rng.h"
+
+/* LWIP */
 #include "netif.h"
-#include "stm32h7xx_hal_cryp.h"
 
 /* variables */
 const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
 const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
 extern struct netif gnetif;
-extern CRYP_HandleTypeDef hcryp;
+extern RNG_HandleTypeDef hrng;
+extern osMessageQId cryptQueueHandle;
+static uint8_t encryption_flag = 1;
 
 /* functions definitions */
 static int get_network_info(char *buffer);
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
-static int encrypt_data(char *data, char* key, char *resp_buffer);
+static int encrypt_data(char *data, char *resp_buffer);
+static void reset_crypt_flag(void);
 
 
 void CLI_Task(void const * argument) {
@@ -88,7 +97,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                         );
                     }
                 } else if (strncmp(strtok_temp, "encrypt", strlen("encrypt")) == 0) {
-                    cli->response_len = encrypt_data(strtok(NULL, " "), strtok(NULL, " "), cli->response_buffer);
+                    cli->response_len = encrypt_data(strtok(NULL, " "), cli->response_buffer);
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                 }
@@ -187,28 +196,59 @@ static int set_server_ip_addr(char *server_num, char *addr, char *name, char *re
     return resp_len;
 }
 
-static int encrypt_data(char *data, char* key, char *resp_buffer) {
-    UNUSED(key);
-    size_t data_len = strlen(data);
-    uint8_t output[64];
+static int encrypt_data(char *data, char *resp_buffer) {
+    uint8_t output[64] = {0};
+    uint32_t key[4] = {0};
+    crypt_queue_element_t crypt_packet = {
+        .input = (uint32_t *)data, 
+        .output = (uint32_t *)output, 
+        .data_len = (uint16_t)strlen(data), 
+        .crypt_op = CRYPT_OP_ENCRYPT, 
+        .onSuccessCallback = reset_crypt_flag,
+        .key = key
+    };
     HAL_StatusTypeDef status = HAL_OK;
+    uint32_t start = 0;
+    uint16_t len = 0;
 
-    if (data_len > 64)
+    if (crypt_packet.data_len > 64)
         return sprintf(resp_buffer, "%s: text is longer than 64 bytes\r\n", __func__);
 
-    switch (hcryp.State) {
-        case HAL_CRYP_STATE_BUSY:
-            return sprintf(resp_buffer, "%s: CRYP is busy\r\n", __func__);
-        case HAL_CRYP_STATE_RESET:
-            return sprintf(resp_buffer, "%s: CRYP not yet initialized or disabled\r\n", __func__);
-        case HAL_CRYP_STATE_READY:
-            status = HAL_CRYP_Encrypt(&hcryp, (uint32_t*)data, (uint16_t)data_len, (uint32_t *)output, 1000);
-            if (status != HAL_OK)
-                return sprintf(resp_buffer, "%s: HAL_CRYP_Encrypt bad status %i\r\n", __func__, status);
-            break;
-        default:
-            return sprintf(resp_buffer, "%s: not implemented hcryp.State %i\r\n", __func__, hcryp.State);
+    for (uint8_t i = 0; i < 4; i++) {
+        while (hrng.State != HAL_RNG_STATE_READY) {}
+        if ((status = HAL_RNG_GenerateRandomNumber(&hrng, &(key[i]))) != HAL_OK)
+            return sprintf(resp_buffer, "\r\n%s: RNG error - %i\r\n", __func__, (int)status);
     }
 
-    return sprintf(resp_buffer, "\r\noutput>>%s\r\n", (char *)output);
+    encryption_flag = 1;
+    if (xQueueSend(cryptQueueHandle, (void *)&crypt_packet, 0) == errQUEUE_FULL)
+        return sprintf(resp_buffer, "\r\n%s: Encryption error - crypt queue is full\r\n", __func__);
+
+    start = xTaskGetTickCount();
+    while (encryption_flag == 1 && xTaskGetTickCount() < (start + 1000)) {
+        osDelay(1);
+    }
+    if (encryption_flag == 0) {
+        len = sprintf(resp_buffer, "\r\nkey - 0x%08x 0x%08x 0x%08x 0x%08x\r\nencrypt>>%s\r\n", (unsigned int)key[0], (unsigned int)key[1], (unsigned int)key[2], (unsigned int)key[3], (char *)output);
+        encryption_flag = 1;
+        crypt_packet.crypt_op = CRYPT_OP_DECRYPT;
+        crypt_packet.input = (uint32_t *)output;
+        if (xQueueSend(cryptQueueHandle, (void *)&crypt_packet, 0) == errQUEUE_FULL)
+            return sprintf(resp_buffer, "\r\n%s: Encryption error - crypt queue is full\r\n", __func__);
+
+        start = xTaskGetTickCount();
+        while (encryption_flag == 1 && xTaskGetTickCount() < (start + 1000)) {
+            osDelay(1);
+        }
+        if (encryption_flag == 0) {
+            len += sprintf(resp_buffer + len, "decrypt>>%s\r\n", (char *)output);
+            return len;
+        }
+    }
+
+    return sprintf(resp_buffer, "\r\n%s: Encryption error - timeout\r\n", __func__);
+}
+
+static void reset_crypt_flag(void) {
+    encryption_flag = 0;
 }

@@ -78,6 +78,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cryp.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cryp_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_dma.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_usart.c

@@ -63,6 +63,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/cli.c
+    Core/Src/crypt.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
 )

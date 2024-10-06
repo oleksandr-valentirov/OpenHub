@@ -11,6 +11,7 @@
 #include "lwip/inet.h"
 #include "lwip/udp.h"
 #include "lwip/tcpip.h"
+#include "lwip/inet_chksum.h"
 
 /* defines */
 #define PING_TIMEOUT    2000
