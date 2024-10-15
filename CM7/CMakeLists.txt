@@ -66,6 +66,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/crypt.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
+    Core/Src/cmox_low_level.c
 )
 
 # Link directories setup

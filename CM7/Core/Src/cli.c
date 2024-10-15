@@ -20,13 +20,15 @@ const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
 extern struct netif gnetif;
 extern RNG_HandleTypeDef hrng;
 extern osMessageQId cryptQueueHandle;
-static uint8_t encryption_flag = 1;
+static volatile uint8_t encryption_flag = 0;
+__attribute__((section(".cli_dma_tx_buffer"))) static uint8_t dma_tx_buf[32] = {0};
+__attribute__((section(".cli_dma_rx_buffer"))) static uint8_t dma_rx_buf[32] = {0};
 
 /* functions definitions */
 static int get_network_info(char *buffer);
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
 static int encrypt_data(char *data, char *resp_buffer);
-static void reset_crypt_flag(void);
+static void set_crypt_flag(void);
 
 
 void CLI_Task(void const * argument) {
@@ -100,6 +102,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                     cli->response_len = encrypt_data(strtok(NULL, " "), cli->response_buffer);
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
+                    cli->response_len += sprintf(cli->response_buffer + cli->response_len, "%s\r\n", cli->cmd_buffer);
                 }
                 if (cli->response_len < 0)
                     res = 1;
@@ -197,58 +200,81 @@ static int set_server_ip_addr(char *server_num, char *addr, char *name, char *re
 }
 
 static int encrypt_data(char *data, char *resp_buffer) {
-    uint8_t output[64] = {0};
     uint32_t key[4] = {0};
     crypt_queue_element_t crypt_packet = {
-        .input = (uint32_t *)data, 
-        .output = (uint32_t *)output, 
-        .data_len = (uint16_t)strlen(data), 
+        .input = ((uint32_t *)dma_tx_buf),
+        .output = ((uint32_t *)dma_rx_buf),
         .crypt_op = CRYPT_OP_ENCRYPT, 
-        .onSuccessCallback = reset_crypt_flag,
+        .onSuccessCallback = &set_crypt_flag,
         .key = key
     };
     HAL_StatusTypeDef status = HAL_OK;
     uint32_t start = 0;
     uint16_t len = 0;
+    uint8_t i = 0;
+
+    if (data == NULL)
+        return sprintf(resp_buffer, "%s: No data\r\n", __func__);
+
+    crypt_packet.data_len = (uint16_t)strlen(data);
 
     if (crypt_packet.data_len > 64)
         return sprintf(resp_buffer, "%s: text is longer than 64 bytes\r\n", __func__);
+    
+    /* copy data to DMA tx array */
+    for (i = 0; i < crypt_packet.data_len; i++)
+        dma_tx_buf[i] = data[i];
 
+    /* generate AES-128 key */
     for (uint8_t i = 0; i < 4; i++) {
         while (hrng.State != HAL_RNG_STATE_READY) {}
         if ((status = HAL_RNG_GenerateRandomNumber(&hrng, &(key[i]))) != HAL_OK)
             return sprintf(resp_buffer, "\r\n%s: RNG error - %i\r\n", __func__, (int)status);
     }
 
-    encryption_flag = 1;
+    /* send data to the CRYP task */
+    encryption_flag = 0;
     if (xQueueSend(cryptQueueHandle, (void *)&crypt_packet, 0) == errQUEUE_FULL)
         return sprintf(resp_buffer, "\r\n%s: Encryption error - crypt queue is full\r\n", __func__);
 
-    start = xTaskGetTickCount();
-    while (encryption_flag == 1 && xTaskGetTickCount() < (start + 1000)) {
+    start = xTaskGetTickCount();  /* wait till either the response is ready or the timeout */
+    while (!encryption_flag && (xTaskGetTickCount() < (start + 1000)))
         osDelay(1);
-    }
-    if (encryption_flag == 0) {
-        len = sprintf(resp_buffer, "\r\nkey - 0x%08x 0x%08x 0x%08x 0x%08x\r\nencrypt>>%s\r\n", (unsigned int)key[0], (unsigned int)key[1], (unsigned int)key[2], (unsigned int)key[3], (char *)output);
-        encryption_flag = 1;
-        crypt_packet.crypt_op = CRYPT_OP_DECRYPT;
-        crypt_packet.input = (uint32_t *)output;
-        if (xQueueSend(cryptQueueHandle, (void *)&crypt_packet, 0) == errQUEUE_FULL)
-            return sprintf(resp_buffer, "\r\n%s: Encryption error - crypt queue is full\r\n", __func__);
 
-        start = xTaskGetTickCount();
-        while (encryption_flag == 1 && xTaskGetTickCount() < (start + 1000)) {
+    if (encryption_flag) {
+        /* form a response to the CLI */
+        len = sprintf(resp_buffer, "\r\nkey - 0x%08x 0x%08x 0x%08x 0x%08x\r\nencrypt>> ", (unsigned int)key[0], (unsigned int)key[1], (unsigned int)key[2], (unsigned int)key[3]);
+        for (i = 0; i < crypt_packet.data_len; i++) {
+            len += sprintf(resp_buffer + len, "0x%02x ", dma_rx_buf[i]);
+        }
+
+        /* prepare data for the decryption */
+        for (i = 0; i < 32; i++)
+            dma_tx_buf[i] = dma_rx_buf[i];
+
+        encryption_flag = 0;
+        crypt_packet.crypt_op = CRYPT_OP_DECRYPT;  /* send data to the CRYP task */
+        if (xQueueSend(cryptQueueHandle, (void *)&crypt_packet, 0) == errQUEUE_FULL)
+            return sprintf(resp_buffer, "\r\n%s: Decryption error - crypt queue is full\r\n", __func__);
+        
+        start = xTaskGetTickCount();  /* wait till either the response is ready or the timeout */
+        while (!encryption_flag && (xTaskGetTickCount() < (start + 1000)))
             osDelay(1);
-        }
-        if (encryption_flag == 0) {
-            len += sprintf(resp_buffer + len, "decrypt>>%s\r\n", (char *)output);
-            return len;
-        }
+
+        if (encryption_flag) {  /* add decrypted data to the CLI response */
+            len += sprintf(resp_buffer + len, "\r\ndecrypt>> ");
+            for (i = 0; i < crypt_packet.data_len; i++)
+                len += sprintf(resp_buffer + len, "%c", dma_rx_buf[i]);
+            len += sprintf(resp_buffer + len, "\r\n");
+        } else
+            len += sprintf(resp_buffer + len, "\r\nDecryption timeout\r\n");
+
+        return len;
     }
 
     return sprintf(resp_buffer, "\r\n%s: Encryption error - timeout\r\n", __func__);
 }
 
-static void reset_crypt_flag(void) {
-    encryption_flag = 0;
+static void set_crypt_flag(void) {
+    encryption_flag = 1;
 }

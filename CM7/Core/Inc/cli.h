@@ -2,7 +2,7 @@
 
 #include "main.h"
 
-#define CLI_CMD_BUF_LEN     32
+#define CLI_CMD_BUF_LEN     128
 #define CLI_RX_BUF_LEN      256
 
 typedef struct cli_data {

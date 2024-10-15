@@ -3,10 +3,10 @@
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
 	CORE_CM4 
+	USE_HAL_DRIVER 
 	STM32H755xx 
 	USE_FULL_LL_DRIVER 
-	USE_NUCLEO_64 
-	USE_HAL_DRIVER
+	USE_NUCLEO_64
     $<$<CONFIG:Debug>:DEBUG>
 )
 
@@ -27,7 +27,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ./Core/Src/stm32h7xx_hal_msp.c
     ../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_exti.c
-    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_gpio.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_rcc.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_utils.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc.c
@@ -46,9 +45,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
-    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_dma.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_gpio.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_dma.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_usart.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_usart_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart_ex.c

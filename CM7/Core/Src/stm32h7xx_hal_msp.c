@@ -105,8 +105,8 @@ void HAL_CRYP_MspInit(CRYP_HandleTypeDef* hcryp)
     hdma_cryp_in.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_cryp_in.Init.PeriphInc = DMA_PINC_DISABLE;
     hdma_cryp_in.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_cryp_in.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-    hdma_cryp_in.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_cryp_in.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_cryp_in.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
     hdma_cryp_in.Init.Mode = DMA_NORMAL;
     hdma_cryp_in.Init.Priority = DMA_PRIORITY_LOW;
     hdma_cryp_in.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
@@ -123,8 +123,8 @@ void HAL_CRYP_MspInit(CRYP_HandleTypeDef* hcryp)
     hdma_cryp_out.Init.Direction = DMA_PERIPH_TO_MEMORY;
     hdma_cryp_out.Init.PeriphInc = DMA_PINC_DISABLE;
     hdma_cryp_out.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_cryp_out.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-    hdma_cryp_out.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+    hdma_cryp_out.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_cryp_out.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
     hdma_cryp_out.Init.Mode = DMA_NORMAL;
     hdma_cryp_out.Init.Priority = DMA_PRIORITY_LOW;
     hdma_cryp_out.Init.FIFOMode = DMA_FIFOMODE_DISABLE;

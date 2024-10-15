@@ -175,7 +175,7 @@
 #define  USE_HAL_CEC_REGISTER_CALLBACKS     0U /* CEC register callback disabled     */
 #define  USE_HAL_COMP_REGISTER_CALLBACKS    0U /* COMP register callback disabled    */
 #define  USE_HAL_CORDIC_REGISTER_CALLBACKS  0U /* CORDIC register callback disabled  */
-#define  USE_HAL_CRYP_REGISTER_CALLBACKS    0U /* CRYP register callback disabled    */
+#define  USE_HAL_CRYP_REGISTER_CALLBACKS    1U /* CRYP register callback enabled    */
 #define  USE_HAL_DAC_REGISTER_CALLBACKS     0U /* DAC register callback disabled     */
 #define  USE_HAL_DCMI_REGISTER_CALLBACKS    0U /* DCMI register callback disabled    */
 #define  USE_HAL_DFSDM_REGISTER_CALLBACKS   0U /* DFSDM register callback disabled   */

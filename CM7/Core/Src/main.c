@@ -202,7 +202,7 @@ Error_Handler();
   cliTaskHandle = osThreadCreate(osThread(cliTask), NULL);
 
   /* definition and creation of cryptTask */
-  osThreadStaticDef(cryptTask, Crypt_Task, osPriorityNormal, 0, 512, cryptTaskBuffer, &cryptTaskControlBlock);
+  osThreadStaticDef(cryptTask, Crypt_Task, osPriorityHigh, 0, 512, cryptTaskBuffer, &cryptTaskControlBlock);
   cryptTaskHandle = osThreadCreate(osThread(cryptTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -440,9 +440,8 @@ static void MX_UART4_Init(void)
 static void MX_DMA_Init(void)
 {
 
-  /* Init with LL driver */
   /* DMA controller clock enable */
-  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream0_IRQn interrupt configuration */
@@ -461,24 +460,23 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOC);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOA);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOB);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOG);
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
 
-  /**/
-  GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_11|LL_GPIO_PIN_12;
-  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
-  GPIO_InitStruct.Alternate = LL_GPIO_AF_10;
-  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  /*Configure GPIO pins : PA8 PA11 PA12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_11|GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF10_OTG1_FS;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */

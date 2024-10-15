@@ -162,6 +162,14 @@ SECTIONS
     . = ALIGN(8);
   } >RAM_D1
 
+  .cli_dma_buffer :
+  {
+    . = ALIGN(32);
+    *(.cli_dma_tx_buffer)
+
+    *(.cli_dma_rx_buffer)
+  } >RAM_D1
+
   /* Modification start */
   .lwip_sec (NOLOAD) :
   {
