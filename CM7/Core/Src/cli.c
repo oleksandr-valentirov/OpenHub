@@ -45,7 +45,7 @@ void CLI_Task(void const * argument) {
             }
             fflush(stdout);
         }
-        osDelay(25);
+        osDelay(pdMS_TO_TICKS(25));
     }
 }
 
