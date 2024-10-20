@@ -503,7 +503,7 @@ void StartDefaultTask(void const * argument)
   osDelay(1000);
 
   ip_addr_t PC_IPADDR;
-  IP_ADDR4(&PC_IPADDR, 192, 168, 88, 1);
+  IP_ADDR4(&PC_IPADDR, 192, 168, 137, 1);
 
   struct udp_pcb* my_udp = udp_new();
   udp_connect(my_udp, &PC_IPADDR, 55151);
