@@ -17,3 +17,4 @@ typedef struct user_server {
 extern struct user_server servers[USER_SERVERS_MAX_NUM];
 
 void Ping_Task(void *argument);
+int Networking_get_network_info(char *resp_buffer);
