@@ -67,9 +67,6 @@ osStaticThreadDef_t cliTaskControlBlock;
 osThreadId cryptTaskHandle;
 uint32_t cryptTaskBuffer[ 512 ];
 osStaticThreadDef_t cryptTaskControlBlock;
-osThreadId pingTaskHandle;
-uint32_t pingTaskBuffer[ 512 ];
-osStaticThreadDef_t pingTaskControlBlock;
 osMessageQId cryptQueueHandle;
 uint8_t cryptQueueBuffer[ 64 * sizeof( crypt_queue_element_t ) ];
 osStaticMessageQDef_t cryptQueueControlBlock;
@@ -87,7 +84,6 @@ static void MX_RNG_Init(void);
 void StartDefaultTask(void const * argument);
 extern void CLI_Task(void const * argument);
 extern void Crypt_Task(void const * argument);
-extern void Ping_Task(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -208,10 +204,6 @@ Error_Handler();
   /* definition and creation of cryptTask */
   osThreadStaticDef(cryptTask, Crypt_Task, osPriorityHigh, 0, 512, cryptTaskBuffer, &cryptTaskControlBlock);
   cryptTaskHandle = osThreadCreate(osThread(cryptTask), NULL);
-
-  /* definition and creation of pingTask */
-  osThreadStaticDef(pingTask, Ping_Task, osPriorityIdle, 0, 512, pingTaskBuffer, &pingTaskControlBlock);
-  pingTaskHandle = osThreadCreate(osThread(pingTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

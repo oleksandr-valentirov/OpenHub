@@ -42,7 +42,7 @@ as described <a href="https://community.st.com/t5/stm32-mcus-embedded-software/l
         </tr>
         <tr>
             <td>CM7/Core/src/networking.c</td>
-            <td>work in progress</td>
+            <td>Ping tool</td>
         </tr>
     </tbody>
 </table>
