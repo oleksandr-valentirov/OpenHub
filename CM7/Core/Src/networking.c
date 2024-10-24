@@ -18,80 +18,125 @@
 #define PING_ID         0xABCD
 #define PING_DATA_SIZE  32
 
+/* structures */
+typedef struct ping_args {
+    const char *ip;
+    ip4_addr_t target_ip;
+    struct raw_pcb *pcb;
+    struct pbuf *p;
+    uint16_t id;
+    uint8_t ping_resp_flag;
+} ping_args_t;
+
 /* variables */
 struct user_server servers[USER_SERVERS_MAX_NUM];
 extern struct netif gnetif;
+extern RNG_HandleTypeDef hrng;
 
-static u8_t ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr) {
+static uint8_t ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr) {
+    UNUSED(pcb);
+    UNUSED(addr);
     struct icmp_echo_hdr *icmp_hdr;
+    ping_args_t *args = (ping_args_t *)arg;
 
-    if (p->len >= (sizeof(struct icmp_echo_hdr))) {
+    if ((p->tot_len >= (PBUF_IP_HLEN + sizeof(struct icmp_echo_hdr))) && pbuf_remove_header(p, PBUF_IP_HLEN) == 0) {
         icmp_hdr = (struct icmp_echo_hdr *)p->payload;
-        if ((icmp_hdr->type == ICMP_ER) && (icmp_hdr->id == PING_ID)) {
-            printf("Ping reply received from %s, seq: %d\n", ipaddr_ntoa(addr), lwip_ntohs(icmp_hdr->seqno));
+        if ((icmp_hdr->type == ICMP_ER) && (icmp_hdr->id == args->id)) {
+            args->ping_resp_flag = 1;
             pbuf_free(p);
             return 1;
         }
+        pbuf_add_header(p, PBUF_IP_HLEN);
     }
-    pbuf_free(p);
+
     return 0;
 }
 
-static void ping_send(ip4_addr_t *target_ip, struct raw_pcb *pcb) {
-    struct pbuf *p;
+static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
     struct icmp_echo_hdr *icmp_hdr;
-    u16_t icmp_hdr_size = sizeof(struct icmp_echo_hdr);
-    u16_t ping_seq_num = 0;
+    uint16_t icmp_hdr_size = sizeof(struct icmp_echo_hdr);
+    uint32_t id = 0;
 
-    /* Створюємо ICMP пакет */
-    p = pbuf_alloc(PBUF_IP, icmp_hdr_size + PING_DATA_SIZE, PBUF_RAM);
-    if (p == NULL) {
-        printf("\r\nFailed to allocate pbuf for ping request.\r\n");
-        return;
-    }
-
-    icmp_hdr = (struct icmp_echo_hdr *)p->payload;
-    icmp_hdr->type = ICMP_ECHO; // 8 - Echo request
+    icmp_hdr = (struct icmp_echo_hdr *)(args->p->payload);
+    icmp_hdr->type = ICMP_ECHO;
     icmp_hdr->code = 0;
-    icmp_hdr->id = PING_ID;
-    icmp_hdr->seqno = lwip_htons(++ping_seq_num);
+    icmp_hdr->seqno = lwip_htons(ping_seq_num);
+
+    /* generate random ID or use default */
+    if (args->id == 0) {
+        while (hrng.State != HAL_RNG_STATE_READY) {}
+        if (HAL_RNG_GenerateRandomNumber(&hrng, &id) != HAL_OK)
+            icmp_hdr->id = PING_ID;
+        else
+            icmp_hdr->id = (uint16_t)id;
+    } else
+        icmp_hdr->id = args->id;
+
+    /* store ID to compare with response ID in a callback */
+    args->id = icmp_hdr->id;
+
     memset((u8_t *)icmp_hdr + icmp_hdr_size, 0xAB, PING_DATA_SIZE);
 
     icmp_hdr->chksum = 0;
     icmp_hdr->chksum = inet_chksum(icmp_hdr, icmp_hdr_size + PING_DATA_SIZE);
 
-    raw_sendto(pcb, p, target_ip);
-
-    printf("\r\nPing request sent to %s\r\n", ipaddr_ntoa(target_ip));
-
-    pbuf_free(p);
+    raw_sendto(args->pcb, args->p, &(args->target_ip));
 }
 
 
-void Ping_Task(void *argument) {
-    ip4_addr_t target_ip;
-    struct raw_pcb *ping_pcb = raw_new(IP_PROTO_ICMP);
+void Networking_ping_command(const char *ip_addr, uint8_t repeats, uint8_t break_on_response, uint8_t use_stdout, void (*onSuccessCallback)(void)) {
+    ping_args_t ping_args;
+    ping_args.pcb = raw_new(IP_PROTO_ICMP);
+    ping_args.ip = ip_addr;
+    ping_args.ping_resp_flag = 0;
+    ping_args.id = 0;
+    uint32_t start = 0;
 
-    osDelay(5000);
-
-    if (ping_pcb == NULL) {
-        printf("Failed to create RAW socket for ping.\n");
-        vTaskDelete(NULL);
+    printf("\r\n");
+    ping_args.p = pbuf_alloc(PBUF_IP, sizeof(struct icmp_echo_hdr) + PING_DATA_SIZE, PBUF_RAM);
+    if (ping_args.p == NULL) {
+        printf("Failed to allocate pbuf for ping request.\r\n");
+        return;
     }
 
-    if (ip4addr_aton("8.8.8.8", &target_ip) == 0) {
-        printf("bad IP for Ping_Task\r\n");
-        fflush(stdout);
-        vTaskDelete(NULL); 
+    if (ping_args.pcb == NULL) {
+        printf("Failed to create RAW socket for ping.\r\n");
+        return;
     }
 
-    raw_recv(ping_pcb, ping_recv, NULL); /* set callback to process response */
-    raw_bind(ping_pcb, IP_ADDR_ANY);
-
-    for(;;) {
-        osDelay(1000);
-        ping_send(&target_ip, ping_pcb);
+    if (ip4addr_aton(ip_addr, &ping_args.target_ip) == 0) {
+        printf("Bad IP for Ping_Task\r\n");
+        return;
     }
+
+    raw_recv(ping_args.pcb, ping_recv, &ping_args); /* set callback to process response */
+    raw_bind(ping_args.pcb, IP_ADDR_ANY);
+
+    for(uint8_t i = 0; i < repeats; i++) {
+        if (use_stdout)
+            printf("Ping request sent to %s\r\n", ip_addr);
+
+        ping_send(&ping_args, i + 1);
+        start = xTaskGetTickCount();  /* wait till either the response is ready or the timeout */
+        while (!ping_args.ping_resp_flag && (xTaskGetTickCount() < (start + 1000)))
+            osDelay(1);
+
+        if (ping_args.ping_resp_flag) {
+            if (use_stdout)
+                printf("Ping reply received from %s, seq: %d\r\n", ip_addr, i + 1);
+
+            if (onSuccessCallback)
+                onSuccessCallback();
+
+            if (break_on_response)
+                break;
+            ping_args.ping_resp_flag = 0;
+        } else if (use_stdout)
+            printf("Timeout\r\n");
+    }
+
+    pbuf_free(ping_args.p);
+    raw_remove(ping_args.pcb);
 }
 
 /*

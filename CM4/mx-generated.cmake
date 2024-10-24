@@ -27,6 +27,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ./Core/Src/stm32h7xx_hal_msp.c
     ../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_exti.c
+    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_gpio.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_rcc.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_utils.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc.c
@@ -45,7 +46,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
-    ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_gpio.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
     ../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_dma.c

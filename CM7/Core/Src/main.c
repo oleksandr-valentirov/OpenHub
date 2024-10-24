@@ -67,9 +67,6 @@ osStaticThreadDef_t cliTaskControlBlock;
 osThreadId cryptTaskHandle;
 uint32_t cryptTaskBuffer[ 512 ];
 osStaticThreadDef_t cryptTaskControlBlock;
-osThreadId pingTaskHandle;
-uint32_t pingTaskBuffer[ 512 ];
-osStaticThreadDef_t pingTaskControlBlock;
 osMessageQId cryptQueueHandle;
 uint8_t cryptQueueBuffer[ 64 * sizeof( crypt_queue_element_t ) ];
 osStaticMessageQDef_t cryptQueueControlBlock;
@@ -87,7 +84,6 @@ static void MX_RNG_Init(void);
 void StartDefaultTask(void const * argument);
 extern void CLI_Task(void const * argument);
 extern void Crypt_Task(void const * argument);
-extern void Ping_Task(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -208,10 +204,6 @@ Error_Handler();
   /* definition and creation of cryptTask */
   osThreadStaticDef(cryptTask, Crypt_Task, osPriorityHigh, 0, 512, cryptTaskBuffer, &cryptTaskControlBlock);
   cryptTaskHandle = osThreadCreate(osThread(cryptTask), NULL);
-
-  /* definition and creation of pingTask */
-  osThreadStaticDef(pingTask, Ping_Task, osPriorityIdle, 0, 512, pingTaskBuffer, &pingTaskControlBlock);
-  pingTaskHandle = osThreadCreate(osThread(pingTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -468,23 +460,24 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
+  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOC);
+  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOA);
+  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOB);
+  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOG);
 
-  /*Configure GPIO pins : PA8 PA11 PA12 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_11|GPIO_PIN_12;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF10_OTG1_FS;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  /**/
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_11|LL_GPIO_PIN_12;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  GPIO_InitStruct.Alternate = LL_GPIO_AF_10;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
@@ -506,7 +499,7 @@ void StartDefaultTask(void const * argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
-
+  UNUSED(argument);
   /* Infinite loop */
   for(;;) {
     osDelay(1);
@@ -569,6 +562,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
+  printf("\r\nEntering Error_Handler\r\n");
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)

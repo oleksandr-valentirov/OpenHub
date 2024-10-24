@@ -57,6 +57,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
             if (cli->cmd_len && strtok_temp != NULL) {
                 /* try to execute command */
                 if (strncmp(strtok_temp, "status", strlen("status")) == 0 && strtok(NULL, " ") == NULL) {
+                    /* status */
                     cli->response_buffer[0] = '\r'; cli->response_buffer[1] = '\n';
                     vTaskList(cli->response_buffer + 2);
                     cli->response_len = strlen(cli->response_buffer) + 2;
@@ -67,17 +68,20 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                     cli->response_len = sprintf(cli->response_buffer, 
                         "\r\nstatus\t\t\t- print system status\r\n"
                         "ip [set]\t\t- ip subcommands\r\n"
+                        "ping <ip addr>\t\t- send ping message\r\n"
                         "cfg <save | load>\t- cfg subcommand\r\n"
                         "encrypt <data>\t\t- encrypts and decrypts data with AES-128\r\n"
                         "?\t\t\t- print available commands\r\n"
                     );
                 } else if (strncmp(strtok_temp, "ip", strlen("ip")) == 0) {
+                    /* ip */
                     strtok_temp = strtok(NULL, " ");
                     if (strtok_temp == NULL)
                         cli->response_len = Networking_get_network_info(cli->response_buffer);
                     else if (strncmp(strtok_temp, "set", strlen("set")) == 0)
                         cli->response_len = set_server_ip_addr(strtok(NULL, " "), strtok(NULL, " "), strtok(NULL, " "), cli->response_buffer);
                 } else if (strncmp(strtok_temp, "cfg", strlen("cfg")) == 0) {
+                    /* cfg */
                     strtok_temp = strtok(NULL, " ");
                     if (strncmp(strtok_temp, "save", strlen("save")) == 0) {
                         cli->response_len = sprintf(cli->response_buffer, not_implemented_msg);
@@ -91,7 +95,15 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                         );
                     }
                 } else if (strncmp(strtok_temp, "encrypt", strlen("encrypt")) == 0) {
+                    /* encryption */
                     cli->response_len = CRYPT_encrypt_data(strtok(NULL, " "), cli->response_buffer);
+                } else if (strncmp(strtok_temp, "ping", strlen("ping")) == 0) {
+                    /* ping */
+                    strtok_temp = strtok(NULL, " ");
+                    if (strtok_temp)
+                        Networking_ping_command(strtok_temp, 4, 0, 1, NULL);
+                    else
+                        cli->response_len = sprintf(cli->response_buffer, "\r\nusage: ping <ip addr>\r\n");
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                     cli->response_len += sprintf(cli->response_buffer + cli->response_len, "%s\r\n", cli->cmd_buffer);
