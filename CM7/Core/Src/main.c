@@ -27,6 +27,7 @@
 #include <string.h>
 #include "lwip/udp.h"
 #include "crypt.h"
+#include "cmox_crypto.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,7 +103,10 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  cmox_init_arg_t cmox_init_arg = {
+    .target = CMOX_INIT_TARGET_H7,
+    .pArg = NULL
+  };
   /* USER CODE END 1 */
 /* USER CODE BEGIN Boot_Mode_Sequence_0 */
   int32_t timeout;
@@ -168,7 +172,10 @@ Error_Handler();
   MX_CRYP_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
-
+  if (cmox_initialize(&cmox_init_arg) != CMOX_INIT_SUCCESS)
+  {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */

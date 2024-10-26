@@ -57,6 +57,14 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    Core/inc/crypto_include
+    Core/inc/crypto_include/cipher
+    Core/inc/crypto_include/drbg
+    Core/inc/crypto_include/ecc
+    Core/inc/crypto_include/hash
+    Core/inc/crypto_include/mac
+    Core/inc/crypto_include/rsa
+    Core/inc/crypto_include/utils
 )
 
 # Add sources to executable
@@ -66,16 +74,19 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/crypt.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
+    Core/Src/cmox_low_level.c
 )
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
+    libs
 )
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined libraries
+    libSTM32Cryptographic_CM7.a
 )
 
 # Validate that STM32CubeMX code is compatible with C standard
