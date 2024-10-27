@@ -52,6 +52,7 @@ set(CMAKE_CXX_COMPILER_FORCED "true")
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
     # Add user defined symbols
     DATA_IN_D2_SRAM
+    WOLFSSL_KEY_GEN
 )
 
 # Add include paths

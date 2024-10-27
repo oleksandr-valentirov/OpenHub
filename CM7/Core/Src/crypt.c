@@ -5,11 +5,19 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/rsa.h>
+
 /* variables */
 extern CRYP_HandleTypeDef hcryp;
 extern osMessageQId cryptQueueHandle;
 extern RNG_HandleTypeDef hrng;
 static volatile uint8_t data_ready = 0;         /* for general encryption task */
+RsaKey rsaKey;
+WC_RNG rng;
+uint8_t DER_pub[1024] = {0};
+uint8_t PEM_pub[1024] = {0};
 
 /* CLI call variables */
 static volatile uint8_t encryption_flag = 0;    /* for CLI encryption call */
@@ -29,6 +37,49 @@ void HAL_CRYP_OutCpltCallback(CRYP_HandleTypeDef *hcryp) {
 void HAL_CRYP_ErrorCallback(CRYP_HandleTypeDef *hcryp) {
     UNUSED(hcryp);
     printf("\r\n%s - error\r\n", __func__);
+}
+
+/*
+ * 1024 - 5 sec
+ * 2048 - 19-120 sec
+ */
+int Crypt_Init(uint16_t key_len) {
+    int ret = 0;
+
+    printf("\r\nRSA init start\r\n");
+    wolfSSL_Init();
+    if (wc_InitRng(&rng) != 0)
+        printf("Error RNG init for RSA\r\n");
+
+    if ((ret = wc_InitRsaKey(&rsaKey, NULL)) != 0)
+        printf("Error RSA init\r\n");
+
+    if (!ret && (ret = wc_MakeRsaKey(&rsaKey, key_len, 65537, &rng)) != 0) {
+        printf("Error RSA keygen\r\n");
+        wc_FreeRsaKey(&rsaKey);
+    }
+
+    // if (!ret) {
+    //     ret = wc_RsaKeyToPublicDer(&rsaKey, DER_pub, key_len);
+    //     wc_DerToPem(DER_pub, ret, PEM_pub, key_len, RSA_PUBLICKEY_TYPE);
+    //     ret = 0;
+    // }
+
+    wc_FreeRng(&rng);
+
+    return ret;
+}
+
+/*
+ * format 0 - DER
+ * format 1 - PEM
+ */
+uint8_t * Crypt_GetPublicKey(uint8_t format) {
+
+    if (format == 0)
+        return DER_pub;
+
+    return PEM_pub;
 }
 
 void Crypt_Task(void const * argument) {

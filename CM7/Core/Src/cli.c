@@ -104,6 +104,13 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                         Networking_ping_command(strtok_temp, 4, 0, 1, NULL);
                     else
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: ping <ip addr>\r\n");
+                } else if (strncmp(strtok_temp, "rsa", strlen("rsa")) == 0) {
+                    // strtok_temp = (char *)Crypt_GetPublicKey(1);
+                    // for (uint16_t i = 0; i < 1024; i += 128) {
+                    //     memcpy(cli->response_buffer + i, strtok_temp + i, 128);
+                    //     printf(cli->response_buffer);
+                    // }
+                    // cli->response_len = 0;
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                     cli->response_len += sprintf(cli->response_buffer + cli->response_len, "%s\r\n", cli->cmd_buffer);

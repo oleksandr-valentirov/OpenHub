@@ -22,3 +22,5 @@ void Crypt_Task(void const * argument);
 void HAL_CRYP_OutCpltCallback(CRYP_HandleTypeDef *hcryp);
 void HAL_CRYP_ErrorCallback(CRYP_HandleTypeDef *hcryp);
 int CRYPT_encrypt_data(char *data, char *resp_buffer);
+int Crypt_Init(uint16_t key_len);
+uint8_t * Crypt_GetPublicKey(uint8_t format);

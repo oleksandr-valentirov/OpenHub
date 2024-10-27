@@ -24,9 +24,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "cli.h"
-#include <string.h>
-#include "lwip/udp.h"
 #include "crypt.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,6 +57,8 @@ __ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
 DMA_HandleTypeDef hdma_cryp_in;
 DMA_HandleTypeDef hdma_cryp_out;
 
+HASH_HandleTypeDef hhash;
+
 RNG_HandleTypeDef hrng;
 
 osThreadId defaultTaskHandle;
@@ -81,6 +82,7 @@ static void MX_DMA_Init(void);
 static void MX_UART4_Init(void);
 static void MX_CRYP_Init(void);
 static void MX_RNG_Init(void);
+static void MX_HASH_Init(void);
 void StartDefaultTask(void const * argument);
 extern void CLI_Task(void const * argument);
 extern void Crypt_Task(void const * argument);
@@ -167,8 +169,13 @@ Error_Handler();
   MX_UART4_Init();
   MX_CRYP_Init();
   MX_RNG_Init();
+  MX_HASH_Init();
   /* USER CODE BEGIN 2 */
-
+  if (Crypt_Init(1024)) {
+    printf("RSA init failed\r\n");
+    Error_Handler();
+  }
+  printf("\r\nRSA init completed!\r\n");
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -341,6 +348,32 @@ static void MX_CRYP_Init(void)
 }
 
 /**
+  * @brief HASH Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_HASH_Init(void)
+{
+
+  /* USER CODE BEGIN HASH_Init 0 */
+
+  /* USER CODE END HASH_Init 0 */
+
+  /* USER CODE BEGIN HASH_Init 1 */
+
+  /* USER CODE END HASH_Init 1 */
+  hhash.Init.DataType = HASH_DATATYPE_32B;
+  if (HAL_HASH_Init(&hhash) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN HASH_Init 2 */
+
+  /* USER CODE END HASH_Init 2 */
+
+}
+
+/**
   * @brief RNG Initialization Function
   * @param None
   * @retval None
@@ -484,7 +517,10 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName ) {
+  UNUSED(xTask);
+  printf("overflow - %s\r\n", pcTaskName);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */

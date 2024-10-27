@@ -43,8 +43,3 @@ void free(void *ptr) {
     /* Call the FreeRTOS version of free. */
     vPortFree(ptr);
 }
-
-
-void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName ) {
-    printf("overflow - %s\r\n", pcTaskName);
-}
