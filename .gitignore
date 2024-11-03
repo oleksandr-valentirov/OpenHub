@@ -13,3 +13,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 CMakeUserPresets.json
+CM7/tmp
+CM7/src
+CM4/tmp
+CM4/src
