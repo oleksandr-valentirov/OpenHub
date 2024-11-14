@@ -187,8 +187,7 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-  if (HAL_GetTick() % 1000 == 0)
-    BSP_LED_Toggle(LED_YELLOW);
+
   /* USER CODE END SysTick_IRQn 1 */
 }
 
