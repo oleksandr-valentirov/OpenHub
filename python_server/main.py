@@ -2,13 +2,17 @@ import socket
 import threading
 
 from argparse import ArgumentParser
+from typing import Dict, Union
 
-connections = []
+ConnectionData = Dict[str, Union[socket.socket, Dict[str, any], threading.Lock]]
+connections: Dict[str, ConnectionData] = {}
 
 
-def handle_client(client_socket, address):
+def handle_client(address):
     print(f"Connected to {address}")
-    
+    client_socket = connections[address]["socket"]
+    mutex = connections[address]["mutex"]
+
     try:
         while True:
             message = client_socket.recv(1024)
@@ -21,7 +25,7 @@ def handle_client(client_socket, address):
     finally:
         client_socket.close()
         print(f"Connection {address} closed")
-        connections.remove(client_socket)
+        connections.remove(address)
 
 
 def start_server(host, port, max_connections):
@@ -34,12 +38,12 @@ def start_server(host, port, max_connections):
         if len(connections) >= max_connections:
             print("Max connections number reached.")
             continue
-        
+
         client_socket, address = server_socket.accept()
 
         if len(connections) < max_connections:
-            connections.append(client_socket)
-            client_thread = threading.Thread(target=handle_client, args=(client_socket, address))
+            connections[address] = {"sock": client_socket, "data": {}, "mutex": threading.Lock()}
+            client_thread = threading.Thread(target=handle_client, args=(address, ))
             client_thread.start()
         else:
             print("Max connections number reached. Disconnecting.")
