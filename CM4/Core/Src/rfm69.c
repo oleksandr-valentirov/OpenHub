@@ -84,10 +84,10 @@ static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 141404
 
 /* function prtototypes */
 static uint8_t rfm_set_channel(uint16_t ch_num);
-static void rfm_set_mode(rfm69_mode_t mode);
-static void rfm_set_payload_length(uint8_t value);
-static void rfm_set_broadcast_addr(uint8_t addr);
-static void rfm_set_node_addr(uint8_t addr);
+static uint8_t rfm_set_mode(rfm69_mode_t mode);
+static uint8_t rfm_set_payload_length(uint8_t value);
+static uint8_t rfm_set_broadcast_addr(uint8_t addr);
+static uint8_t rfm_set_node_addr(uint8_t addr);
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length);
 static uint8_t rfm_config_sync(uint8_t enable, uint8_t length);
 
@@ -109,7 +109,8 @@ uint8_t RFM69_Init(void) {
     if (Random_Init(seed))
         return 1;
 
-    rfm_set_broadcast_addr(255);
+    if (rfm_set_broadcast_addr(255))
+        return 1;
 
     return 0;
 }
@@ -137,6 +138,7 @@ void RFM69_Routine(void) {
 static uint8_t rfm_set_channel(uint16_t ch_num) {
     uint32_t freq;
     uint8_t data[4];
+    uint8_t res = 0;
 
     if (ch_num >= CH_NUM)
         return 1;
@@ -148,14 +150,16 @@ static uint8_t rfm_set_channel(uint16_t ch_num) {
     data[3] = (uint8_t)(freq & 0xFF);
 
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 4, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 4, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
 
-    return 0;
+    return res;
 }
 
-static void rfm_set_mode(rfm69_mode_t mode) {
+static uint8_t rfm_set_mode(rfm69_mode_t mode) {
     uint8_t data[2];
+    uint8_t res = 0;
 
     data[0] = RFM69_RegOpMode;
 
@@ -165,35 +169,54 @@ static void rfm_set_mode(rfm69_mode_t mode) {
         data[1] = 1 << 6;
 
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 2, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
+
+    return res;
 }
 
 /* !! sets payload length for the receiver mode !!*/
-static void rfm_set_payload_length(uint8_t value) {
+static uint8_t rfm_set_payload_length(uint8_t value) {
     uint8_t data[2] = {RFM69_RegPayloadLength, value};
+    uint8_t res = 0;
+
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 2, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
+
+    return res;
 }
 
-static void rfm_set_broadcast_addr(uint8_t addr) {
+static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegBroadcastAdrs, addr};
+    uint8_t res = 0;
+
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 2, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
+
+    return res;
 }
 
-static void rfm_set_node_addr(uint8_t addr) {
+static uint8_t rfm_set_node_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegNodeAdrs, addr};
+    uint8_t res = 0;
+
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 2, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
+
+    return res;
 }
 
 /* sync word or network ID - same things in the context of RFM */
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length) {
     uint8_t data[9];
+    uint8_t res = 0;
 
     if (length < 1 || length > 7)
         return 1;
@@ -203,14 +226,16 @@ static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length) {
         data[i + 1] = id[i];
 
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, length + 1, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, length + 1, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
 
-    return 0;
+    return res;
 }
 
 static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
     uint8_t data[2] = {0, 0};
+    uint8_t res = 0;
 
     if (length > 7 && enable)
         return 1;
@@ -223,6 +248,9 @@ static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
         data[1] |= (length << 3);
 
     rfm_cs_low();
-    HAL_SPI_Transmit(RFM_SPI, data, 2, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
     rfm_cs_high();
+
+    return res;
 }
