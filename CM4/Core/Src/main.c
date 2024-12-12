@@ -110,8 +110,11 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  BSP_LED_On(LED_YELLOW);
   if(RFM69_Init())
-    Error_Handler();
+    BSP_LED_On(LED_RED);
+  else
+    BSP_LED_On(LED_GREEN);
   /* USER CODE END 2 */
 
   /* Infinite loop */

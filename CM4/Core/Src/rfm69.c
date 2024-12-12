@@ -103,14 +103,14 @@ uint8_t RFM69_Init(void) {
     if (version != 0x24)  /* from RFM69 datasheet */
         return 1;
 
-    while (hrng.State != HAL_RNG_STATE_READY) {}
-    if (HAL_RNG_GenerateRandomNumber(&hrng, &seed) != HAL_OK)
-        return 1;
-    if (Random_Init(seed))
-        return 1;
+    // while (hrng.State != HAL_RNG_STATE_READY) {}
+    // if (HAL_RNG_GenerateRandomNumber(&hrng, &seed) != HAL_OK)
+    //     return 1;
+    // if (Random_Init(seed))
+    //     return 1;
 
-    if (rfm_set_broadcast_addr(255))
-        return 1;
+    // if (rfm_set_broadcast_addr(255))
+    //     return 1;
 
     return 0;
 }

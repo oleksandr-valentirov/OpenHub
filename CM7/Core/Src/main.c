@@ -276,7 +276,7 @@ void SystemClock_Config(void)
   LL_RCC_PLL1_SetM(1);
   LL_RCC_PLL1_SetN(100);
   LL_RCC_PLL1_SetP(2);
-  LL_RCC_PLL1_SetQ(5);
+  LL_RCC_PLL1_SetQ(4);
   LL_RCC_PLL1_SetR(2);
   LL_RCC_PLL1_Enable();
 
