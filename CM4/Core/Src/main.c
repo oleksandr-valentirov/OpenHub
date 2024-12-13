@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "rfm69.h"
+#include "hsem_table.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,8 +45,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-
-RNG_HandleTypeDef hrng;
 
 SPI_HandleTypeDef hspi1;
 
@@ -110,6 +109,7 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
   BSP_LED_On(LED_YELLOW);
   if(RFM69_Init())
     BSP_LED_On(LED_RED);
@@ -141,15 +141,15 @@ void MX_RNG_Init(void)
 
   /* USER CODE END RNG_Init 0 */
 
+  LL_RCC_SetRNGClockSource(LL_RCC_RNG_CLKSOURCE_PLL1Q);
+
+  /* Peripheral clock enable */
+  LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_RNG);
+
   /* USER CODE BEGIN RNG_Init 1 */
 
   /* USER CODE END RNG_Init 1 */
-  hrng.Instance = RNG;
-  hrng.Init.ClockErrorDetection = RNG_CED_ENABLE;
-  if (HAL_RNG_Init(&hrng) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  LL_RNG_Enable(RNG);
   /* USER CODE BEGIN RNG_Init 2 */
 
   /* USER CODE END RNG_Init 2 */

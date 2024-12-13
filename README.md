@@ -44,5 +44,17 @@ as described <a href="https://community.st.com/t5/stm32-mcus-embedded-software/l
             <td>CM7/Core/src/networking.c</td>
             <td>Ping tool</td>
         </tr>
+        <tr>
+            <td>Common/inc/hsem_table.h</td>
+            <td>Hardware semaphores table</td>
+        </tr>
+        <tr>
+            <td>CM4/Core/src/rfm69.c</td>
+            <td>RFM69 driver</td>
+        </tr>
+        <tr>
+            <td>CM4/Core/src/random.c</td>
+            <td>Pseudo-random number generator</td>
+        </tr>
     </tbody>
 </table>

@@ -1,5 +1,6 @@
 #include "rfm69.h"
 #include "random.h"
+#include "hsem_table.h"
 
 /* defines */
 #define CH_NUM          449
@@ -31,7 +32,6 @@ typedef struct rfm69_msg {
 } rfm69_msg_t;
 
 /* variables */
-extern RNG_HandleTypeDef hrng;
 static rfm69_state_t state = IDLE;
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
 static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
@@ -103,11 +103,13 @@ uint8_t RFM69_Init(void) {
     if (version != 0x24)  /* from RFM69 datasheet */
         return 1;
 
-    // while (hrng.State != HAL_RNG_STATE_READY) {}
-    // if (HAL_RNG_GenerateRandomNumber(&hrng, &seed) != HAL_OK)
-    //     return 1;
-    // if (Random_Init(seed))
-    //     return 1;
+    while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+    HAL_HSEM_FastTake(HSEM_RNG);
+    seed = LL_RNG_ReadRandData32(RNG);
+    HAL_HSEM_Release(HSEM_RNG, 0);
+
+    if (Random_Init(seed))
+        return 1;
 
     // if (rfm_set_broadcast_addr(255))
     //     return 1;

@@ -4,11 +4,11 @@
 #include "core_cm7.h"
 #include <stdio.h>
 #include <string.h>
+#include "hsem_table.h"
 
 /* variables */
 extern CRYP_HandleTypeDef hcryp;
 extern osMessageQId cryptQueueHandle;
-extern RNG_HandleTypeDef hrng;
 static volatile uint8_t data_ready = 0;         /* for general encryption task */
 
 /* CLI call variables */
@@ -114,7 +114,7 @@ int CRYPT_encrypt_data(char *data, char *resp_buffer) {
         .onSuccessCallback = &set_crypt_flag,
         .key = key
     };
-    HAL_StatusTypeDef status = HAL_OK;
+    // HAL_StatusTypeDef status = HAL_OK;
     uint32_t start = 0;
     uint16_t len = 0;
     uint8_t i = 0;
@@ -132,11 +132,14 @@ int CRYPT_encrypt_data(char *data, char *resp_buffer) {
         dma_tx_buf[i] = data[i];
 
     /* generate AES-128 key */
+    while (HAL_HSEM_IsSemTaken(HSEM_RNG)) {}
+    HAL_HSEM_FastTake(HSEM_RNG);
     for (uint8_t i = 0; i < 4; i++) {
-        while (hrng.State != HAL_RNG_STATE_READY) {}
-        if ((status = HAL_RNG_GenerateRandomNumber(&hrng, &(key[i]))) != HAL_OK)
-            return sprintf(resp_buffer, "\r\n%s: RNG error - %i\r\n", __func__, (int)status);
+        while (!LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+        key[i] = LL_RNG_ReadRandData32(RNG);
+        // return sprintf(resp_buffer, "\r\n%s: RNG error - %i\r\n", __func__, (int)status)
     }
+    HAL_HSEM_Release(HSEM_RNG, 0);
 
     /* send data to the CRYP task */
     encryption_flag = 0;

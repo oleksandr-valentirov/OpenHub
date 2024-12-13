@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include "hsem_table.h"
 
 /* lwip includes */
 #include "lwip/netif.h"
@@ -31,7 +32,6 @@ typedef struct ping_args {
 /* variables */
 struct user_server servers[USER_SERVERS_MAX_NUM];
 extern struct netif gnetif;
-extern RNG_HandleTypeDef hrng;
 
 static uint8_t ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr) {
     UNUSED(pcb);
@@ -55,7 +55,6 @@ static uint8_t ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const i
 static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
     struct icmp_echo_hdr *icmp_hdr;
     uint16_t icmp_hdr_size = sizeof(struct icmp_echo_hdr);
-    uint32_t id = 0;
 
     icmp_hdr = (struct icmp_echo_hdr *)(args->p->payload);
     icmp_hdr->type = ICMP_ECHO;
@@ -64,11 +63,10 @@ static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
 
     /* generate random ID or use default */
     if (args->id == 0) {
-        while (hrng.State != HAL_RNG_STATE_READY) {}
-        if (HAL_RNG_GenerateRandomNumber(&hrng, &id) != HAL_OK)
-            icmp_hdr->id = PING_ID;
-        else
-            icmp_hdr->id = (uint16_t)id;
+        while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+        HAL_HSEM_FastTake(HSEM_RNG);
+        icmp_hdr->id = (uint16_t)LL_RNG_ReadRandData32(RNG);
+        HAL_HSEM_Release(HSEM_RNG, 0);
     } else
         icmp_hdr->id = args->id;
 

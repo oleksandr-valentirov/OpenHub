@@ -27,6 +27,7 @@
 #include <string.h>
 #include "lwip/udp.h"
 #include "crypt.h"
+#include "hsem_table.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,8 +58,6 @@ __ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
                             0x00000000,0x00000000,0x00000000,0x00000000};
 DMA_HandleTypeDef hdma_cryp_in;
 DMA_HandleTypeDef hdma_cryp_out;
-
-RNG_HandleTypeDef hrng;
 
 osThreadId defaultTaskHandle;
 osThreadId cliTaskHandle;
@@ -158,7 +157,7 @@ Error_Handler();
 /* USER CODE END Boot_Mode_Sequence_2 */
 
   /* USER CODE BEGIN SysInit */
-
+  HAL_HSEM_FastTake(HSEM_ID_0); /* to block CPU2 during dependent HW init process */
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -352,15 +351,15 @@ static void MX_RNG_Init(void)
 
   /* USER CODE END RNG_Init 0 */
 
+  LL_RCC_SetRNGClockSource(LL_RCC_RNG_CLKSOURCE_PLL1Q);
+
+  /* Peripheral clock enable */
+  LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_RNG);
+
   /* USER CODE BEGIN RNG_Init 1 */
 
   /* USER CODE END RNG_Init 1 */
-  hrng.Instance = RNG;
-  hrng.Init.ClockErrorDetection = RNG_CED_ENABLE;
-  if (HAL_RNG_Init(&hrng) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  LL_RNG_Enable(RNG);
   /* USER CODE BEGIN RNG_Init 2 */
 
   /* USER CODE END RNG_Init 2 */
@@ -500,6 +499,7 @@ void StartDefaultTask(void const * argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
+  HAL_HSEM_Release(HSEM_ID_0,0);
   /* Infinite loop */
   for(;;) {
     osDelay(1);
