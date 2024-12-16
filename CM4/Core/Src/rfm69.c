@@ -32,6 +32,7 @@ typedef struct rfm69_msg {
 } rfm69_msg_t;
 
 /* variables */
+uint8_t test_transmit_flag = 0;
 static rfm69_state_t state = IDLE;
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
 static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
@@ -83,13 +84,16 @@ static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 141404
 };
 
 /* function prtototypes */
-static uint8_t rfm_set_channel(uint16_t ch_num);
+static uint8_t rfm_set_carrier(uint32_t calculated_carrier);
 static uint8_t rfm_set_mode(rfm69_mode_t mode);
 static uint8_t rfm_set_payload_length(uint8_t value);
 static uint8_t rfm_set_broadcast_addr(uint8_t addr);
 static uint8_t rfm_set_node_addr(uint8_t addr);
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length);
 static uint8_t rfm_config_sync(uint8_t enable, uint8_t length);
+static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len);
+static uint8_t rfm_set_StartTX_condition(uint8_t val);
+static uint8_t rfm_set_packet_config1(uint8_t packet_mode, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering);
 
 
 uint8_t RFM69_Init(void) {
@@ -111,14 +115,32 @@ uint8_t RFM69_Init(void) {
     if (Random_Init(seed))
         return 1;
 
-    // if (rfm_set_broadcast_addr(255))
-    //     return 1;
+    if (rfm_set_broadcast_addr(255))
+        return 1;
+
+    /* test */
+    if (rfm_set_packet_config1(1, 0, 0, 0, 0))
+        return 1;
+
+    if (rfm_set_carrier(14221312))  /* 868 MHz */
+        return 1;
+
+    if (rfm_set_payload_length(5))
+        return 1;
+
+    if (rfm_set_StartTX_condition(1))
+        return 1;
 
     return 0;
 }
 
 void RFM69_Routine(void) {
-    static uint8_t len = 0, read = 0, written = 0;
+    // static uint8_t len = 0, read = 0, written = 0, res = 0;
+    // uint8_t *data = "hello";
+
+    // res = rfm_set_mode(TRANSMIT);
+    // if (res)
+    //     BSP_LED_On(LED_RED);
 
     while (1) {
         switch (state)
@@ -134,22 +156,33 @@ void RFM69_Routine(void) {
         default:
             break;
         }
+
+        if (test_transmit_flag) {
+            test_transmit_flag = 0;
+
+            // res = rfm_transmit_data(data, 5);
+        }
+
+        if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
+            /* process request from the M7 */
+            __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
+            BSP_LED_Toggle(LED_GREEN);
+            /* notify M7 */
+            HAL_HSEM_FastTake(HSEM_M4_TO_M7);
+            HAL_HSEM_Release(HSEM_M4_TO_M7,0);
+        }
     }
 }
 
-static uint8_t rfm_set_channel(uint16_t ch_num) {
-    uint32_t freq;
+static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
     uint8_t data[4];
     uint8_t res = 0;
 
-    if (ch_num >= CH_NUM)
-        return 1;
-
-    freq = freqs[Random_FromTS(HAL_GetTick()) % CH_NUM];
+    /* freq = freqs[Random_FromTS(HAL_GetTick()) % CH_NUM]; */
     data[0] = RFM69_RegFrfMsb;
-    data[1] = (uint8_t)((freq >> 16) & 0xFF);
-    data[2] = (uint8_t)((freq >> 8) & 0xFF);
-    data[3] = (uint8_t)(freq & 0xFF);
+    data[1] = (uint8_t)((calculated_carrier >> 16) & 0xFF);
+    data[2] = (uint8_t)((calculated_carrier >> 8) & 0xFF);
+    data[3] = (uint8_t)(calculated_carrier & 0xFF);
 
     rfm_cs_low();
     if (HAL_SPI_Transmit(RFM_SPI, data, 4, 100) != HAL_OK)
@@ -248,6 +281,48 @@ static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
     
     if (length)
         data[1] |= (length << 3);
+
+    rfm_cs_low();
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
+    rfm_cs_high();
+
+    return res;
+}
+
+static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len) {
+    uint8_t data = RFM69_RegFifo, res = 0;
+
+    rfm_cs_low();
+    HAL_SPI_Transmit(RFM_SPI, &data, 1, 100);
+    if (HAL_SPI_Transmit(RFM_SPI, data_ptr, len, 1000) != HAL_OK)
+        res = 1;
+    rfm_cs_high();
+
+    return res;
+}
+
+static uint8_t rfm_set_StartTX_condition(uint8_t val) {
+    uint8_t data[2] = {RFM69_RegFifoThresh, 15 | ((val & 1) << 7)};
+    uint8_t res = 0;
+
+    rfm_cs_low();
+    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+        res = 1;
+    rfm_cs_high();
+
+    return res;
+}
+
+static uint8_t rfm_set_packet_config1(uint8_t packet_mode, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering) {
+    uint8_t data[2] = {RFM69_RegPacketConfig1, 0};
+    uint8_t res = 0;
+
+    data[1] = (packet_mode & 1) << 7;
+    data[1] |= (dc_free & 3) << 5;
+    data[1] |= (crc_on & 1) << 4;
+    data[1] |= (crc_auto_clear_off & 1) << 3;
+    data[1] |= (addr_filtering & 3) << 1;
 
     rfm_cs_low();
     if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)

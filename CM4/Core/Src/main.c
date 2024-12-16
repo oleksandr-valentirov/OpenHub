@@ -110,11 +110,13 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
-  BSP_LED_On(LED_YELLOW);
   if(RFM69_Init())
     BSP_LED_On(LED_RED);
   else
     BSP_LED_On(LED_GREEN);
+
+  /* Activate HSEM notification for Cortex-M4*/
+  HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
   /* USER CODE END 2 */
 
   /* Infinite loop */

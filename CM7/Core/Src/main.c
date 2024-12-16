@@ -500,6 +500,9 @@ void StartDefaultTask(void const * argument)
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
   HAL_HSEM_Release(HSEM_ID_0,0);
+  /* Activate HSEM notification for Cortex-M7*/
+  HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+
   /* Infinite loop */
   for(;;) {
     osDelay(1);

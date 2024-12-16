@@ -6,6 +6,7 @@
 #include "cli.h"
 #include "networking.h"
 #include "crypt.h"
+#include "hsem_table.h"
 
 /* HAL/LL */
 #include "stm32h7xx_ll_usart.h"
@@ -104,6 +105,23 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                         Networking_ping_command(strtok_temp, 4, 0, 1, NULL);
                     else
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: ping <ip addr>\r\n");
+                } else if (strncmp(strtok_temp, "rfm", strlen("rfm")) == 0) {
+                    strtok_temp = strtok(NULL, " ");
+                    if (strncmp(strtok_temp, "dump", strlen("dump")) == 0) {
+                        /* send request */
+                        HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
+                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
+
+                        /* wait for the response*/
+                        while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
+                            osDelay(10);
+                        /* process response */
+                        __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+                        BSP_LED_Toggle(LED_RED);
+                        
+                    } else {
+                        cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd>\r\n- dump\tdump pre-programmed list of registers\r\n");
+                    }
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                     cli->response_len += sprintf(cli->response_buffer + cli->response_len, "%s\r\n", cli->cmd_buffer);

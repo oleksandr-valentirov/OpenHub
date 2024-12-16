@@ -57,7 +57,7 @@
 /* External variables --------------------------------------------------------*/
 
 /* USER CODE BEGIN EV */
-
+extern uint8_t test_transmit_flag;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -187,7 +187,8 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-
+  if (HAL_GetTick() % 1000 == 0)
+    test_transmit_flag = 1;
   /* USER CODE END SysTick_IRQn 1 */
 }
 

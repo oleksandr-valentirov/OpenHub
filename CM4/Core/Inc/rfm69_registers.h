@@ -57,6 +57,7 @@
 #define RFM69_RegPayloadLength  0x38
 #define RFM69_RegNodeAdrs       0x39
 #define RFM69_RegBroadcastAdrs  0x3A
+#define RFM69_RegFifoThresh     0x3C
 /* Temperature Sensor Registers */
 
 /* Test Registers */
