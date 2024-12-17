@@ -18,6 +18,7 @@
 /* variables */
 const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
 const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
+static uint8_t *rfm_shared_buffer = (uint8_t *)(0x38000000);
 
 /* functions definitions */
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
@@ -28,6 +29,7 @@ void CLI_Task(void const * argument) {
     cli_data_t cli;
 
     memset(&cli, 0, sizeof(cli_data_t));
+    memset(rfm_shared_buffer, 0, 8);
     for (;;) {
         if (CLI_ProcessCmd(&cli, (char)getchar()) || cli.response_len <= 0) {
             /* log an error */
@@ -109,6 +111,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                     strtok_temp = strtok(NULL, " ");
                     if (strncmp(strtok_temp, "dump", strlen("dump")) == 0) {
                         /* send request */
+                        *rfm_shared_buffer = 5;
                         HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
                         HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
 
@@ -117,7 +120,8 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                             osDelay(10);
                         /* process response */
                         __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
-                        BSP_LED_Toggle(LED_RED);
+                        if (*(rfm_shared_buffer + 1) == 10)
+                            BSP_LED_Toggle(LED_RED);
                         
                     } else {
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd>\r\n- dump\tdump pre-programmed list of registers\r\n");

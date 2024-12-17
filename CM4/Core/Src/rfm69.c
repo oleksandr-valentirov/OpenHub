@@ -33,6 +33,7 @@ typedef struct rfm69_msg {
 
 /* variables */
 uint8_t test_transmit_flag = 0;
+static uint8_t * rfm_shared_buffer = (uint8_t *)(0x38000000);
 static rfm69_state_t state = IDLE;
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
 static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
@@ -166,10 +167,12 @@ void RFM69_Routine(void) {
         if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
             /* process request from the M7 */
             __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
-            BSP_LED_Toggle(LED_GREEN);
+            if (*rfm_shared_buffer == 5)
+                BSP_LED_Toggle(LED_GREEN);
             /* notify M7 */
             HAL_HSEM_FastTake(HSEM_M4_TO_M7);
             HAL_HSEM_Release(HSEM_M4_TO_M7,0);
+            *(rfm_shared_buffer + 1) = 10;
         }
     }
 }
