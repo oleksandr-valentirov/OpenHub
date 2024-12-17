@@ -44,7 +44,20 @@
 /* IRQ and Pin Mapping Registers */
 
 /* Packet Engine Registers */
-
+#define RFM69_RegSyncConfig     0x2E
+#define RFM69_RegSyncValue1     0x2F
+#define RFM69_RegSyncValue2     0x30
+#define RFM69_RegSyncValue3     0x31
+#define RFM69_RegSyncValue4     0x32
+#define RFM69_RegSyncValue5     0x33
+#define RFM69_RegSyncValue6     0x34
+#define RFM69_RegSyncValue7     0x35
+#define RFM69_RegSyncValue8     0x36
+#define RFM69_RegPacketConfig1  0x37
+#define RFM69_RegPayloadLength  0x38
+#define RFM69_RegNodeAdrs       0x39
+#define RFM69_RegBroadcastAdrs  0x3A
+#define RFM69_RegFifoThresh     0x3C
 /* Temperature Sensor Registers */
 
 /* Test Registers */

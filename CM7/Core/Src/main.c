@@ -27,6 +27,7 @@
 #include <string.h>
 #include "lwip/udp.h"
 #include "crypt.h"
+#include "hsem_table.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,8 +58,6 @@ __ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
                             0x00000000,0x00000000,0x00000000,0x00000000};
 DMA_HandleTypeDef hdma_cryp_in;
 DMA_HandleTypeDef hdma_cryp_out;
-
-RNG_HandleTypeDef hrng;
 
 osThreadId defaultTaskHandle;
 osThreadId cliTaskHandle;
@@ -158,7 +157,7 @@ Error_Handler();
 /* USER CODE END Boot_Mode_Sequence_2 */
 
   /* USER CODE BEGIN SysInit */
-
+  HAL_HSEM_FastTake(HSEM_ID_0); /* to block CPU2 during dependent HW init process */
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -214,8 +213,8 @@ Error_Handler();
   BSP_LED_Init(LED_YELLOW);
   BSP_LED_Init(LED_RED);
 
-  /* Initialize USER push-button, will be used to trigger an interrupt each time it's pressed.*/
-  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_EXTI);
+  /* Initialize User push-button without interrupt mode. */
+  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_GPIO);
 
   /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
   BspCOMInit.BaudRate   = 115200;
@@ -276,7 +275,7 @@ void SystemClock_Config(void)
   LL_RCC_PLL1_SetM(1);
   LL_RCC_PLL1_SetN(100);
   LL_RCC_PLL1_SetP(2);
-  LL_RCC_PLL1_SetQ(5);
+  LL_RCC_PLL1_SetQ(4);
   LL_RCC_PLL1_SetR(2);
   LL_RCC_PLL1_Enable();
 
@@ -352,15 +351,15 @@ static void MX_RNG_Init(void)
 
   /* USER CODE END RNG_Init 0 */
 
+  LL_RCC_SetRNGClockSource(LL_RCC_RNG_CLKSOURCE_PLL1Q);
+
+  /* Peripheral clock enable */
+  LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_RNG);
+
   /* USER CODE BEGIN RNG_Init 1 */
 
   /* USER CODE END RNG_Init 1 */
-  hrng.Instance = RNG;
-  hrng.Init.ClockErrorDetection = RNG_CED_ENABLE;
-  if (HAL_RNG_Init(&hrng) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  LL_RNG_Enable(RNG);
   /* USER CODE BEGIN RNG_Init 2 */
 
   /* USER CODE END RNG_Init 2 */
@@ -500,6 +499,10 @@ void StartDefaultTask(void const * argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
+  HAL_HSEM_Release(HSEM_ID_0,0);
+  /* Activate HSEM notification for Cortex-M7*/
+  HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+
   /* Infinite loop */
   for(;;) {
     osDelay(1);
@@ -529,6 +532,11 @@ void MPU_Config(void)
   */
   LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER2, 0x0, 0x30040000, LL_MPU_REGION_SIZE_512B|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
   LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER2);
+
+  /** Initializes and configures the Region and the memory to be protected
+  */
+  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER3, 0x0, 0x38000000, LL_MPU_REGION_SIZE_64KB|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
+  LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER3);
   /* Enables the MPU */
   LL_MPU_Enable(LL_MPU_CTRL_PRIVILEGED_DEFAULT);
 

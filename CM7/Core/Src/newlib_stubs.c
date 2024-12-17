@@ -1,5 +1,6 @@
 #include "stm32h7xx_ll_usart.h"
 #include "cmsis_os.h"
+#include <stdio.h>
 
 
 int _read(int file, char *ptr, int len) {
@@ -46,5 +47,6 @@ void free(void *ptr) {
 
 
 void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName ) {
+    (void) xTask;
     printf("overflow - %s\r\n", pcTaskName);
 }

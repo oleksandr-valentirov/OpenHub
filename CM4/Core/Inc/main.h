@@ -40,13 +40,13 @@ extern "C" {
 #include "stm32h7xx_ll_utils.h"
 #include "stm32h7xx_ll_pwr.h"
 #include "stm32h7xx_ll_dma.h"
-#include "stm32h7xx_ll_spi.h"
+#include "stm32h7xx_ll_rng.h"
 #include "stm32h7xx_ll_usart.h"
 #include "stm32h7xx_ll_gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stm32h7xx_hal_spi.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -66,6 +66,7 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
+void MX_RNG_Init(void);
 
 /* USER CODE BEGIN EFP */
 

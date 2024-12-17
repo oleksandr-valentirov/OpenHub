@@ -1,12 +1,11 @@
 #pragma once
 
 #include "rfm69_registers.h"
-#include "stm32h7xx_ll_spi.h"
-
 #include "main.h"   /* for pin defines */
 
 /* portability defines */
-#define RFM_SPI     SPI1
+extern SPI_HandleTypeDef hspi1;
+#define RFM_SPI     (&hspi1)
 
 #ifndef RFM_CS_GPIO_Port
 #error "RFM_CS_GPIO_Port not defined"
@@ -57,3 +56,4 @@
 /* portability defines end */
 
 uint8_t RFM69_Init(void);
+void RFM69_Routine(void);
