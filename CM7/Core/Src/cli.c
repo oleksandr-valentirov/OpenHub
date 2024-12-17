@@ -7,6 +7,8 @@
 #include "networking.h"
 #include "crypt.h"
 #include "hsem_table.h"
+#include "shared_memory.h"
+#include "rfm69_registers.h"
 
 /* HAL/LL */
 #include "stm32h7xx_ll_usart.h"
@@ -18,7 +20,11 @@
 /* variables */
 const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
 const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
-static uint8_t *rfm_shared_buffer = (uint8_t *)(0x38000000);
+static m7_to_m4_rfm_request_t *rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x38000000);
+static uint8_t rfm_regs_to_dump[] = {
+    RFM69_RegVersion, RFM69_RegBroadcastAdrs, RFM69_RegPacketConfig1, RFM69_RegFrfMsb, RFM69_RegFrfMid, RFM69_RegFrfLsb,
+    RFM69_RegPayloadLength, RFM69_RegFifoThresh
+};
 
 /* functions definitions */
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
@@ -29,7 +35,7 @@ void CLI_Task(void const * argument) {
     cli_data_t cli;
 
     memset(&cli, 0, sizeof(cli_data_t));
-    memset(rfm_shared_buffer, 0, 8);
+    memset(rfm_shared_buffer, 0, sizeof(m7_to_m4_rfm_request_t));
     for (;;) {
         if (CLI_ProcessCmd(&cli, (char)getchar()) || cli.response_len <= 0) {
             /* log an error */
@@ -50,6 +56,7 @@ void CLI_Task(void const * argument) {
  */
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
     uint8_t res = 0;
+    uint32_t i = 0;
     char *strtok_temp = NULL;
 
     cli->response_len = 0;
@@ -110,19 +117,22 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                 } else if (strncmp(strtok_temp, "rfm", strlen("rfm")) == 0) {
                     strtok_temp = strtok(NULL, " ");
                     if (strncmp(strtok_temp, "dump", strlen("dump")) == 0) {
+                        cli->response_len = sprintf(cli->response_buffer, "\r\nReg Value\r\n");
                         /* send request */
-                        *rfm_shared_buffer = 5;
-                        HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
-                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
+                        for (i = 0; i < (sizeof(rfm_regs_to_dump) / sizeof(rfm_regs_to_dump[0])); i++) {
+                            rfm_shared_buffer->request_type = 0;
+                            rfm_shared_buffer->arg = rfm_regs_to_dump[i];
+                            HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
+                            HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
 
-                        /* wait for the response*/
-                        while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
-                            osDelay(10);
-                        /* process response */
-                        __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
-                        if (*(rfm_shared_buffer + 1) == 10)
-                            BSP_LED_Toggle(LED_RED);
-                        
+                            /* wait for the response*/
+                            while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
+                                osDelay(10);
+                            /* process response */
+                            __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+                            cli->response_len += sprintf(cli->response_buffer + cli->response_len, 
+                            "0x%02x 0x%02x\r\n", rfm_regs_to_dump[i], rfm_shared_buffer->payload[0]);
+                        }
                     } else {
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd>\r\n- dump\tdump pre-programmed list of registers\r\n");
                     }
