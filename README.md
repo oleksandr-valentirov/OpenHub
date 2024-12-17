@@ -49,6 +49,14 @@ as described <a href="https://community.st.com/t5/stm32-mcus-embedded-software/l
             <td>Hardware semaphores table</td>
         </tr>
         <tr>
+            <td>Common/inc/rfm69_registers.h</td>
+            <td>Obvious</td>
+        </tr>
+        <tr>
+            <td>Common/inc/shared_memory.h</td>
+            <td>Structures used for communication between cores</td>
+        </tr>
+        <tr>
             <td>CM4/Core/src/rfm69.c</td>
             <td>RFM69 driver</td>
         </tr>

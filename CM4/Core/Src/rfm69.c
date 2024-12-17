@@ -86,6 +86,7 @@ static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 141404
 };
 
 /* function prtototypes */
+static uint8_t rfm_write(uint8_t *ptr, uint8_t len);
 static uint8_t rfm_set_carrier(uint32_t calculated_carrier);
 static uint8_t rfm_set_mode(rfm69_mode_t mode);
 static uint8_t rfm_set_payload_length(uint8_t value);
@@ -146,12 +147,6 @@ uint8_t RFM69_Init(void) {
 }
 
 void RFM69_Routine(void) {
-    // static uint8_t len = 0, read = 0, written = 0, res = 0;
-    // uint8_t *data = "hello";
-
-    // res = rfm_set_mode(TRANSMIT);
-    // if (res)
-    //     BSP_LED_On(LED_RED);
 
     while (1) {
         switch (state)
@@ -171,7 +166,25 @@ void RFM69_Routine(void) {
         if (test_transmit_flag) {
             test_transmit_flag = 0;
 
-            // res = rfm_transmit_data(data, 5);
+#if 0
+            res = rfm_set_mode(TRANSMIT);
+            if (res)
+                BSP_LED_On(LED_RED);
+            while (!test_transmit_flag) {}
+            test_transmit_flag = 0;
+
+            res = rfm_transmit_data("hello", 5);
+            if (res)
+                BSP_LED_On(LED_RED);
+
+            res = rfm_set_mode(STANDBY);
+            if (res)
+                BSP_LED_On(LED_RED);
+            while (!test_transmit_flag) {}
+            test_transmit_flag = 0;
+
+            BSP_LED_Toggle(LED_YELLOW);
+#endif
         }
 
         if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
@@ -200,10 +213,7 @@ static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
     data[2] = (uint8_t)((calculated_carrier >> 8) & 0xFF);
     data[3] = (uint8_t)(calculated_carrier & 0xFF);
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 4, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -219,10 +229,7 @@ static uint8_t rfm_set_mode(rfm69_mode_t mode) {
     else
         data[1] = 1 << 6;
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -232,10 +239,7 @@ static uint8_t rfm_set_payload_length(uint8_t value) {
     uint8_t data[2] = {RFM69_RegPayloadLength, value};
     uint8_t res = 0;
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -244,10 +248,7 @@ static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegBroadcastAdrs, addr};
     uint8_t res = 0;
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -256,10 +257,7 @@ static uint8_t rfm_set_node_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegNodeAdrs, addr};
     uint8_t res = 0;
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -298,16 +296,13 @@ static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
     if (length)
         data[1] |= (length << 3);
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
 
 static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len) {
-    uint8_t data = RFM69_RegFifo, res = 0;
+    uint8_t data = RFM69_RegFifo | 128, res = 0;
 
     rfm_cs_low();
     HAL_SPI_Transmit(RFM_SPI, &data, 1, 100);
@@ -322,10 +317,7 @@ static uint8_t rfm_set_StartTX_condition(uint8_t val) {
     uint8_t data[2] = {RFM69_RegFifoThresh, 15 | ((val & 1) << 7)};
     uint8_t res = 0;
 
-    rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
-        res = 1;
-    rfm_cs_high();
+    res = rfm_write(data, 2);
 
     return res;
 }
@@ -340,8 +332,17 @@ static uint8_t rfm_set_packet_config1(uint8_t packet_mode, uint8_t dc_free, uint
     data[1] |= (crc_auto_clear_off & 1) << 3;
     data[1] |= (addr_filtering & 3) << 1;
 
+    res = rfm_write(data, 2);
+
+    return res;
+}
+
+static uint8_t rfm_write(uint8_t *ptr, uint8_t len) {
+    uint8_t res = 0;
+
+    ptr[0] |= 128;  /* set write bit of addr */
     rfm_cs_low();
-    if (HAL_SPI_Transmit(RFM_SPI, data, 2, 100) != HAL_OK)
+    if (HAL_SPI_Transmit(RFM_SPI, ptr, len, 100) != HAL_OK)
         res = 1;
     rfm_cs_high();
 
