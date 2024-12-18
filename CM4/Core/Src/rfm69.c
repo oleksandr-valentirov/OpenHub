@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "rfm69.h"
 #include "random.h"
 #include "hsem_table.h"
@@ -94,16 +96,19 @@ static uint8_t rfm_set_payload_length(uint8_t value);
 static uint8_t rfm_set_broadcast_addr(uint8_t addr);
 static uint8_t rfm_set_node_addr(uint8_t addr);
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length);
-static uint8_t rfm_config_sync(uint8_t enable, uint8_t length);
+static uint8_t rfm_config_sync(uint8_t enable, uint8_t length, uint8_t err_tol, uint8_t *data_ptr);
 static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len);
 static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold);
 static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering);
 static uint8_t rfm_set_dio_mapping(uint8_t dio, uint8_t val);
+static uint8_t rfm_set_preamble_length(uint16_t len);
+static uint8_t rfm_set_bit_rate(uint8_t msb, uint8_t lsb);
 
 
 uint8_t RFM69_Init(void) {
     uint8_t version = RFM69_RegVersion;
     uint32_t seed;
+    uint8_t sync_val[] = {73, 27, 27, 73};
 
     rfm_cs_low();
     if (HAL_SPI_Transmit(RFM_SPI, &version, 1, 100) != HAL_OK) {
@@ -143,6 +148,15 @@ uint8_t RFM69_Init(void) {
         return 1;
 
     if (rfm_set_config_fifo(1, 5))
+        return 1;
+
+    if (rfm_config_sync(1, 4, 4, sync_val))
+        return 1;
+
+    if (rfm_set_bit_rate(0x0D, 0x05))
+        return 1;
+
+    if (rfm_set_preamble_length(4))
         return 1;
 
     return 0;
@@ -318,24 +332,22 @@ static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length) {
 }
 
 /*
+ *  @brief  configs Sync word
  *  @retval 0 - OK
  *  @retval 1 - SPI comm error
+ *  @retval 2 - bad length
  */
-static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
-    uint8_t data[2] = {0, 0};
+static uint8_t rfm_config_sync(uint8_t enable, uint8_t length, uint8_t err_tol, uint8_t *data_ptr) {
+    uint8_t data[10] = {RFM69_RegSyncConfig, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     uint8_t res = 0;
 
-    if (length > 7 && enable)
-        return 1;
+    if (length > 7)
+        return 2;
 
-    data[0] = RFM69_RegSyncConfig;
-    if (enable)
-        data[1] |= (1 << 7);
-    
-    if (length)
-        data[1] |= (length << 3);
+    data[1] |= ((enable & 1) << 7) | (length << 3) | (err_tol & 7);
+    memcpy(data + 2, data_ptr, length);
 
-    res = rfm_write(data, 2);
+    res = rfm_write(data, length + 2);
 
     return res;
 }
@@ -491,4 +503,28 @@ static uint8_t rfm_set_dio_mapping(uint8_t dio, uint8_t val) {
     res = rfm_write(data, 2);
 
     return res;
+}
+
+/*
+ *  @brief  set preable length (a length of sequence of 1 an 0 in bytes)
+ *  @param  len length value
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
+static uint8_t rfm_set_preamble_length(uint16_t len) {
+    uint8_t data[3] = {RFM69_RegPreambleMsb, (uint8_t)((len >> 8) & 0xFF), (uint8_t)(len & 0xFF)};
+
+    return rfm_write(data, 3);
+}
+
+/*
+ *  @brief  set preable length (a length of sequence of 1 an 0 in bytes)
+ *  @param  len length value
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
+static uint8_t rfm_set_bit_rate(uint8_t msb, uint8_t lsb) {
+    uint8_t data[3] = {RFM69_RegBitrateMsb, msb, lsb};
+
+    return rfm_write(data, 3);
 }

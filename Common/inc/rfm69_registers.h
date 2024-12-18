@@ -44,6 +44,7 @@
 /* IRQ and Pin Mapping Registers */
 #define RFM69_RegDioMapping1    0x25    /* DIO0 - DIO3 */
 #define RFM69_RegDioMapping2    0x26    /* DIO4, DIO5, ClkOut */
+#define RFM69_RegPreambleMsb    0x2C
 
 /* Packet Engine Registers */
 #define RFM69_RegSyncConfig     0x2E
