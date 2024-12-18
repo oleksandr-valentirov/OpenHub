@@ -247,12 +247,6 @@ static void MX_GPIO_Init(void)
   LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTC, LL_SYSCFG_EXTI_LINE8);
 
   /**/
-  LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTC, LL_SYSCFG_EXTI_LINE9);
-
-  /**/
-  LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTC, LL_SYSCFG_EXTI_LINE12);
-
-  /**/
   LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTD, LL_SYSCFG_EXTI_LINE2);
 
   /**/
@@ -260,24 +254,6 @@ static void MX_GPIO_Init(void)
 
   /**/
   EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_8;
-  EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.LineCommand = ENABLE;
-  EXTI_InitStruct.Mode = LL_EXTI_MODE_IT;
-  EXTI_InitStruct.Trigger = LL_EXTI_TRIGGER_RISING;
-  LL_EXTI_Init(&EXTI_InitStruct);
-
-  /**/
-  EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_9;
-  EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.LineCommand = ENABLE;
-  EXTI_InitStruct.Mode = LL_EXTI_MODE_IT;
-  EXTI_InitStruct.Trigger = LL_EXTI_TRIGGER_RISING;
-  LL_EXTI_Init(&EXTI_InitStruct);
-
-  /**/
-  EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_12;
   EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
   EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
   EXTI_InitStruct.LineCommand = ENABLE;
@@ -307,12 +283,6 @@ static void MX_GPIO_Init(void)
   LL_GPIO_SetPinPull(RFM_DIO3_GPIO_Port, RFM_DIO3_Pin, LL_GPIO_PULL_NO);
 
   /**/
-  LL_GPIO_SetPinPull(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin, LL_GPIO_PULL_NO);
-
-  /**/
-  LL_GPIO_SetPinPull(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin, LL_GPIO_PULL_NO);
-
-  /**/
   LL_GPIO_SetPinPull(RFM_DIO1_GPIO_Port, RFM_DIO1_Pin, LL_GPIO_PULL_NO);
 
   /**/
@@ -322,16 +292,16 @@ static void MX_GPIO_Init(void)
   LL_GPIO_SetPinMode(RFM_DIO3_GPIO_Port, RFM_DIO3_Pin, LL_GPIO_MODE_INPUT);
 
   /**/
-  LL_GPIO_SetPinMode(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin, LL_GPIO_MODE_INPUT);
-
-  /**/
-  LL_GPIO_SetPinMode(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin, LL_GPIO_MODE_INPUT);
-
-  /**/
   LL_GPIO_SetPinMode(RFM_DIO1_GPIO_Port, RFM_DIO1_Pin, LL_GPIO_MODE_INPUT);
 
   /**/
   LL_GPIO_SetPinMode(RFM_DIO2_GPIO_Port, RFM_DIO2_Pin, LL_GPIO_MODE_INPUT);
+
+  /**/
+  GPIO_InitStruct.Pin = RFM_DIO4_Pin|RFM_DIO0_Pin;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  LL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /**/
   GPIO_InitStruct.Pin = RFM_CS_Pin;

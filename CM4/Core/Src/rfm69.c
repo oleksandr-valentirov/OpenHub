@@ -98,6 +98,7 @@ static uint8_t rfm_config_sync(uint8_t enable, uint8_t length);
 static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len);
 static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold);
 static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering);
+static uint8_t rfm_set_dio_mapping(uint8_t dio, uint8_t val);
 
 
 uint8_t RFM69_Init(void) {
@@ -148,8 +149,6 @@ uint8_t RFM69_Init(void) {
 }
 
 void RFM69_Routine(void) {
-    uint8_t res = 0;
-
     while (1) {
         switch (state)
         {
@@ -158,6 +157,16 @@ void RFM69_Routine(void) {
         case CONFIG:
             break;
         case TX:
+            (void)rfm_set_dio_mapping(4, 0);
+            (void)rfm_set_dio_mapping(0, 0);
+            (void)rfm_set_mode(TRANSMIT);
+            /* wait for ModeReady */
+            while(!LL_GPIO_IsInputPinSet(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin)) {}
+            // rfm_transmit_data((uint8_t *)"hello", 5);
+            /* wait for PacketSent */
+            while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            (void)rfm_set_mode(STANDBY);
+
             break;
         case RX:
             break;
@@ -168,17 +177,20 @@ void RFM69_Routine(void) {
         if (test_transmit_flag) {
             test_transmit_flag = 0;
 
-#if 0
-            res = rfm_set_mode(TRANSMIT);
-            if (res)
+#if 1
+            if (rfm_set_dio_mapping(4, 0))
                 BSP_LED_On(LED_RED);
-
-            res = rfm_transmit_data((uint8_t *)"hello", 5);
-            if (res)
+            if (rfm_set_dio_mapping(0, 0))
                 BSP_LED_On(LED_RED);
-
-            res = rfm_set_mode(STANDBY);
-            if (res)
+            if (rfm_set_mode(TRANSMIT))
+                BSP_LED_On(LED_RED);
+            /* wait for ModeReady */
+            while(!LL_GPIO_IsInputPinSet(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin)) {}
+            if (rfm_transmit_data((uint8_t *)"hello ", 5))
+                BSP_LED_On(LED_RED);
+            /* wait for PacketSent */
+            while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            if (rfm_set_mode(STANDBY))
                 BSP_LED_On(LED_RED);
 
             BSP_LED_Toggle(LED_YELLOW);
@@ -200,6 +212,8 @@ void RFM69_Routine(void) {
 /*
  *  @brief  changes carrier frequency. default freq is 915 MHz
  *  @param  calculated_carrier = freq / 61.03515625
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
     uint8_t data[4] = {RFM69_RegFrfMsb, 0, 0, 0};
@@ -217,6 +231,8 @@ static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
 
 /*
  *  @brief  changes mode of operation - sleep, standby, fs, tx, rx
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_mode(rfm69_mode_t mode) {
     uint8_t data[2];
@@ -236,6 +252,8 @@ static uint8_t rfm_set_mode(rfm69_mode_t mode) {
 
 /*
  *  @brief  sets payload length (for which mode ??)
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_payload_length(uint8_t value) {
     uint8_t data[2] = {RFM69_RegPayloadLength, value};
@@ -248,6 +266,8 @@ static uint8_t rfm_set_payload_length(uint8_t value) {
 
 /*
  *  @brief  sets broadcast address
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegBroadcastAdrs, addr};
@@ -260,6 +280,8 @@ static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
 
 /*
  *  @brief  sets current device address
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_node_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegNodeAdrs, addr};
@@ -270,7 +292,12 @@ static uint8_t rfm_set_node_addr(uint8_t addr) {
     return res;
 }
 
-/* sync word or network ID - same things in the context of RFM */
+/* 
+ *  @brief  sync word or network ID - same things in the context of RFM
+ *
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length) {
     uint8_t data[9];
     uint8_t res = 0;
@@ -290,6 +317,10 @@ static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length) {
     return res;
 }
 
+/*
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
 static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
     uint8_t data[2] = {0, 0};
     uint8_t res = 0;
@@ -309,6 +340,10 @@ static uint8_t rfm_config_sync(uint8_t enable, uint8_t length) {
     return res;
 }
 
+/*
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
 static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len) {
     uint8_t data = RFM69_RegFifo | 128, res = 0;
 
@@ -326,6 +361,8 @@ static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len) {
  *  @param  fifo_mode - Defines the condition to start packet transmission 
  *          0 - the number of bytes in the FIFO exceeds FifoThreshold
  *          1 - FifoNotEmpty
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold) {
     uint8_t data[2] = {RFM69_RegFifoThresh, ((fifo_mode & 1) << 7) | (fifo_threshold & 127)};
@@ -346,6 +383,9 @@ static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold) {
  *          00 → None (Off)
  *          01 → Address field must match NodeAddress
  *          10 → Address field must match NodeAddress or BroadcastAddress
+ * 
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
  */
 static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering) {
     uint8_t data[2] = {RFM69_RegPacketConfig1, 0};
@@ -362,6 +402,10 @@ static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t d
     return res;
 }
 
+/*
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
 static uint8_t rfm_write(uint8_t *ptr, uint8_t len) {
     uint8_t res = 0;
 
@@ -374,6 +418,10 @@ static uint8_t rfm_write(uint8_t *ptr, uint8_t len) {
     return res;
 }
 
+/*
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ */
 static uint8_t rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
     uint8_t res = 0;
 
@@ -386,6 +434,61 @@ static uint8_t rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
             res = 1;
     }
     rfm_cs_high();
+
+    return res;
+}
+
+/*
+ *  @brief  Configs DIO functions; ClockOut remains OFF
+ *  @param  dio DIO num 0-5
+ *  @param  val dio state value 0-3
+ *  @retval 0 - OK
+ *  @retval 1 - SPI comm error
+ *  @retval 2 - bad dio value
+ */
+static uint8_t rfm_set_dio_mapping(uint8_t dio, uint8_t val) {
+    static uint8_t dio_map1_state = 0, dio_map2_state = 7;  /* default values of DIO registers */
+    uint8_t data[2] = {0, 0};
+    uint8_t res = 0;
+
+    if (dio <= 3)
+        data[0] = RFM69_RegDioMapping1;
+    else if (dio <= 5)
+        data[0] = RFM69_RegDioMapping2;
+    else
+        return 2;
+
+    switch (dio)
+    {
+    case 0:
+        dio_map1_state |= ((val & 3) << 6);
+        data[1] = dio_map1_state;
+        break;
+    case 1:
+        dio_map1_state |= ((val & 3) << 4);
+        data[1] = dio_map1_state;
+        break;
+    case 2:
+        dio_map1_state |= ((val & 3) << 2);
+        data[1] = dio_map1_state;
+        break;
+    case 3:
+        dio_map1_state |= (val & 3);
+        data[1] = dio_map1_state;
+        break;
+    case 4:
+        dio_map2_state |= ((val & 3) << 6);
+        data[1] = dio_map2_state;
+        break;
+    case 5:
+        dio_map2_state |= ((val & 3) << 4);
+        data[1] = dio_map2_state;
+        break;
+    default:
+        break;
+    }
+
+    res = rfm_write(data, 2);
 
     return res;
 }
