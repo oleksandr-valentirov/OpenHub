@@ -147,6 +147,7 @@ uint8_t RFM69_Init(void) {
 }
 
 void RFM69_Routine(void) {
+    uint8_t res = 0;
 
     while (1) {
         switch (state)
@@ -173,7 +174,7 @@ void RFM69_Routine(void) {
             while (!test_transmit_flag) {}
             test_transmit_flag = 0;
 
-            res = rfm_transmit_data("hello", 5);
+            res = rfm_transmit_data((uint8_t *)"hello", 5);
             if (res)
                 BSP_LED_On(LED_RED);
 
@@ -204,16 +205,15 @@ void RFM69_Routine(void) {
 }
 
 static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
-    uint8_t data[4];
+    uint8_t data[4] = {RFM69_RegFrfMsb, 0, 0, 0};
     uint8_t res = 0;
 
     /* freq = freqs[Random_FromTS(HAL_GetTick()) % CH_NUM]; */
-    data[0] = RFM69_RegFrfMsb;
     data[1] = (uint8_t)((calculated_carrier >> 16) & 0xFF);
     data[2] = (uint8_t)((calculated_carrier >> 8) & 0xFF);
     data[3] = (uint8_t)(calculated_carrier & 0xFF);
 
-    res = rfm_write(data, 2);
+    res = rfm_write(data, 4);
 
     return res;
 }
