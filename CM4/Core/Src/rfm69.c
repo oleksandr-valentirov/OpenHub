@@ -87,6 +87,7 @@ static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 141404
 
 /* function prtototypes */
 static uint8_t rfm_write(uint8_t *ptr, uint8_t len);
+static uint8_t rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len);
 static uint8_t rfm_set_carrier(uint32_t calculated_carrier);
 static uint8_t rfm_set_mode(rfm69_mode_t mode);
 static uint8_t rfm_set_payload_length(uint8_t value);
@@ -95,8 +96,8 @@ static uint8_t rfm_set_node_addr(uint8_t addr);
 static uint8_t rfm_set_network_id(uint8_t *id, uint8_t length);
 static uint8_t rfm_config_sync(uint8_t enable, uint8_t length);
 static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len);
-static uint8_t rfm_set_StartTX_condition(uint8_t val);
-static uint8_t rfm_set_packet_config1(uint8_t packet_mode, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering);
+static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold);
+static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering);
 
 
 uint8_t RFM69_Init(void) {
@@ -140,7 +141,7 @@ uint8_t RFM69_Init(void) {
     if (rfm_set_payload_length(5))
         return 1;
 
-    if (rfm_set_StartTX_condition(1))
+    if (rfm_set_config_fifo(1, 5))
         return 1;
 
     return 0;
@@ -171,8 +172,6 @@ void RFM69_Routine(void) {
             res = rfm_set_mode(TRANSMIT);
             if (res)
                 BSP_LED_On(LED_RED);
-            while (!test_transmit_flag) {}
-            test_transmit_flag = 0;
 
             res = rfm_transmit_data((uint8_t *)"hello", 5);
             if (res)
@@ -181,8 +180,6 @@ void RFM69_Routine(void) {
             res = rfm_set_mode(STANDBY);
             if (res)
                 BSP_LED_On(LED_RED);
-            while (!test_transmit_flag) {}
-            test_transmit_flag = 0;
 
             BSP_LED_Toggle(LED_YELLOW);
 #endif
@@ -191,12 +188,8 @@ void RFM69_Routine(void) {
         if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
             /* process request from the M7 */
             __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
-            if (rfm_shared_buffer->request_type == 0) {
-                rfm_cs_low();
-                HAL_SPI_Transmit(RFM_SPI, &(rfm_shared_buffer->arg), 1, 100);
-                HAL_SPI_Receive(RFM_SPI, &(rfm_shared_buffer->payload[0]), 1, 100);
-                rfm_cs_high();
-            }
+            if (rfm_shared_buffer->request_type == 0)
+                rfm_read(rfm_shared_buffer->arg, &(rfm_shared_buffer->payload[0]), 1);
             /* notify M7 */
             HAL_HSEM_FastTake(HSEM_M4_TO_M7);
             HAL_HSEM_Release(HSEM_M4_TO_M7,0);
@@ -204,6 +197,10 @@ void RFM69_Routine(void) {
     }
 }
 
+/*
+ *  @brief  changes carrier frequency. default freq is 915 MHz
+ *  @param  calculated_carrier = freq / 61.03515625
+ */
 static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
     uint8_t data[4] = {RFM69_RegFrfMsb, 0, 0, 0};
     uint8_t res = 0;
@@ -218,6 +215,9 @@ static uint8_t rfm_set_carrier(uint32_t calculated_carrier) {
     return res;
 }
 
+/*
+ *  @brief  changes mode of operation - sleep, standby, fs, tx, rx
+ */
 static uint8_t rfm_set_mode(rfm69_mode_t mode) {
     uint8_t data[2];
     uint8_t res = 0;
@@ -234,7 +234,9 @@ static uint8_t rfm_set_mode(rfm69_mode_t mode) {
     return res;
 }
 
-/* !! sets payload length for the receiver mode !!*/
+/*
+ *  @brief  sets payload length (for which mode ??)
+ */
 static uint8_t rfm_set_payload_length(uint8_t value) {
     uint8_t data[2] = {RFM69_RegPayloadLength, value};
     uint8_t res = 0;
@@ -244,6 +246,9 @@ static uint8_t rfm_set_payload_length(uint8_t value) {
     return res;
 }
 
+/*
+ *  @brief  sets broadcast address
+ */
 static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegBroadcastAdrs, addr};
     uint8_t res = 0;
@@ -253,6 +258,9 @@ static uint8_t rfm_set_broadcast_addr(uint8_t addr) {
     return res;
 }
 
+/*
+ *  @brief  sets current device address
+ */
 static uint8_t rfm_set_node_addr(uint8_t addr) {
     uint8_t data[2] = {RFM69_RegNodeAdrs, addr};
     uint8_t res = 0;
@@ -306,27 +314,44 @@ static uint8_t rfm_transmit_data(uint8_t *data_ptr, uint8_t len) {
 
     rfm_cs_low();
     HAL_SPI_Transmit(RFM_SPI, &data, 1, 100);
-    if (HAL_SPI_Transmit(RFM_SPI, data_ptr, len, 1000) != HAL_OK)
+    if (HAL_SPI_Transmit(RFM_SPI, data_ptr, len, 100) != HAL_OK)
         res = 1;
     rfm_cs_high();
 
     return res;
 }
 
-static uint8_t rfm_set_StartTX_condition(uint8_t val) {
-    uint8_t data[2] = {RFM69_RegFifoThresh, 15 | ((val & 1) << 7)};
-    uint8_t res = 0;
+/*
+ *  @brief  configs fifo workflow
+ *  @param  fifo_mode - Defines the condition to start packet transmission 
+ *          0 - the number of bytes in the FIFO exceeds FifoThreshold
+ *          1 - FifoNotEmpty
+ */
+static uint8_t rfm_set_config_fifo(uint8_t fifo_mode, uint8_t fifo_threshold) {
+    uint8_t data[2] = {RFM69_RegFifoThresh, ((fifo_mode & 1) << 7) | (fifo_threshold & 127)};
 
-    res = rfm_write(data, 2);
-
-    return res;
+    return rfm_write(data, 2);
 }
 
-static uint8_t rfm_set_packet_config1(uint8_t packet_mode, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering) {
+/*
+ *  @brief  configs packet mode
+ *  @param  pm_fixed_payload_length
+ *          0 - Fixed length; 1 - Variable length
+ *  @param  dc_free
+ *  @param  crc_on
+ *          0 - disables CRC; 1 - enables CRC
+ *  @param  crc_auto_clear_off
+ * 
+ *  @param  addr_filtering Defines address based filtering in Rx
+ *          00 → None (Off)
+ *          01 → Address field must match NodeAddress
+ *          10 → Address field must match NodeAddress or BroadcastAddress
+ */
+static uint8_t rfm_set_packet_config1(uint8_t pm_fixed_payload_length, uint8_t dc_free, uint8_t crc_on, uint8_t crc_auto_clear_off, uint8_t addr_filtering) {
     uint8_t data[2] = {RFM69_RegPacketConfig1, 0};
     uint8_t res = 0;
 
-    data[1] = (packet_mode & 1) << 7;
+    data[1] = (pm_fixed_payload_length & 1) << 7;
     data[1] |= (dc_free & 3) << 5;
     data[1] |= (crc_on & 1) << 4;
     data[1] |= (crc_auto_clear_off & 1) << 3;
@@ -344,6 +369,22 @@ static uint8_t rfm_write(uint8_t *ptr, uint8_t len) {
     rfm_cs_low();
     if (HAL_SPI_Transmit(RFM_SPI, ptr, len, 100) != HAL_OK)
         res = 1;
+    rfm_cs_high();
+
+    return res;
+}
+
+static uint8_t rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
+    uint8_t res = 0;
+
+    ptr[0] |= 128;  /* set write bit of addr */
+    rfm_cs_low();
+    if (HAL_SPI_Transmit(RFM_SPI, &addr, 1, 100) != HAL_OK)
+        res = 1;
+    else {
+        if (HAL_SPI_Receive(RFM_SPI, ptr, len, 100) != HAL_OK)
+            res = 1;
+    }
     rfm_cs_high();
 
     return res;
