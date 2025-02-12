@@ -22,7 +22,7 @@
 #define RFM69_RegVersion       0x10
 
 /* Transmitter Registers */
-#define RFM69_RegPaLevel
+#define RFM69_RegPaLevel        0X11
 #define RFM69_RegPaRamp
 #define RFM69_RegOcp
 

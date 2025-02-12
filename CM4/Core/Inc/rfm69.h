@@ -55,5 +55,5 @@ extern SPI_HandleTypeDef hspi1;
 #endif
 /* portability defines end */
 
-uint8_t RFM69_Init(void);
+uint8_t RFM69_Init(uint8_t network_id, uint8_t node_id);
 void RFM69_Routine(void);

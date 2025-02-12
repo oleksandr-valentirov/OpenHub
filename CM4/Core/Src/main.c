@@ -114,7 +114,7 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
-  if(RFM69_Init())
+  if(RFM69_Init(1, 1))
     BSP_LED_On(LED_RED);
   else
     BSP_LED_On(LED_GREEN);
