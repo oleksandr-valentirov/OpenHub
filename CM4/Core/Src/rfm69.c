@@ -111,7 +111,7 @@ static void rfm_receive_data(uint8_t *data_ptr, uint8_t len);
 uint8_t RFM69_Init(uint8_t network_id, uint8_t node_id) {
     uint8_t version = RFM69_RegVersion;
     uint32_t seed;
-    uint8_t sync_val[] = {73, 27, 27, 73};
+    uint8_t sync_val[] = {'h', 'e', 'l', 'l'};
 
     rfm_cs_low();
     if (HAL_SPI_Transmit(RFM_SPI, &version, 1, 100) != HAL_OK) {
@@ -136,14 +136,14 @@ uint8_t RFM69_Init(uint8_t network_id, uint8_t node_id) {
 
     rfm_set_node_addr(node_id);
     rfm_set_broadcast_addr(255);
-    rfm_set_packet_config1(0, 0, 0, 0, 0);
+    rfm_set_packet_config1(0, 1, 1, 0, 0);
     rfm_set_carrier(14221312);  /* 868 MHz */
     rfm_set_payload_length(5);
-    rfm_set_config_fifo(1, 5);
+    rfm_set_config_fifo(0, 4);
     if(rfm_config_sync(1, 4, 0, sync_val))
         return 1;
     rfm_set_bit_rate(0x0D, 0x05);
-    rfm_set_preamble_length(4);
+    rfm_set_preamble_length(10);
     rfm_set_pa(3, 10);
 
     rfm_set_mode(STANDBY);
@@ -239,7 +239,7 @@ static void rfm_set_mode(rfm69_mode_t mode) {
  *  @brief  sets payload length (for which mode ??)
  */
 static void rfm_set_payload_length(uint8_t value) {
-    rfm_write(RFM69_RegPayloadLength, &value, 2);
+    rfm_write(RFM69_RegPayloadLength, &value, 1);
 }
 
 /*
