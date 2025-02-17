@@ -57,13 +57,15 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ../Common/inc
+    rfm69_lib
 )
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
-    Core/Src/rfm69.c
+    Core/Src/radio.c
     Core/Src/random.c
+    rfm69_lib/rfm69.c
 )
 
 # Link directories setup
