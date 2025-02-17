@@ -69,7 +69,8 @@ void Error_Handler(void);
 void MX_RNG_Init(void);
 
 /* USER CODE BEGIN EFP */
-
+void rfm_write(uint8_t addr, uint8_t *ptr, uint8_t len);
+void rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

@@ -22,6 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "rfm69.h"
+#include "radio.h"
+#include "rfm69_registers.h"
 #include "hsem_table.h"
 /* USER CODE END Includes */
 
@@ -36,6 +38,9 @@
 #ifndef HSEM_ID_0
 #define HSEM_ID_0 (0U) /* HW semaphore 0*/
 #endif
+
+#define rfm_cs_low()    LL_GPIO_ResetOutputPin(RFM_CS_GPIO_Port, RFM_CS_Pin)
+#define rfm_cs_high()   LL_GPIO_SetOutputPin(RFM_CS_GPIO_Port, RFM_CS_Pin)
 
 /* USER CODE END PD */
 
@@ -114,7 +119,7 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
-  if(RFM69_Init(1, 1))
+  if(RFM_Init(1, 1))
     BSP_LED_On(LED_RED);
   else
     BSP_LED_On(LED_GREEN);
@@ -130,7 +135,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    RFM69_Routine();
+    RFM_Routine();
   }
   /* USER CODE END 3 */
 }
@@ -316,7 +321,20 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void rfm_write(uint8_t addr, uint8_t *ptr, uint8_t len) {
+  uint8_t temp = addr | 128;
+  rfm_cs_low();
+  HAL_SPI_Transmit(&hspi1, &temp, 1, 100);
+  HAL_SPI_Transmit(&hspi1, ptr, len, 100);
+  rfm_cs_high();
+}
 
+void rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
+  rfm_cs_low();
+  HAL_SPI_Transmit(&hspi1, &addr, 1, 100);
+  HAL_SPI_Receive(&hspi1, ptr, len, 100);
+  rfm_cs_high();
+}
 /* USER CODE END 4 */
 
  /* MPU Configuration */
