@@ -5,13 +5,19 @@
 #include "hsem_table.h"
 #include "shared_memory.h"
 #include "rfm69_registers.h"
-#include "main.h"   /* for pin defines */
+#include "main.h"
 
 /* defines */
 #define CH_NUM          449
 
 
 /* types */
+typedef enum radio_state {
+    IDLE = 0,
+    CONFIG,
+    TX,
+    RX
+} radio_state_t;
 
 typedef struct rfm69_msg {
     uint8_t length;
@@ -72,11 +78,12 @@ static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 141404
 };
 
 uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
-    uint8_t version = RFM69_RegVersion;
+    (void)network_id;
+    uint8_t version = 0;
     uint32_t seed = 0;
     uint8_t sync_val[] = {'h', 'e', 'l', 'l'};
 
-    rfm_read(RFM69_RegVersion, &version, 1);
+    rfm_read_version(&version);
     if (version != RFM_VERSION)
         return 1;
 
@@ -111,7 +118,7 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
 }
 
 void RFM_Routine(void) {
-    static rfm69_state_t state = IDLE;
+    static radio_state_t state = IDLE;
 
     switch (state) {
     case IDLE:
@@ -154,5 +161,4 @@ void RFM_Routine(void) {
         HAL_HSEM_FastTake(HSEM_M4_TO_M7);
         HAL_HSEM_Release(HSEM_M4_TO_M7,0);
     }
-    
 }
