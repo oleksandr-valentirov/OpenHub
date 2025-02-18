@@ -1,5 +1,5 @@
 #include <string.h>
-
+#include "radio.h"
 #include "rfm69.h"
 #include "random.h"
 #include "hsem_table.h"
@@ -9,6 +9,7 @@
 
 /* defines */
 #define CH_NUM          449
+#define BROADCAST_ADDR  255
 
 
 /* types */
@@ -24,6 +25,9 @@ typedef struct rfm69_msg {
     uint8_t node;
     uint8_t *payload;
 } rfm69_msg_t;
+
+/* static functions */
+static void RFM_send_broadcast(void);
 
 /* variables */
 uint8_t test_transmit_flag = 0;
@@ -96,11 +100,9 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
         return 1;
 
     rfm_set_node_addr(node_id);
-    rfm_set_broadcast_addr(255);
-    rfm_set_packet_config1(0, 1, 1, 0, 0);
+    rfm_set_broadcast_addr(BROADCAST_ADDR);
+    rfm_set_packet_config1(1, 1, 1, 0, 0);
     rfm_set_carrier(14221312);  /* 868 MHz */
-    rfm_set_payload_length(5);
-    rfm_set_config_fifo(0, 4);
     if(rfm_config_sync(1, 4, 0, sync_val))
         return 1;
     rfm_set_bit_rate(0x0D, 0x05);
@@ -142,14 +144,7 @@ void RFM_Routine(void) {
 
     if (test_transmit_flag) {
         test_transmit_flag = 0;
-
-#if 1
-        rfm_set_dio_mapping(0, 0);
-        rfm_transmit_data((uint8_t *)"hello", 5);
-        while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
-
-        BSP_LED_Toggle(LED_YELLOW);
-#endif
+        RFM_send_broadcast();
     }
 
     if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
@@ -161,4 +156,20 @@ void RFM_Routine(void) {
         HAL_HSEM_FastTake(HSEM_M4_TO_M7);
         HAL_HSEM_Release(HSEM_M4_TO_M7,0);
     }
+}
+
+static void RFM_send_broadcast(void) {
+    uint8_t data[10] = {0};
+    radio_header_t *header = (radio_header_t *)data;
+    radio_broadcast_t *payload = (radio_broadcast_t *)(data + sizeof(header));
+
+    header->length = sizeof(data);
+    header->addr = BROADCAST_ADDR;
+    payload->flags = 0;
+    payload->clock = HAL_GetTick();
+
+    rfm_set_dio_mapping(0, 0);
+    rfm_set_config_fifo(0, sizeof(data) - 1);
+    rfm_transmit_data((uint8_t *)data, sizeof(data));
+    while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
 }
