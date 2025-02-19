@@ -14,8 +14,8 @@
 
 /* types */
 typedef enum radio_state {
-    IDLE = 0,
     CONFIG,
+    BROADCAST,
     TX,
     RX
 } radio_state_t;
@@ -30,7 +30,6 @@ typedef struct rfm69_msg {
 static void RFM_send_broadcast(void);
 
 /* variables */
-uint8_t test_transmit_flag = 0;
 static m7_to_m4_rfm_request_t * rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x38000000);
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
 static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
@@ -86,6 +85,7 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     uint8_t version = 0;
     uint32_t seed = 0;
     uint8_t sync_val[] = {'h', 'e', 'l', 'l'};
+    uint16_t irq_flags = 0;
 
     rfm_read_version(&version);
     if (version != RFM_VERSION)
@@ -102,11 +102,12 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     rfm_set_node_addr(node_id);
     rfm_set_broadcast_addr(BROADCAST_ADDR);
     rfm_set_packet_config1(1, 1, 1, 0, 0);
+    rfm_set_packet_config2(5, 0, 1, 0);
     rfm_set_carrier(14221312);  /* 868 MHz */
     if(rfm_config_sync(1, 4, 0, sync_val))
         return 1;
     rfm_set_bit_rate(0x0D, 0x05);
-    rfm_set_preamble_length(5);
+    rfm_set_preamble_length(50);
     rfm_set_pa(3, 10);
 
     rfm_set_modulation(0, 0, 2);
@@ -114,37 +115,52 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     rfm_run_osc_calib();
     while (!rfm_is_calib_finished()) {}
 
+    /* initial sequence */
+    RFM_send_broadcast();
+    rfm_set_dio_mapping(0, 1);
     rfm_set_mode(TRANSMIT);
+    while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+    rfm_set_dio_mapping(0, 0);
+    while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+    set_rfm_delay_it(1000);
+
+    rfm_set_mode(STANDBY);
+    do {
+        rfm_get_irq_flags(&irq_flags);
+    } while ((irq_flags & 128) == 0);
 
     return 0;
 }
 
 void RFM_Routine(void) {
-    static radio_state_t state = IDLE;
+    static radio_state_t state = BROADCAST;
+    uint16_t irq_flags = 0;
 
     switch (state) {
-    case IDLE:
-        break;
     case CONFIG:
         break;
-    case TX:
-        (void)rfm_set_dio_mapping(0, 0);
-        // rfm_transmit_data((uint8_t *)"hello", 5);
-        (void)rfm_set_mode(TRANSMIT);
-        /* wait for PacketSent */
-        while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
-        (void)rfm_set_mode(STANDBY);
+    case BROADCAST:
+        if (get_rfm_delay_flag()) {
+            RFM_send_broadcast();
+            rfm_set_dio_mapping(0, 1);
+            rfm_set_mode(TRANSMIT);
+            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            rfm_set_dio_mapping(0, 0);
+            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            set_rfm_delay_it(1000);
 
+            rfm_set_mode(STANDBY);
+            do {
+                rfm_get_irq_flags(&irq_flags);
+            } while ((irq_flags & 128) == 0);
+        }
+        break;
+    case TX:
         break;
     case RX:
         break;
     default:
         break;
-    }
-
-    if (test_transmit_flag) {
-        test_transmit_flag = 0;
-        RFM_send_broadcast();
     }
 
     if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
@@ -163,13 +179,11 @@ static void RFM_send_broadcast(void) {
     radio_header_t *header = (radio_header_t *)data;
     radio_broadcast_t *payload = (radio_broadcast_t *)(data + sizeof(header));
 
-    header->length = sizeof(data);
+    header->length = sizeof(data) - 1;
     header->addr = BROADCAST_ADDR;
     payload->flags = 0;
-    payload->clock = HAL_GetTick();
+    payload->clock = get_rfm_counter();
 
-    rfm_set_dio_mapping(0, 0);
     rfm_set_config_fifo(0, sizeof(data) - 1);
     rfm_transmit_data((uint8_t *)data, sizeof(data));
-    while(!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
 }

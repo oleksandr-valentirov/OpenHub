@@ -41,7 +41,9 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
-
+static uint32_t rfm_ms_counter = 0;
+static uint8_t rfm_delay_flag = 0;
+static uint32_t rfm_delay_ms_val = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -51,13 +53,24 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint32_t get_rfm_counter(void) {
+  return rfm_ms_counter;
+}
 
+void set_rfm_delay_it(uint32_t val) {
+  rfm_delay_flag = 0;
+  rfm_delay_ms_val = rfm_ms_counter + val;
+}
+
+uint8_t get_rfm_delay_flag(void) {
+  return rfm_delay_flag;
+}
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
 
 /* USER CODE BEGIN EV */
-extern uint8_t test_transmit_flag;
+
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -187,8 +200,7 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-  if (HAL_GetTick() % 1000 == 0)
-    test_transmit_flag = 1;
+
   /* USER CODE END SysTick_IRQn 1 */
 }
 
@@ -198,6 +210,22 @@ void SysTick_Handler(void)
 /* For the available peripheral interrupt handler names,                      */
 /* please refer to the startup file (startup_stm32h7xx.s).                    */
 /******************************************************************************/
+
+/**
+  * @brief This function handles TIM7 global interrupt.
+  */
+void TIM7_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM7_IRQn 0 */
+  LL_TIM_ClearFlag_UPDATE(TIM7);
+  rfm_ms_counter++;
+  if (rfm_ms_counter == rfm_delay_ms_val)
+    rfm_delay_flag = 1;
+  /* USER CODE END TIM7_IRQn 0 */
+  /* USER CODE BEGIN TIM7_IRQn 1 */
+
+  /* USER CODE END TIM7_IRQn 1 */
+}
 
 /* USER CODE BEGIN 1 */
 

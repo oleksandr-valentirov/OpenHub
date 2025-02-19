@@ -131,6 +131,15 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                     } else {
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd>\r\n- dump\tdump pre-programmed list of registers\r\n");
                     }
+                } else if (strncmp(strtok_temp, "device", strlen("device")) == 0) {
+                    strtok_temp = strtok(NULL, " ");
+                    if (strncmp(strtok_temp, "list", strlen("list")) == 0) {
+
+                    } else if (strncmp(strtok_temp, "add", strlen("add")) == 0) {
+
+                    } else if (strncmp(strtok_temp, "remove", strlen("remove")) == 0) {
+
+                    }
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);
                     cli->response_len += sprintf(cli->response_buffer + cli->response_len, "%s\r\n", cli->cmd_buffer);

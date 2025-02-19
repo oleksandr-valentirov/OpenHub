@@ -41,6 +41,7 @@ extern "C" {
 #include "stm32h7xx_ll_pwr.h"
 #include "stm32h7xx_ll_dma.h"
 #include "stm32h7xx_ll_rng.h"
+#include "stm32h7xx_ll_tim.h"
 #include "stm32h7xx_ll_usart.h"
 #include "stm32h7xx_ll_gpio.h"
 
@@ -71,6 +72,9 @@ void MX_RNG_Init(void);
 /* USER CODE BEGIN EFP */
 void rfm_write(uint8_t addr, uint8_t *ptr, uint8_t len);
 void rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len);
+uint32_t get_rfm_counter(void);
+void set_rfm_delay_it(uint32_t val);
+uint8_t get_rfm_delay_flag(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
