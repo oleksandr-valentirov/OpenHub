@@ -17,8 +17,8 @@
 #include "netif.h"
 
 /* variables */
-const char * const bad_cmd_msg = "\r\nError: unrecognized or incomplete cmd.\r\n";
-const char * const not_implemented_msg = "\r\nError: not implemented\r\n";
+static const char bad_cmd_msg[] = "\r\nError: unrecognized or incomplete cmd.\r\n";
+static const char not_implemented_msg[] = "\r\nError: not implemented\r\n";
 static m7_to_m4_rfm_request_t *rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x38000000);
 
 /* functions definitions */
@@ -51,8 +51,9 @@ void CLI_Task(void const * argument) {
  */
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
     uint8_t res = 0;
-    uint32_t i = 0;
     char *strtok_temp = NULL;
+    uint32_t device_addr = 0;
+    uint8_t reg = 0;
 
     cli->response_len = 0;
     switch (c) {
@@ -110,35 +111,48 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                     else
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: ping <ip addr>\r\n");
                 } else if (strncmp(strtok_temp, "rfm", strlen("rfm")) == 0) {
+                    /* radio subcommands */
                     strtok_temp = strtok(NULL, " ");
-                    if (strncmp(strtok_temp, "dump", strlen("dump")) == 0) {
-                        cli->response_len = sprintf(cli->response_buffer, "\r\nReg Value\r\n");
-                        /* send request */
-                        // for (i = 0; i < (sizeof(rfm_regs_to_dump) / sizeof(rfm_regs_to_dump[0])); i++) {
-                        //     rfm_shared_buffer->request_type = 0;
-                        //     rfm_shared_buffer->arg = rfm_regs_to_dump[i];
-                        //     HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
-                        //     HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
+                    if (strncmp(strtok_temp, "dump", strlen("dump")) == 0 && (strtok_temp = strtok(NULL, " "))) {
+                        /* read RFM register content */
+                        if (strtok_temp[0] == '0' && strtok_temp[1] == 'x')
+                            reg = (uint8_t)strtol(strtok_temp, NULL, 0);
+                        else
+                            reg = (uint8_t)strtol(strtok_temp, NULL, 16);
 
-                        //     /* wait for the response*/
-                        //     while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
-                        //         osDelay(10);
-                        //     /* process response */
-                        //     __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
-                        //     cli->response_len += sprintf(cli->response_buffer + cli->response_len, 
-                        //     "0x%02x 0x%02x\r\n", rfm_regs_to_dump[i], rfm_shared_buffer->payload[0]);
-                        // }
+                        rfm_shared_buffer->request_type = RFM_READ_REG;
+                        rfm_shared_buffer->arg = reg;
+                        HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
+                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
+
+                        /* wait for the response*/
+                        while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
+                            osDelay(10);
+                        /* process response */
+                        __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+
+                        cli->response_len = sprintf(cli->response_buffer + cli->response_len, 
+                        "\r\n0x%02x 0x%02x\r\n", reg, rfm_shared_buffer->payload[0]);
+                    } else if (strncmp(strtok_temp, "add", strlen("add")) == 0 && (strtok_temp = strtok(NULL, " "))) {
+                        /* try to add device */
+                        if (strtok_temp[0] == '0' && strtok_temp[1] == 'x')
+                            device_addr = (uint32_t)strtol(strtok_temp, NULL, 0);
+                        else
+                            device_addr = (uint32_t)strtol(strtok_temp, NULL, 16);
+
+                        rfm_shared_buffer->request_type = RFM_ADD_DEVICE;
+                        memcpy(rfm_shared_buffer->payload, &device_addr, 4);
+                    } else if (strncmp(strtok_temp, "remove", strlen("remove")) == 0 && (strtok_temp = strtok(NULL, " "))) {
+                        /* remove device */
+                        if (strtok_temp[0] == '0' && strtok_temp[1] == 'x')
+                            device_addr = (uint32_t)strtol(strtok_temp, NULL, 0);
+                        else
+                            device_addr = (uint32_t)strtol(strtok_temp, NULL, 16);
+
+                        rfm_shared_buffer->request_type = RFM_REMOVE_DEVICE;
+                        memcpy(rfm_shared_buffer->payload, &device_addr, 4);
                     } else {
-                        cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd>\r\n- dump\tdump pre-programmed list of registers\r\n");
-                    }
-                } else if (strncmp(strtok_temp, "device", strlen("device")) == 0) {
-                    strtok_temp = strtok(NULL, " ");
-                    if (strncmp(strtok_temp, "list", strlen("list")) == 0) {
-
-                    } else if (strncmp(strtok_temp, "add", strlen("add")) == 0) {
-
-                    } else if (strncmp(strtok_temp, "remove", strlen("remove")) == 0) {
-
+                        cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd> [arg]\r\n- dump <arg>\tdump RFM register\r\n");
                     }
                 } else {
                     cli->response_len = sprintf(cli->response_buffer, bad_cmd_msg);

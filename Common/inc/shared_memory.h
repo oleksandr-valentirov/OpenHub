@@ -3,6 +3,14 @@
 #include <stdint.h>
 
 
+typedef enum {
+    RFM_READ_REG = 0,
+    RFM_ADD_DEVICE,
+    RFM_REMOVE_DEVICE,
+    RFM_GET_DEVICE_INFO,
+    RFM_SET_DEVICE_PARAM
+} rfm_request_t;
+
 typedef struct m7_to_m4_rfm_request
 {
     uint8_t request_type;   /* 0 - to RFM reg */

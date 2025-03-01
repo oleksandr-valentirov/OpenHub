@@ -26,13 +26,17 @@ typedef struct rfm69_msg {
     uint8_t *payload;
 } rfm69_msg_t;
 
+typedef struct device {
+    uint32_t id;
+} device_t;
+
 /* static functions */
 static void RFM_send_broadcast(void);
 
 /* variables */
 static m7_to_m4_rfm_request_t * rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x38000000);
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
-static uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
+static const uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
     14141184, 14141440, 14141696, 14141952, 14142208, 14142464, 14142720, 14142976, 14143232, 14143488,
     14143744, 14144000, 14144256, 14144512, 14144768, 14145024, 14145280, 14145536, 14145792, 14146048,
     14146304, 14146560, 14146816, 14147072, 14147328, 14147584, 14147840, 14148096, 14148352, 14148608,
@@ -166,8 +170,24 @@ void RFM_Routine(void) {
     if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
         /* process request from the M7 */
         __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
-        if (rfm_shared_buffer->request_type == 0)
-            rfm_read(rfm_shared_buffer->arg, &(rfm_shared_buffer->payload[0]), 1);
+        switch (rfm_shared_buffer->request_type) {
+
+            case RFM_READ_REG:
+                rfm_read(rfm_shared_buffer->arg, &(rfm_shared_buffer->payload[0]), 1);
+                break;
+
+            case RFM_ADD_DEVICE:
+                break;
+
+            case RFM_REMOVE_DEVICE:
+                break;
+
+            case RFM_GET_DEVICE_INFO:
+                break;
+            
+            case RFM_SET_DEVICE_PARAM:
+                break;
+        }
         /* notify M7 */
         HAL_HSEM_FastTake(HSEM_M4_TO_M7);
         HAL_HSEM_Release(HSEM_M4_TO_M7,0);
