@@ -41,9 +41,10 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
+static uint32_t ms_counter = 0;
 static uint32_t rfm_ms_counter = 0;
-static uint8_t rfm_delay_flag = 0;
-static uint32_t rfm_delay_ms_val = 0;
+static uint32_t delay_ms_val = 0;
+static volatile uint8_t delay_ms_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -53,17 +54,24 @@ static uint32_t rfm_delay_ms_val = 0;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint8_t get_delay_ms_flag(void) {
+  return delay_ms_flag;
+}
+
+void delay_ms_poll(uint32_t ms) {
+  uint32_t end = HAL_GetTick() + ms;
+  while (HAL_GetTick() != end) {
+    __asm__("nop");
+  }
+}
+
+void delay_ms_it(uint32_t ms) {
+  delay_ms_flag = 0;
+  delay_ms_val = HAL_GetTick() + ms;
+}
+
 uint32_t get_rfm_counter(void) {
   return rfm_ms_counter;
-}
-
-void set_rfm_delay_it(uint32_t val) {
-  rfm_delay_flag = 0;
-  rfm_delay_ms_val = rfm_ms_counter + val;
-}
-
-uint8_t get_rfm_delay_flag(void) {
-  return rfm_delay_flag;
 }
 /* USER CODE END 0 */
 
@@ -200,7 +208,8 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-
+  if (HAL_GetTick() == delay_ms_val)
+    delay_ms_flag = 1;
   /* USER CODE END SysTick_IRQn 1 */
 }
 
@@ -219,8 +228,6 @@ void TIM7_IRQHandler(void)
   /* USER CODE BEGIN TIM7_IRQn 0 */
   LL_TIM_ClearFlag_UPDATE(TIM7);
   rfm_ms_counter++;
-  if (rfm_ms_counter == rfm_delay_ms_val)
-    rfm_delay_flag = 1;
   /* USER CODE END TIM7_IRQn 0 */
   /* USER CODE BEGIN TIM7_IRQn 1 */
 

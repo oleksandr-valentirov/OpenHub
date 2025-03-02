@@ -5,11 +5,13 @@
 #include "hsem_table.h"
 #include "shared_memory.h"
 #include "rfm69_registers.h"
+#include "radio_protocol.h"
 #include "main.h"
 
 /* defines */
-#define CH_NUM          449
-#define BROADCAST_ADDR  255
+#define CH_NUM              449
+#define BROADCAST_ADDR      255
+#define PAIRING_TIMEOUT_MS  10000
 
 
 /* types */
@@ -32,9 +34,11 @@ typedef struct device {
 
 /* static functions */
 static void RFM_send_broadcast(void);
+static uint8_t RFM_add_device_routine(uint32_t dev_id);
 
 /* variables */
 static m7_to_m4_rfm_request_t * rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x38000000);
+static uint8_t tx_buffer[256] = {0};
 /* [i // 61.03515625 for i in range(863000000, 870000001) if i % 61.03515625 == 0] */
 static const uint32_t freqs[CH_NUM] = { 14139392, 14139648, 14139904, 14140160, 14140416, 14140672, 14140928, 
     14141184, 14141440, 14141696, 14141952, 14142208, 14142464, 14142720, 14142976, 14143232, 14143488,
@@ -111,7 +115,7 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     if(rfm_config_sync(1, 4, 0, sync_val))
         return 1;
     rfm_set_bit_rate(0x0D, 0x05);
-    rfm_set_preamble_length(50);
+    rfm_set_preamble_length(6);
     rfm_set_pa(3, 10);
 
     rfm_set_modulation(0, 0, 2);
@@ -120,14 +124,7 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     while (!rfm_is_calib_finished()) {}
 
     /* initial sequence */
-    RFM_send_broadcast();
-    rfm_set_dio_mapping(0, 1);
-    rfm_set_mode(TRANSMIT);
-    while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
-    rfm_set_dio_mapping(0, 0);
-    while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
-    set_rfm_delay_it(1000);
-
+    delay_ms_it(10);
     rfm_set_mode(STANDBY);
     do {
         rfm_get_irq_flags(&irq_flags);
@@ -144,14 +141,14 @@ void RFM_Routine(void) {
     case CONFIG:
         break;
     case BROADCAST:
-        if (get_rfm_delay_flag()) {
+        if (get_delay_ms_flag()) {
             RFM_send_broadcast();
             rfm_set_dio_mapping(0, 1);
             rfm_set_mode(TRANSMIT);
             while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
             rfm_set_dio_mapping(0, 0);
             while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
-            set_rfm_delay_it(1000);
+            delay_ms_it(1000);
 
             rfm_set_mode(STANDBY);
             do {
@@ -177,6 +174,7 @@ void RFM_Routine(void) {
                 break;
 
             case RFM_ADD_DEVICE:
+                RFM_add_device_routine(*((uint32_t *)rfm_shared_buffer->payload));
                 break;
 
             case RFM_REMOVE_DEVICE:
@@ -184,26 +182,99 @@ void RFM_Routine(void) {
 
             case RFM_GET_DEVICE_INFO:
                 break;
-            
+
             case RFM_SET_DEVICE_PARAM:
                 break;
         }
         /* notify M7 */
         HAL_HSEM_FastTake(HSEM_M4_TO_M7);
-        HAL_HSEM_Release(HSEM_M4_TO_M7,0);
+        HAL_HSEM_Release(HSEM_M4_TO_M7, 0);
     }
 }
 
 static void RFM_send_broadcast(void) {
-    uint8_t data[10] = {0};
-    radio_header_t *header = (radio_header_t *)data;
-    radio_broadcast_t *payload = (radio_broadcast_t *)(data + sizeof(header));
+    rfm_header_t *header = (rfm_header_t *)tx_buffer;
+    radio_broadcast_t *payload = (radio_broadcast_t *)(tx_buffer + sizeof(header));
 
-    header->length = sizeof(data) - 1;
-    header->addr = BROADCAST_ADDR;
+    header->length = sizeof(radio_broadcast_t);
+    payload->addr = BROADCAST_ADDR;
     payload->flags = 0;
     payload->clock = get_rfm_counter();
 
-    rfm_set_config_fifo(0, sizeof(data) - 1);
-    rfm_transmit_data((uint8_t *)data, sizeof(data));
+    rfm_set_config_fifo(0, sizeof(rfm_header_t) + sizeof(radio_broadcast_t) - 1);
+    rfm_transmit_data((uint8_t *)tx_buffer, sizeof(rfm_header_t) + sizeof(radio_broadcast_t));
+}
+
+/* 
+ *  @retval 0   - OK
+ *  @retval 1   - pairing error or timeout
+ *  @retval 2   - canceled
+ */
+static uint8_t RFM_add_device_routine(uint32_t dev_id) {
+    const uint32_t end_time = get_rfm_counter() + PAIRING_TIMEOUT_MS;
+    uint8_t paired = 0, res = 0;
+    uint16_t irq_flags = 0;
+    rfm_header_t *header = (rfm_header_t *)tx_buffer;
+    protocol_pairing_t *payload = (protocol_pairing_t *)(tx_buffer + sizeof(rfm_header_t));
+
+    header->length = sizeof(protocol_pairing_t);
+    payload->header.dev_id = dev_id;
+    payload->header.hub_id = 0x33442211;
+
+    rfm_set_config_fifo(0, sizeof(rfm_header_t) + sizeof(protocol_pairing_t) - 1);
+    do {
+        /* config */
+
+        /* ------------------------ tx stage ------------------------------ */
+        rfm_transmit_data((uint8_t *)tx_buffer, sizeof(rfm_header_t) + sizeof(protocol_pairing_t));
+        rfm_set_dio_mapping(0, 1);
+        rfm_set_mode(TRANSMIT);
+        while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+        rfm_set_dio_mapping(0, 0);
+        while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+
+        /* ------------------------ rx stage ------------------------------ */
+        rfm_set_dio_mapping(4, 2);
+        rfm_set_dio_mapping(0, 2);
+        for (uint8_t i = 0; i < 3; i++) {
+            /* wait for sync */
+            rfm_set_mode(RECEIVE);
+            while (!LL_GPIO_IsInputPinSet(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin)) {}
+            delay_ms_it(50);  /* todo - fix this shit */
+            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) && !get_delay_ms_flag()) {}
+
+            if (LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin))
+                break;
+            else {
+                rfm_set_mode(STANDBY);
+                do {
+                    rfm_get_irq_flags(&irq_flags);
+                } while ((irq_flags & 128) == 0);
+            }
+        }
+
+        if (LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {
+            /* receive data */
+            rfm_set_dio_mapping(0, 0);
+
+            paired = 1;
+        }
+
+        rfm_set_mode(STANDBY);
+        do {
+            rfm_get_irq_flags(&irq_flags);
+        } while ((irq_flags & 128) == 0);
+
+    } while ((get_rfm_counter() < end_time) && !paired && !__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM)));
+
+    if (__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM))) {
+        /* CANCEL PAIRING notification */
+        __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
+        res = 2;
+    } else if (!paired) {
+        /* timeout or error */
+        res = 1;
+    }
+
+    return res;
 }

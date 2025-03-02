@@ -123,7 +123,7 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                         rfm_shared_buffer->request_type = RFM_READ_REG;
                         rfm_shared_buffer->arg = reg;
                         HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
-                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM,0);
+                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM, 0);
 
                         /* wait for the response*/
                         while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
@@ -141,7 +141,21 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
                             device_addr = (uint32_t)strtol(strtok_temp, NULL, 16);
 
                         rfm_shared_buffer->request_type = RFM_ADD_DEVICE;
-                        memcpy(rfm_shared_buffer->payload, &device_addr, 4);
+                        // *((uint32_t *)(rfm_shared_buffer->payload)) = device_addr;
+                        rfm_shared_buffer->payload[0] = 0xaa;
+                        rfm_shared_buffer->payload[1] = 0xbb;
+                        rfm_shared_buffer->payload[2] = 0xcc;
+                        rfm_shared_buffer->payload[3] = 0xdd;
+                        HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
+                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM, 0);
+
+                        /* wait for the response*/
+                        while (!(__HAL_HSEM_GET_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7))))
+                            osDelay(10);
+                        /* process response */
+                        __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+                        
+                        cli->response_len = sprintf(cli->response_buffer, "\r\nok\r\n");
                     } else if (strncmp(strtok_temp, "remove", strlen("remove")) == 0 && (strtok_temp = strtok(NULL, " "))) {
                         /* remove device */
                         if (strtok_temp[0] == '0' && strtok_temp[1] == 'x')
@@ -151,6 +165,8 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
 
                         rfm_shared_buffer->request_type = RFM_REMOVE_DEVICE;
                         memcpy(rfm_shared_buffer->payload, &device_addr, 4);
+                        HAL_HSEM_FastTake(HSEM_M7_TO_M4_RFM);
+                        HAL_HSEM_Release(HSEM_M7_TO_M4_RFM, 0);
                     } else {
                         cli->response_len = sprintf(cli->response_buffer, "\r\nusage: rfm <cmd> [arg]\r\n- dump <arg>\tdump RFM register\r\n");
                     }
