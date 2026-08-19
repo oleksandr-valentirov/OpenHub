@@ -75,8 +75,6 @@ set(STM32_Drivers_Src
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
-    /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cryp.c
-    /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cryp_ex.c
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng.c
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng_ex.c
     /home/aleks/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart.c

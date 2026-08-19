@@ -27,3 +27,12 @@ CMakeFiles/
 cmake_install.cmake
 compile_commands.json
 Makefile
+
+# Python tooling
+__pycache__/
+*.pyc
+.venv/
+
+# SDR captures
+*.iq
+*.iq.meta

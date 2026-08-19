@@ -49,8 +49,8 @@ memory guarded by hardware semaphores.
 
 **CM7** — application core. FreeRTOS with CMSIS-RTOS v2, LwIP in RTOS mode (`WITH_RTOS 1`).
 Three application threads created in `main.c`: `defaultTask` (brings LwIP up, then releases CM4),
-`cliTask` (command shell), `cryptTask` (AES-128 via the CRYP peripheral, fed by
-`cryptQueue`). LwIP adds `tcpip_thread`, `ethernetif_input` and `ethernet_link_thread`.
+`cliTask` (command shell). LwIP adds `tcpip_thread`, `ethernetif_input` and
+`ethernet_link_thread`. CRYP belongs to CM4, not here — the radio is its only consumer.
 
 **Console.** The CLI is on USART3 (PD8/PD9), which is the ST-Link VCP — `/dev/ttyACM0` at
 115200 8N1, so it can be driven from a script. `BSP_COM_Init(COM1, ...)` in `main()` configures
@@ -59,7 +59,9 @@ on. Do not call `getchar`/`scanf`: `_read` in `newlib_stubs.c` polls the same US
 race the ISR. UART4 (PC10/PC11) is still configured but no longer used.
 
 **CM4** — radio core. No RTOS; a superloop calling `RFM_Routine()`. Drives an RFM69 over SPI1
-through the `CM4/rfm69_lib` submodule. TIM7 provides the millisecond counter used for radio timing.
+through the `CM4/rfm69_lib` submodule. TIM7 provides the millisecond counter used for radio
+timing. CRYP (AES-128-GCM) and RNG are driven from here; both sit in D2 and are reachable from
+either core, so RNG is guarded by `HSEM_RNG`.
 
 **Boot order matters.** CM4 enters STOP at reset and waits on `HSEM_ID_0`. CM7 holds that semaphore
 across clock and peripheral init, then releases it from `StartDefaultTask` once LwIP is up. Moving
@@ -97,7 +99,7 @@ post-generation hook; do not reintroduce one.
 
 **Linker scripts.** The build links `custom_m4_flash.ld` / `custom_m7_flash.ld` via
 `STM32_LINKER_SCRIPT`, not the `stm32h755xx_*.ld` files CubeMX writes. Custom sections
-(`.lwip_sec`, `.cli_dma_buffer`) live in the custom files; edit those.
+(`.lwip_sec`) live in the custom files; edit those.
 
 **CMSIS-RTOS v2 takes `stack_size` in bytes, not words.** CubeMX knows this and emits
 `512 * 4` in `main.c`, but the LwIP glue does not: `ethernetif.c` and `lwip.c` pass
@@ -121,8 +123,8 @@ command after pushing traffic — the numbers are words of stack left.
 - `lwipopts.h` is generated too. `LWIP_STATS`, the thread stack sizes and `MEM_SIZE` are set in
   the CubeMX LwIP panel; re-check them after regeneration.
 
-`docs/freertos-config-backup.md` records the FreeRTOS task and queue configuration plus the
-CMSIS v1 to v2 migration, in case the `.ioc` loses it again.
+**Regeneration is scripted.** `.claude/skills/cubemx/SKILL.md` has the headless recipe and the
+rule the project follows: anything CubeMX can generate must be generated, not hand-written.
 
 ## Addressing
 
@@ -151,6 +153,20 @@ For a fixed address instead, use `ipv4.method manual` and `ip static` on the boa
 Then read `status` and `lwip` over the console. Healthy: no `drop`/`chkerr`/`err`, `icmp.recv`
 matching `icmp.xmit`, and every task with more than ~100 words of stack free.
 
+## Testing the radio from the host
+
+An RTL-SDR on the host validates everything the hub transmits — `tools/sdr/` holds the capture,
+demodulator, frame decoder and duty-cycle checker; see its README. It is receive-only, so the
+hub's RX path, pairing and ACKs cannot be tested this way.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install numpy
+cd tools/sdr
+../../.venv/bin/python capture.py cap.iq -f 868e6 -t 5
+../../.venv/bin/python decode.py cap.iq
+../../.venv/bin/python dutycycle.py cap.iq     # exits 1 if over the ETSI sub-band limit
+```
+
 ## Known defects
 
 Confirmed by type and control flow, not yet fixed:
@@ -160,4 +176,3 @@ Confirmed by type and control flow, not yet fixed:
 - `random.c` takes `% m` where `m` comes from the RNG and may be zero.
 - Tick waits use exact equality (`HAL_GetTick() != end`), which hangs for ~49 days on a missed tick.
 - Radio DIO polling loops have no timeout.
-- `encrypt <data>` answers "Encryption error - timeout"; the CRYP path in `crypt.c` is broken.

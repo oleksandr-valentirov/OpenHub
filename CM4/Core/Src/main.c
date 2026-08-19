@@ -51,6 +51,14 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+CRYP_HandleTypeDef hcryp;
+__ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
+                            0x00000000,0x00000000,0x00000000,0x00000000};
+__ALIGN_BEGIN static const uint32_t pInitVectCRYP[4] __ALIGN_END = {
+                            0x00000000,0x00000000,0x00000000,0x00000002};
+__ALIGN_BEGIN static const uint32_t HeaderCRYP[1] __ALIGN_END = {
+                            0x00000000};
+
 RNG_HandleTypeDef hrng;
 
 SPI_HandleTypeDef hspi1;
@@ -64,8 +72,8 @@ TIM_HandleTypeDef htim7;
 /* Private function prototypes -----------------------------------------------*/
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_CRYP_Init(void);
 static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -120,8 +128,8 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_SPI1_Init();
+  MX_CRYP_Init();
   MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
   while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
@@ -144,6 +152,39 @@ int main(void)
     RFM_Routine();
   }
   /* USER CODE END 3 */
+}
+
+/**
+  * @brief CRYP Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CRYP_Init(void)
+{
+
+  /* USER CODE BEGIN CRYP_Init 0 */
+
+  /* USER CODE END CRYP_Init 0 */
+
+  /* USER CODE BEGIN CRYP_Init 1 */
+
+  /* USER CODE END CRYP_Init 1 */
+  hcryp.Instance = CRYP;
+  hcryp.Init.DataType = CRYP_DATATYPE_32B;
+  hcryp.Init.KeySize = CRYP_KEYSIZE_128B;
+  hcryp.Init.pKey = (uint32_t *)pKeyCRYP;
+  hcryp.Init.pInitVect = (uint32_t *)pInitVectCRYP;
+  hcryp.Init.Algorithm = CRYP_AES_GCM;
+  hcryp.Init.Header = (uint32_t *)HeaderCRYP;
+  hcryp.Init.HeaderSize = 1;
+  if (HAL_CRYP_Init(&hcryp) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CRYP_Init 2 */
+
+  /* USER CODE END CRYP_Init 2 */
+
 }
 
 /**
@@ -256,17 +297,6 @@ static void MX_TIM7_Init(void)
   /* USER CODE BEGIN TIM7_Init 2 */
   HAL_TIM_Base_Start_IT(&htim7);
   /* USER CODE END TIM7_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
 
 }
 

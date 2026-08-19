@@ -55,7 +55,7 @@ Type <code>?</code> for the command list.
         </tr>
         <tr>
             <td>CM7/custom_m7_flash.ld</td>
-            <td>The linker script actually used; holds .lwip_sec and .cli_dma_buffer</td>
+            <td>The linker script actually used; holds .lwip_sec</td>
         </tr>
         <tr><td colspan="2"><b>CM4 &mdash; radio core</b></td></tr>
         <tr>

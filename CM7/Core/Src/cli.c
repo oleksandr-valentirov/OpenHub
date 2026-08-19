@@ -10,7 +10,6 @@
 #include <stdint.h>
 #include "cli.h"
 #include "networking.h"
-#include "crypt.h"
 #include "hsem_table.h"
 #include "shared_memory.h"
 
@@ -54,7 +53,6 @@ static int cmd_help(cli_data_t *cli, int argc, char **argv);
 static int cmd_ip(cli_data_t *cli, int argc, char **argv);
 static int cmd_ping(cli_data_t *cli, int argc, char **argv);
 static int cmd_cfg(cli_data_t *cli, int argc, char **argv);
-static int cmd_encrypt(cli_data_t *cli, int argc, char **argv);
 static int cmd_rfm(cli_data_t *cli, int argc, char **argv);
 static int cmd_lwip(cli_data_t *cli, int argc, char **argv);
 static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, char *name);
@@ -64,7 +62,6 @@ static const cli_cmd_t commands[] = {
     {"ip",      0, 4, cmd_ip,      "[dhcp|static|set ...]",  "show or set network config"},
     {"ping",    1, 1, cmd_ping,    "<ip addr>",              "send ping message"},
     {"cfg",     1, 1, cmd_cfg,     "<save | load>",          "config subcommand"},
-    {"encrypt", 1, 1, cmd_encrypt, "<data>",                 "AES-128 encrypt and decrypt"},
     {"rfm",     1, 2, cmd_rfm,     "<dump|add|remove> <hex>","radio subcommands"},
     {"lwip",    0, 0, cmd_lwip,    "",                       "dump LwIP stack statistics"},
     {"?",       0, 0, cmd_help,    "",                       "print available commands"},
@@ -297,13 +294,6 @@ static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
     return 0;
 }
 
-static int cmd_encrypt(cli_data_t *cli, int argc, char **argv) {
-    UNUSED(argc);
-
-    cli->response_len += (int16_t)CRYPT_encrypt_data(argv[1], cli->response_buffer +
-                                                                cli->response_len);
-    return 0;
-}
 
 static int cmd_rfm(cli_data_t *cli, int argc, char **argv) {
     /* every subcommand takes one hex argument and differs only by request type */

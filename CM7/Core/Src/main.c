@@ -27,13 +27,11 @@
 #include "cli.h"
 #include <string.h>
 #include "lwip/udp.h"
-#include "crypt.h"
 #include "hsem_table.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
-typedef StaticQueue_t osStaticMessageQDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
@@ -55,12 +53,6 @@ typedef StaticQueue_t osStaticMessageQDef_t;
 /* Private variables ---------------------------------------------------------*/
 
 COM_InitTypeDef BspCOMInit;
-
-CRYP_HandleTypeDef hcryp;
-__ALIGN_BEGIN static const uint32_t pKeyCRYP[4] __ALIGN_END = {
-                            0x00000000,0x00000000,0x00000000,0x00000000};
-DMA_HandleTypeDef hdma_cryp_in;
-DMA_HandleTypeDef hdma_cryp_out;
 
 RNG_HandleTypeDef hrng;
 
@@ -85,29 +77,6 @@ const osThreadAttr_t cliTask_attributes = {
   .stack_size = sizeof(cliTaskBuffer),
   .priority = (osPriority_t) osPriorityIdle,
 };
-/* Definitions for cryptTask */
-osThreadId_t cryptTaskHandle;
-uint32_t cryptTaskBuffer[ 512 ];
-osStaticThreadDef_t cryptTaskControlBlock;
-const osThreadAttr_t cryptTask_attributes = {
-  .name = "cryptTask",
-  .cb_mem = &cryptTaskControlBlock,
-  .cb_size = sizeof(cryptTaskControlBlock),
-  .stack_mem = &cryptTaskBuffer[0],
-  .stack_size = sizeof(cryptTaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh,
-};
-/* Definitions for cryptQueue */
-osMessageQueueId_t cryptQueueHandle;
-uint8_t cryptQueueBuffer[ 64 * sizeof( crypt_queue_element_t ) ];
-osStaticMessageQDef_t cryptQueueControlBlock;
-const osMessageQueueAttr_t cryptQueue_attributes = {
-  .name = "cryptQueue",
-  .cb_mem = &cryptQueueControlBlock,
-  .cb_size = sizeof(cryptQueueControlBlock),
-  .mq_mem = &cryptQueueBuffer,
-  .mq_size = sizeof(cryptQueueBuffer)
-};
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
 
@@ -115,13 +84,10 @@ const osMessageQueueAttr_t cryptQueue_attributes = {
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
 static void MX_UART4_Init(void);
-static void MX_CRYP_Init(void);
 static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 extern void CLI_Task(void *argument);
-extern void Crypt_Task(void *argument);
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -200,9 +166,7 @@ Error_Handler();
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_UART4_Init();
-  MX_CRYP_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
 
@@ -223,10 +187,6 @@ Error_Handler();
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
-  /* Create the queue(s) */
-  /* creation of cryptQueue */
-  cryptQueueHandle = osMessageQueueNew (64, sizeof(crypt_queue_element_t), &cryptQueue_attributes);
-
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -237,9 +197,6 @@ Error_Handler();
 
   /* creation of cliTask */
   cliTaskHandle = osThreadNew(CLI_Task, NULL, &cliTask_attributes);
-
-  /* creation of cryptTask */
-  cryptTaskHandle = osThreadNew(Crypt_Task, NULL, &cryptTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -344,36 +301,6 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief CRYP Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_CRYP_Init(void)
-{
-
-  /* USER CODE BEGIN CRYP_Init 0 */
-
-  /* USER CODE END CRYP_Init 0 */
-
-  /* USER CODE BEGIN CRYP_Init 1 */
-
-  /* USER CODE END CRYP_Init 1 */
-  hcryp.Instance = CRYP;
-  hcryp.Init.DataType = CRYP_DATATYPE_32B;
-  hcryp.Init.KeySize = CRYP_KEYSIZE_128B;
-  hcryp.Init.pKey = (uint32_t *)pKeyCRYP;
-  hcryp.Init.Algorithm = CRYP_AES_ECB;
-  if (HAL_CRYP_Init(&hcryp) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN CRYP_Init 2 */
-
-  /* USER CODE END CRYP_Init 2 */
-
-}
-
-/**
   * @brief RNG Initialization Function
   * @param None
   * @retval None
@@ -445,25 +372,6 @@ static void MX_UART4_Init(void)
   /* USER CODE BEGIN UART4_Init 2 */
 
   /* USER CODE END UART4_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-  /* DMA1_Stream1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
 
 }
 
