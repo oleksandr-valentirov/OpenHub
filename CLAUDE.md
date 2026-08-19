@@ -124,17 +124,29 @@ command after pushing traffic — the numbers are words of stack left.
 `docs/freertos-config-backup.md` records the FreeRTOS task and queue configuration plus the
 CMSIS v1 to v2 migration, in case the `.ioc` loses it again.
 
+## Addressing
+
+The board boots as a DHCP client (`LWIP.LWIP_DHCP=1`), so `MX_LWIP_Init` brings the netif up on
+`0.0.0.0` and the address appears once the PHY has negotiated — allow ~20 s before calling it
+broken. `ip dhcp` and `ip static <ip> <mask> <gw>` switch at runtime; the choice is not persisted,
+so a reset always returns to DHCP. Both call into lwIP under `LOCK_TCPIP_CORE()` because the CLI
+runs outside `tcpip_thread`.
+
 ## Testing Ethernet from the host
 
-The board holds a static `192.168.137.33/24`. Give the wired port the address the board expects
-as its gateway, and keep the default route where it is:
+Serve DHCP on the wired port and keep the default route where it is. NetworkManager's shared mode
+runs a dnsmasq for the subnet:
 
 ```bash
-nmcli con mod "Wired connection 1" ipv4.method manual \
-      ipv4.addresses 192.168.137.1/24 ipv4.gateway "" ipv4.never-default yes
+nmcli con mod "Wired connection 1" ipv4.method shared \
+      ipv4.addresses 192.168.137.1/24 ipv4.never-default yes
 nmcli con up "Wired connection 1"
-ping -c 100 -i 0.002 192.168.137.33
+ip neigh show dev enp6s0        # the board's lease shows up here
+ping -c 200 -i 0.002 <lease>
 ```
+
+Shared mode also turns on IPv4 forwarding and NAT, which is what gives the board a route out.
+For a fixed address instead, use `ipv4.method manual` and `ip static` on the board.
 
 Then read `status` and `lwip` over the console. Healthy: no `drop`/`chkerr`/`err`, `icmp.recv`
 matching `icmp.xmit`, and every task with more than ~100 words of stack free.

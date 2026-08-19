@@ -14,6 +14,12 @@ LWIP malloc problem solved by replacing malloc and free functions in CM7/Core/Sr
 as described <a href="https://community.st.com/t5/stm32-mcus-embedded-software/lwip-rand-uses-newlib-rand-and-fails/m-p/720026/highlight/true#M51347">here</a>.
 </p>
 
+<h2>Networking</h2>
+<p>
+The hub boots as a DHCP client. <code>ip</code> shows the current address,<br>
+<code>ip dhcp</code> and <code>ip static &lt;ip&gt; &lt;mask&gt; &lt;gw&gt;</code> switch between modes at runtime.
+</p>
+
 <h2>Console</h2>
 <p>
 The CLI lives on the ST-Link virtual COM port &mdash; <code>/dev/ttyACM0</code>, 115200 8N1.<br>

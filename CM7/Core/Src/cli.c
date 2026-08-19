@@ -20,6 +20,8 @@
 /* LWIP */
 #include "netif.h"
 #include "lwip/stats.h"
+#include "lwip/dhcp.h"
+#include "lwip/tcpip.h"
 
 /* defines */
 #define CLI_MAX_ARGS        6
@@ -40,6 +42,7 @@ typedef struct cli_cmd {
 } cli_cmd_t;
 
 /* variables */
+extern struct netif gnetif;   /* defined in lwip.c */
 static QueueHandle_t cli_rx_queue;
 static StaticQueue_t cli_rx_queue_cb;
 static uint8_t cli_rx_queue_storage[CLI_RX_QUEUE_LEN];
@@ -58,7 +61,7 @@ static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, cha
 
 static const cli_cmd_t commands[] = {
     {"status",  0, 0, cmd_status,  "",                       "print system status"},
-    {"ip",      0, 4, cmd_ip,      "[set s<n> <ip> <name>]", "show or set network config"},
+    {"ip",      0, 4, cmd_ip,      "[dhcp|static|set ...]",  "show or set network config"},
     {"ping",    1, 1, cmd_ping,    "<ip addr>",              "send ping message"},
     {"cfg",     1, 1, cmd_cfg,     "<save | load>",          "config subcommand"},
     {"encrypt", 1, 1, cmd_encrypt, "<data>",                 "AES-128 encrypt and decrypt"},
@@ -228,9 +231,34 @@ static int cmd_help(cli_data_t *cli, int argc, char **argv) {
 }
 
 static int cmd_ip(cli_data_t *cli, int argc, char **argv) {
+    ip4_addr_t ip, mask, gw;
+
     if (argc == 1) {
         cli->response_len += (int16_t)Networking_get_network_info(cli->response_buffer +
                                                                   cli->response_len);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "dhcp") == 0 && argc == 2) {
+        LOCK_TCPIP_CORE();
+        dhcp_start(&gnetif);
+        UNLOCK_TCPIP_CORE();
+        cli_out(cli, "\r\nDHCP client started\r\n");
+        return 0;
+    }
+
+    if (strcmp(argv[1], "static") == 0 && argc == 5) {
+        if (!ip4addr_aton(argv[2], &ip) || !ip4addr_aton(argv[3], &mask) ||
+            !ip4addr_aton(argv[4], &gw)) {
+            cli_out(cli, "\r\nError: failed to convert IP address.\r\n");
+            return 0;
+        }
+        /* release first, or the client keeps renewing on top of the static config */
+        LOCK_TCPIP_CORE();
+        dhcp_release_and_stop(&gnetif);
+        netif_set_addr(&gnetif, &ip, &mask, &gw);
+        UNLOCK_TCPIP_CORE();
+        cli_out(cli, "\r\nstatic %s\r\n", argv[2]);
         return 0;
     }
 
@@ -238,12 +266,11 @@ static int cmd_ip(cli_data_t *cli, int argc, char **argv) {
         return set_server_ip_addr(cli, argv[2], argv[3], argv[4]);
 
     cli_out(cli,
-        "\r\nip set s<server num> <ip> <name>\r\n"
-        "ip set s0 192.168.88.37 my_main_server\r\n"
-        "subcommand sets IP address of remote server\r\n\r\n"
-        "server num - number of a server, range is [0 - %u]\r\n"
-        "ip         - server IP address\r\n"
-        "name       - server name WITHOUT spaces\r\n", USER_SERVERS_MAX_NUM - 1);
+        "\r\nip                              show current config\r\n"
+        "ip dhcp                         switch to DHCP (default at boot)\r\n"
+        "ip static <ip> <mask> <gw>      switch to a fixed address\r\n"
+        "ip set s<n> <ip> <name>         remember a remote server, n in [0 - %u]\r\n",
+        USER_SERVERS_MAX_NUM - 1);
     return 0;
 }
 
