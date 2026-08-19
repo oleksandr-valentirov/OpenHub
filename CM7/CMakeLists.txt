@@ -26,7 +26,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 set(STM32_MCU_FLAGS  "-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard " )
 
 #Linker options
-set(STM32_LINKER_SCRIPT stm32h755xx_flash_CM7.ld)
+set(STM32_LINKER_SCRIPT custom_m7_flash.ld)
 set(STM32_LINKER_OPTION  )
 
 # Include toolchain file
@@ -39,8 +39,40 @@ project(${CMAKE_PROJECT_NAME})
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
-# Include mx-generated 
-include("mx-generated.cmake")
+# Location of the STM32Cube H7 firmware package that CubeMX references.
+# The generated mx-generated.cmake refers to it through ${CUBE_FW_PATH}; the
+# rewrite from CubeMX's absolute paths is done by after_code_generation.py.
+# Override with -DCUBE_FW_PATH=<path> or the CUBE_FW_PATH environment variable.
+if(NOT DEFINED CUBE_FW_PATH)
+    if(DEFINED ENV{CUBE_FW_PATH})
+        set(CUBE_FW_PATH "$ENV{CUBE_FW_PATH}")
+    else()
+        set(CUBE_FW_PATH "$ENV{HOME}/STM32Cube/Repository/STM32Cube_FW_H7_V1.13.0")
+    endif()
+endif()
+if(NOT EXISTS "${CUBE_FW_PATH}/Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h")
+    message(FATAL_ERROR
+        "STM32Cube H7 firmware package not found at:\n  ${CUBE_FW_PATH}\n"
+        "Install it via CubeMX, or point CUBE_FW_PATH at your copy.")
+endif()
+
+# CubeMX запікає у mx-generated.cmake абсолютні шляхи на Cube FW тієї машини,
+# де генерувався код. Щоб закомічений файл працював будь-де, підміняємо цей
+# префікс на ${CUBE_FW_PATH} на етапі configure і підключаємо оброблену копію.
+# Регулярка не прив'язана ні до користувача, ні до версії FW.
+set(MX_GENERATED_IN  "${CMAKE_CURRENT_SOURCE_DIR}/mx-generated.cmake")
+set(MX_GENERATED_OUT "${CMAKE_CURRENT_BINARY_DIR}/mx-generated.portable.cmake")
+file(READ "${MX_GENERATED_IN}" MX_GENERATED_TEXT)
+string(REGEX REPLACE
+    "/[^ \t\r\n]*STM32Cube/Repository/STM32Cube_FW_H7_V[0-9.]+/"
+    "${CUBE_FW_PATH}/"
+    MX_GENERATED_TEXT "${MX_GENERATED_TEXT}")
+file(WRITE "${MX_GENERATED_OUT}" "${MX_GENERATED_TEXT}")
+# перегенерувати копію, щойно CubeMX перепише оригінал
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MX_GENERATED_IN}")
+
+# Include mx-generated
+include("${MX_GENERATED_OUT}")
 
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)

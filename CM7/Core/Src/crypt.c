@@ -1,5 +1,8 @@
 /* includes */
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
 #include "crypt.h"
 #include "core_cm7.h"
 #include <stdio.h>
@@ -8,7 +11,7 @@
 
 /* variables */
 extern CRYP_HandleTypeDef hcryp;
-extern osMessageQId cryptQueueHandle;
+extern osMessageQueueId_t cryptQueueHandle;
 static volatile uint8_t data_ready = 0;         /* for general encryption task */
 
 /* CLI call variables */
@@ -31,7 +34,7 @@ void HAL_CRYP_ErrorCallback(CRYP_HandleTypeDef *hcryp) {
     printf("\r\n%s - error\r\n", __func__);
 }
 
-void Crypt_Task(void const * argument) {
+void Crypt_Task(void *argument) {
     UNUSED(argument);
     crypt_queue_element_t element;
 
@@ -135,8 +138,8 @@ int CRYPT_encrypt_data(char *data, char *resp_buffer) {
     while (HAL_HSEM_IsSemTaken(HSEM_RNG)) {}
     HAL_HSEM_FastTake(HSEM_RNG);
     for (uint8_t i = 0; i < 4; i++) {
-        while (!LL_RNG_IsActiveFlag_DRDY(RNG)) {}
-        key[i] = LL_RNG_ReadRandData32(RNG);
+        while (!((RNG->SR & RNG_SR_DRDY) != 0U)) {}
+        key[i] = RNG->DR;
         // return sprintf(resp_buffer, "\r\n%s: RNG error - %i\r\n", __func__, (int)status)
     }
     HAL_HSEM_Release(HSEM_RNG, 0);

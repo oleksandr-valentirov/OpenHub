@@ -18,7 +18,7 @@ typedef struct crypt_queue_element {
     void (*onSuccessCallback)(void);
 } crypt_queue_element_t;
 
-void Crypt_Task(void const * argument);
+void Crypt_Task(void *argument);
 void HAL_CRYP_OutCpltCallback(CRYP_HandleTypeDef *hcryp);
 void HAL_CRYP_ErrorCallback(CRYP_HandleTypeDef *hcryp);
 int CRYPT_encrypt_data(char *data, char *resp_buffer);

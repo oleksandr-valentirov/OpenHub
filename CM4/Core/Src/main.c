@@ -39,8 +39,8 @@
 #define HSEM_ID_0 (0U) /* HW semaphore 0*/
 #endif
 
-#define rfm_cs_low()    LL_GPIO_ResetOutputPin(RFM_CS_GPIO_Port, RFM_CS_Pin)
-#define rfm_cs_high()   LL_GPIO_SetOutputPin(RFM_CS_GPIO_Port, RFM_CS_Pin)
+#define rfm_cs_low()    HAL_GPIO_WritePin(RFM_CS_GPIO_Port, RFM_CS_Pin, GPIO_PIN_RESET)
+#define rfm_cs_high()   HAL_GPIO_WritePin(RFM_CS_GPIO_Port, RFM_CS_Pin, GPIO_PIN_SET)
 
 /* USER CODE END PD */
 
@@ -51,7 +51,11 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+RNG_HandleTypeDef hrng;
+
 SPI_HandleTypeDef hspi1;
+
+TIM_HandleTypeDef htim7;
 
 /* USER CODE BEGIN PV */
 
@@ -154,15 +158,15 @@ void MX_RNG_Init(void)
 
   /* USER CODE END RNG_Init 0 */
 
-  LL_RCC_SetRNGClockSource(LL_RCC_RNG_CLKSOURCE_PLL1Q);
-
-  /* Peripheral clock enable */
-  LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_RNG);
-
   /* USER CODE BEGIN RNG_Init 1 */
 
   /* USER CODE END RNG_Init 1 */
-  LL_RNG_Enable(RNG);
+  hrng.Instance = RNG;
+  hrng.Init.ClockErrorDetection = RNG_CED_ENABLE;
+  if (HAL_RNG_Init(&hrng) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN RNG_Init 2 */
 
   /* USER CODE END RNG_Init 2 */
@@ -229,28 +233,28 @@ static void MX_TIM7_Init(void)
 
   /* USER CODE END TIM7_Init 0 */
 
-  LL_TIM_InitTypeDef TIM_InitStruct = {0};
-
-  /* Peripheral clock enable */
-  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM7);
-
-  /* TIM7 interrupt Init */
-  NVIC_SetPriority(TIM7_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-  NVIC_EnableIRQ(TIM7_IRQn);
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM7_Init 1 */
 
   /* USER CODE END TIM7_Init 1 */
-  TIM_InitStruct.Prescaler = 19;
-  TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 9999;
-  LL_TIM_Init(TIM7, &TIM_InitStruct);
-  LL_TIM_EnableARRPreload(TIM7);
-  LL_TIM_SetTriggerOutput(TIM7, LL_TIM_TRGO_RESET);
-  LL_TIM_DisableMasterSlaveMode(TIM7);
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 19;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 9999;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM7_Init 2 */
-  LL_TIM_EnableIT_UPDATE(TIM7);
-  LL_TIM_EnableCounter(TIM7);
+  HAL_TIM_Base_Start_IT(&htim7);
   /* USER CODE END TIM7_Init 2 */
 
 }
@@ -273,91 +277,63 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  LL_EXTI_InitTypeDef EXTI_InitStruct = {0};
-  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOA);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOC);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOD);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOG);
-  LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOB);
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
 
-  /**/
-  LL_GPIO_ResetOutputPin(RFM_CS_GPIO_Port, RFM_CS_Pin);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RFM_RESET_GPIO_Port, RFM_RESET_Pin, GPIO_PIN_RESET);
 
-  /**/
-  LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTC, LL_SYSCFG_EXTI_LINE8);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RFM_CS_GPIO_Port, RFM_CS_Pin, GPIO_PIN_RESET);
 
-  /**/
-  LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTD, LL_SYSCFG_EXTI_LINE2);
+  /*Configure GPIO pin : RFM_RESET_Pin */
+  GPIO_InitStruct.Pin = RFM_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(RFM_RESET_GPIO_Port, &GPIO_InitStruct);
 
-  /**/
-  LL_SYSCFG_SetEXTISource(LL_SYSCFG_EXTI_PORTG, LL_SYSCFG_EXTI_LINE10);
+  /*Configure GPIO pin : RFM_DIO3_Pin */
+  GPIO_InitStruct.Pin = RFM_DIO3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(RFM_DIO3_GPIO_Port, &GPIO_InitStruct);
 
-  /**/
-  EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_8;
-  EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.LineCommand = ENABLE;
-  EXTI_InitStruct.Mode = LL_EXTI_MODE_IT;
-  EXTI_InitStruct.Trigger = LL_EXTI_TRIGGER_RISING;
-  LL_EXTI_Init(&EXTI_InitStruct);
-
-  /**/
-  EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_2;
-  EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.LineCommand = ENABLE;
-  EXTI_InitStruct.Mode = LL_EXTI_MODE_IT;
-  EXTI_InitStruct.Trigger = LL_EXTI_TRIGGER_RISING;
-  LL_EXTI_Init(&EXTI_InitStruct);
-
-  /**/
-  EXTI_InitStruct.Line_0_31 = LL_EXTI_LINE_10;
-  EXTI_InitStruct.Line_32_63 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.Line_64_95 = LL_EXTI_LINE_NONE;
-  EXTI_InitStruct.LineCommand = ENABLE;
-  EXTI_InitStruct.Mode = LL_EXTI_MODE_IT;
-  EXTI_InitStruct.Trigger = LL_EXTI_TRIGGER_RISING;
-  LL_EXTI_Init(&EXTI_InitStruct);
-
-  /**/
-  LL_GPIO_SetPinPull(RFM_DIO3_GPIO_Port, RFM_DIO3_Pin, LL_GPIO_PULL_NO);
-
-  /**/
-  LL_GPIO_SetPinPull(RFM_DIO1_GPIO_Port, RFM_DIO1_Pin, LL_GPIO_PULL_NO);
-
-  /**/
-  LL_GPIO_SetPinPull(RFM_DIO2_GPIO_Port, RFM_DIO2_Pin, LL_GPIO_PULL_NO);
-
-  /**/
-  LL_GPIO_SetPinMode(RFM_DIO3_GPIO_Port, RFM_DIO3_Pin, LL_GPIO_MODE_INPUT);
-
-  /**/
-  LL_GPIO_SetPinMode(RFM_DIO1_GPIO_Port, RFM_DIO1_Pin, LL_GPIO_MODE_INPUT);
-
-  /**/
-  LL_GPIO_SetPinMode(RFM_DIO2_GPIO_Port, RFM_DIO2_Pin, LL_GPIO_MODE_INPUT);
-
-  /**/
+  /*Configure GPIO pins : RFM_DIO4_Pin RFM_DIO0_Pin */
   GPIO_InitStruct.Pin = RFM_DIO4_Pin|RFM_DIO0_Pin;
-  GPIO_InitStruct.Mode = LL_GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
-  LL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /**/
+  /*Configure GPIO pin : RFM_CS_Pin */
   GPIO_InitStruct.Pin = RFM_CS_Pin;
-  GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
-  LL_GPIO_Init(RFM_CS_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(RFM_CS_GPIO_Port, &GPIO_InitStruct);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
+  /*Configure GPIO pin : RFM_DIO1_Pin */
+  GPIO_InitStruct.Pin = RFM_DIO1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(RFM_DIO1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RFM_DIO2_Pin */
+  GPIO_InitStruct.Pin = RFM_DIO2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(RFM_DIO2_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -381,16 +357,28 @@ void rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
 
 void MPU_Config(void)
 {
+  MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   /* Disables the MPU */
-  LL_MPU_Disable();
+  HAL_MPU_Disable();
 
   /** Initializes and configures the Region and the memory to be protected
   */
-  LL_MPU_ConfigRegion(LL_MPU_REGION_NUMBER0, 0x0, 0x38000000, LL_MPU_REGION_SIZE_64KB|LL_MPU_TEX_LEVEL0|LL_MPU_REGION_FULL_ACCESS|LL_MPU_INSTRUCTION_ACCESS_DISABLE|LL_MPU_ACCESS_SHAREABLE|LL_MPU_ACCESS_NOT_CACHEABLE|LL_MPU_ACCESS_NOT_BUFFERABLE);
-  LL_MPU_EnableRegion(LL_MPU_REGION_NUMBER0);
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+  MPU_InitStruct.BaseAddress = 0x38000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_64KB;
+  MPU_InitStruct.SubRegionDisable = 0x0;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
-  LL_MPU_Enable(LL_MPU_CTRL_PRIVILEGED_DEFAULT);
+  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
 }
 
@@ -408,8 +396,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

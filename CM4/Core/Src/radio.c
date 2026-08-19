@@ -99,9 +99,9 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     if (version != RFM_VERSION)
         return 1;
 
-    while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+    while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !((RNG->SR & RNG_SR_DRDY) != 0U)) {}
     HAL_HSEM_FastTake(HSEM_RNG);
-    seed = LL_RNG_ReadRandData32(RNG);
+    seed = RNG->DR;
     HAL_HSEM_Release(HSEM_RNG, 0);
 
     if (Random_Init(seed))
@@ -145,9 +145,9 @@ void RFM_Routine(void) {
             RFM_send_broadcast();
             rfm_set_dio_mapping(0, 1);
             rfm_set_mode(TRANSMIT);
-            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            while (!(HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET)) {}
             rfm_set_dio_mapping(0, 0);
-            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+            while (!(HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET)) {}
             delay_ms_it(1000);
 
             rfm_set_mode(STANDBY);
@@ -229,9 +229,9 @@ static uint8_t RFM_add_device_routine(uint32_t dev_id) {
         rfm_transmit_data((uint8_t *)tx_buffer, sizeof(rfm_header_t) + sizeof(protocol_pairing_t));
         rfm_set_dio_mapping(0, 1);
         rfm_set_mode(TRANSMIT);
-        while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+        while (!(HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET)) {}
         rfm_set_dio_mapping(0, 0);
-        while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {}
+        while (!(HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET)) {}
 
         /* ------------------------ rx stage ------------------------------ */
         rfm_set_dio_mapping(4, 2);
@@ -239,11 +239,11 @@ static uint8_t RFM_add_device_routine(uint32_t dev_id) {
         for (uint8_t i = 0; i < 3; i++) {
             /* wait for sync */
             rfm_set_mode(RECEIVE);
-            while (!LL_GPIO_IsInputPinSet(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin)) {}
+            while (!(HAL_GPIO_ReadPin(RFM_DIO4_GPIO_Port, RFM_DIO4_Pin) == GPIO_PIN_SET)) {}
             delay_ms_it(50);  /* todo - fix this shit */
-            while (!LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) && !get_delay_ms_flag()) {}
+            while (!(HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET) && !get_delay_ms_flag()) {}
 
-            if (LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin))
+            if ((HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET))
                 break;
             else {
                 rfm_set_mode(STANDBY);
@@ -253,7 +253,7 @@ static uint8_t RFM_add_device_routine(uint32_t dev_id) {
             }
         }
 
-        if (LL_GPIO_IsInputPinSet(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin)) {
+        if ((HAL_GPIO_ReadPin(RFM_DIO0_GPIO_Port, RFM_DIO0_Pin) == GPIO_PIN_SET)) {
             /* receive data */
             rfm_set_dio_mapping(0, 0);
 

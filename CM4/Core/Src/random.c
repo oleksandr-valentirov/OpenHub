@@ -17,11 +17,11 @@ void Random_SetSeed(uint32_t s) {
 uint8_t Random_Init(uint32_t s) {
     seed = s;
 
-    while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+    while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !((RNG->SR & RNG_SR_DRDY) != 0U)) {}
     HAL_HSEM_FastTake(HSEM_RNG);
-    m = LL_RNG_ReadRandData32(RNG);
-    while (!LL_RNG_IsActiveFlag_DRDY(RNG)) {}
-    c = LL_RNG_ReadRandData32(RNG);
+    m = RNG->DR;
+    while (!((RNG->SR & RNG_SR_DRDY) != 0U)) {}
+    c = RNG->DR;
     HAL_HSEM_Release(HSEM_RNG, 0);
 
     return 0;

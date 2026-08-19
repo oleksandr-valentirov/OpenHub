@@ -28,21 +28,9 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32h7xx_hal.h"
+
 #include "stm32h7xx_nucleo.h"
 #include <stdio.h>
-
-#include "stm32h7xx_ll_rcc.h"
-#include "stm32h7xx_ll_crs.h"
-#include "stm32h7xx_ll_bus.h"
-#include "stm32h7xx_ll_system.h"
-#include "stm32h7xx_ll_exti.h"
-#include "stm32h7xx_ll_cortex.h"
-#include "stm32h7xx_ll_utils.h"
-#include "stm32h7xx_ll_pwr.h"
-#include "stm32h7xx_ll_dma.h"
-#include "stm32h7xx_ll_rng.h"
-#include "stm32h7xx_ll_usart.h"
-#include "stm32h7xx_ll_gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -72,6 +60,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define USB_OTG_FS_PWR_EN_Pin GPIO_PIN_10
+#define USB_OTG_FS_PWR_EN_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
 

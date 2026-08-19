@@ -1,4 +1,6 @@
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "networking.h"
 #include <stdint.h>
 #include <string.h>
@@ -63,9 +65,9 @@ static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
 
     /* generate random ID or use default */
     if (args->id == 0) {
-        while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !LL_RNG_IsActiveFlag_DRDY(RNG)) {}
+        while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !((RNG->SR & RNG_SR_DRDY) != 0U)) {}
         HAL_HSEM_FastTake(HSEM_RNG);
-        icmp_hdr->id = (uint16_t)LL_RNG_ReadRandData32(RNG);
+        icmp_hdr->id = (uint16_t)RNG->DR;
         HAL_HSEM_Release(HSEM_RNG, 0);
     } else
         icmp_hdr->id = args->id;

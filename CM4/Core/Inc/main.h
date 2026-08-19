@@ -28,22 +28,9 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32h7xx_hal.h"
+
 #include "stm32h7xx_nucleo.h"
 #include <stdio.h>
-
-#include "stm32h7xx_ll_rcc.h"
-#include "stm32h7xx_ll_crs.h"
-#include "stm32h7xx_ll_bus.h"
-#include "stm32h7xx_ll_system.h"
-#include "stm32h7xx_ll_exti.h"
-#include "stm32h7xx_ll_cortex.h"
-#include "stm32h7xx_ll_utils.h"
-#include "stm32h7xx_ll_pwr.h"
-#include "stm32h7xx_ll_dma.h"
-#include "stm32h7xx_ll_rng.h"
-#include "stm32h7xx_ll_tim.h"
-#include "stm32h7xx_ll_usart.h"
-#include "stm32h7xx_ll_gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -80,17 +67,19 @@ uint32_t get_rfm_counter(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define RFM_DIO3_Pin LL_GPIO_PIN_8
+#define RFM_RESET_Pin GPIO_PIN_12
+#define RFM_RESET_GPIO_Port GPIOB
+#define RFM_DIO3_Pin GPIO_PIN_8
 #define RFM_DIO3_GPIO_Port GPIOC
-#define RFM_DIO4_Pin LL_GPIO_PIN_9
+#define RFM_DIO4_Pin GPIO_PIN_9
 #define RFM_DIO4_GPIO_Port GPIOC
-#define RFM_CS_Pin LL_GPIO_PIN_15
+#define RFM_CS_Pin GPIO_PIN_15
 #define RFM_CS_GPIO_Port GPIOA
-#define RFM_DIO0_Pin LL_GPIO_PIN_12
+#define RFM_DIO0_Pin GPIO_PIN_12
 #define RFM_DIO0_GPIO_Port GPIOC
-#define RFM_DIO1_Pin LL_GPIO_PIN_2
+#define RFM_DIO1_Pin GPIO_PIN_2
 #define RFM_DIO1_GPIO_Port GPIOD
-#define RFM_DIO2_Pin LL_GPIO_PIN_10
+#define RFM_DIO2_Pin GPIO_PIN_10
 #define RFM_DIO2_GPIO_Port GPIOG
 
 /* USER CODE BEGIN Private defines */

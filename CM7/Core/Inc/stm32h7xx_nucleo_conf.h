@@ -45,7 +45,7 @@
   */
 /* Nucleo pin and part number defines */
 #define USE_NUCLEO_144
-#define USE_NUCLEO_H7A3ZI_Q
+#define USE_NUCLEO_H755ZI_Q
 
 /* COM define */
 #define USE_COM_LOG                         1U

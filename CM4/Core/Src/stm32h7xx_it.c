@@ -76,7 +76,7 @@ uint32_t get_rfm_counter(void) {
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern TIM_HandleTypeDef htim7;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -226,9 +226,10 @@ void SysTick_Handler(void)
 void TIM7_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM7_IRQn 0 */
-  LL_TIM_ClearFlag_UPDATE(TIM7);
+  __HAL_TIM_CLEAR_FLAG(&htim7, TIM_FLAG_UPDATE);
   rfm_ms_counter++;
   /* USER CODE END TIM7_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim7);
   /* USER CODE BEGIN TIM7_IRQn 1 */
 
   /* USER CODE END TIM7_IRQn 1 */

@@ -1,5 +1,7 @@
 /* includes */
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -10,7 +12,6 @@
 #include "shared_memory.h"
 
 /* HAL/LL */
-#include "stm32h7xx_ll_usart.h"
 #include "stm32h7xx_hal_rng.h"
 
 /* LWIP */
@@ -25,7 +26,7 @@ static m7_to_m4_rfm_request_t *rfm_shared_buffer = (m7_to_m4_rfm_request_t *)(0x
 static int set_server_ip_addr(char *server_num, char *addr, char *name, char *resp_buffer);
 
 
-void CLI_Task(void const * argument) {
+void CLI_Task(void *argument) {
     UNUSED(argument);
     cli_data_t cli;
 

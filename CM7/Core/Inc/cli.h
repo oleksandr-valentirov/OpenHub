@@ -14,4 +14,4 @@ typedef struct cli_data {
 } cli_data_t;
 
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c);
-void CLI_Task(void const * argument);
+void CLI_Task(void *argument);

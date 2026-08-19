@@ -1,5 +1,7 @@
-#include "stm32h7xx_ll_usart.h"
+#include "main.h"
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <stdio.h>
 
 
@@ -7,8 +9,8 @@ int _read(int file, char *ptr, int len) {
     UNUSED(file);
 
     for (int i = 0; i < len; i++) {
-        while (!LL_USART_IsActiveFlag_RXNE_RXFNE(UART4)) {}
-        *(ptr++) = (char)LL_USART_ReceiveData8(UART4);
+        while ((UART4->ISR & USART_ISR_RXNE_RXFNE) == 0U) {}
+        *(ptr++) = (char)(UART4->RDR & 0xFFU);
     }
 
     return len;
@@ -18,8 +20,8 @@ int _write(int file, char *ptr, int len) {
     UNUSED(file);
 
     for (int i = 0; i < len; i++) {
-        while (!(LL_USART_IsActiveFlag_TC(UART4) || LL_USART_IsActiveFlag_TXE_TXFNF(UART4))) {}
-        LL_USART_TransmitData8(UART4, *(ptr++));
+        while ((UART4->ISR & (USART_ISR_TC | USART_ISR_TXE_TXFNF)) == 0U) {}
+        UART4->TDR = (uint8_t)*(ptr++);
     }
 
     return len;

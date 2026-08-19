@@ -1,19 +1,29 @@
+# --- Збірка ---------------------------------------------------------------
+# Покриває build/, CM4/build/, CM7/build/ разом з усім, що там усередині:
+# compile_commands.json, службові теки ExternalProject (tmp/, src/, stamp/).
 build*
+
+# --- Локальний стан інструментів -------------------------------------------
 .vscode
+# CubeMX / CubeCLT: ide.store.json, bundles*.store.json
+.settings/
+# індекс clangd
+.cache/
+# внутрішній стан CubeMX
 .mxproject
-CMakeLists.txt.user
-CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
-Makefile
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-CTestTestfile.cmake
-_deps
 CMakeUserPresets.json
-CM7/tmp
-CM7/src
-CM4/tmp
-CM4/src
+
+# --- Вендорні бібліотеки ---------------------------------------------------
+# HAL/CMSIS/Middlewares не тримаємо в репозиторії: CubeMX посилається на них
+# у Cube FW package (ProjectManager.LibraryCopy=2). Шлях задає CUBE_FW_PATH
+# у CM4/CMakeLists.txt і CM7/CMakeLists.txt.
+/Drivers/
+/Middlewares/
+
+# --- Страховка від configure в корені --------------------------------------
+# Штатно збірка out-of-source, але `cmake .` у корені засмітив би репозиторій.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
