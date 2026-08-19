@@ -9,8 +9,8 @@ int _read(int file, char *ptr, int len) {
     UNUSED(file);
 
     for (int i = 0; i < len; i++) {
-        while ((UART4->ISR & USART_ISR_RXNE_RXFNE) == 0U) {}
-        *(ptr++) = (char)(UART4->RDR & 0xFFU);
+        while ((USART3->ISR & USART_ISR_RXNE_RXFNE) == 0U) {}
+        *(ptr++) = (char)(USART3->RDR & 0xFFU);
     }
 
     return len;
@@ -20,8 +20,8 @@ int _write(int file, char *ptr, int len) {
     UNUSED(file);
 
     for (int i = 0; i < len; i++) {
-        while ((UART4->ISR & (USART_ISR_TC | USART_ISR_TXE_TXFNF)) == 0U) {}
-        UART4->TDR = (uint8_t)*(ptr++);
+        while ((USART3->ISR & (USART_ISR_TC | USART_ISR_TXE_TXFNF)) == 0U) {}
+        USART3->TDR = (uint8_t)*(ptr++);
     }
 
     return len;

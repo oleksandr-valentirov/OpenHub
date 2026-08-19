@@ -49,8 +49,14 @@ memory guarded by hardware semaphores.
 
 **CM7** — application core. FreeRTOS with CMSIS-RTOS v2, LwIP in RTOS mode (`WITH_RTOS 1`).
 Three application threads created in `main.c`: `defaultTask` (brings LwIP up, then releases CM4),
-`cliTask` (UART4 command shell), `cryptTask` (AES-128 via the CRYP peripheral, fed by
+`cliTask` (command shell), `cryptTask` (AES-128 via the CRYP peripheral, fed by
 `cryptQueue`). LwIP adds `tcpip_thread`, `ethernetif_input` and `ethernet_link_thread`.
+
+**Console.** The CLI is on USART3 (PD8/PD9), which is the ST-Link VCP — `/dev/ttyACM0` at
+115200 8N1, so it can be driven from a script. `BSP_COM_Init(COM1, ...)` in `main()` configures
+the port; `cli_serial_start()` only adds the RX interrupt, which feeds a queue `cliTask` blocks
+on. Do not call `getchar`/`scanf`: `_read` in `newlib_stubs.c` polls the same USART and would
+race the ISR. UART4 (PC10/PC11) is still configured but no longer used.
 
 **CM4** — radio core. No RTOS; a superloop calling `RFM_Routine()`. Drives an RFM69 over SPI1
 through the `CM4/rfm69_lib` submodule. TIM7 provides the millisecond counter used for radio timing.
@@ -64,8 +70,11 @@ defines the request struct. CM7 writes it at a hardcoded `0x38000000` (SRAM4) an
 `HSEM_M7_TO_M4_RFM`; CM4 answers via `HSEM_M4_TO_M7`. Nothing reserves that address in the linker
 scripts, and the address literal is duplicated in `cli.c` and `radio.c`.
 
-**Memory.** `.lwip_sec` occupies ~282 KB at `0x30000000`, which is essentially all of RAM_D2 (95%).
-Adding LwIP buffers or threads will overflow it.
+**Memory.** RAM_D2 reads as 95% used, but most of it is a hole: `.lwip_sec` starts at the region
+origin and the script jumps the location counter to `0x30040000`, so ~256 KB of the section is
+linker fill. Real content is the ETH descriptors and the ~19 KB RX pool. The LwIP heap sits at
+`LWIP_RAM_HEAP_POINTER 0x30020000` inside that hole — a raw address the linker knows nothing
+about, so nothing stops a future section from overlapping it. `0x30000000`..`0x30020000` is free.
 
 ## CubeMX regeneration
 
@@ -107,9 +116,8 @@ Confirmed by type and control flow, not yet fixed:
 
 - `radio.c` `RFM_send_broadcast` offsets the payload by `sizeof(header)` where `header` is a
   pointer, giving 4 instead of `sizeof(rfm_header_t)` = 1. Broadcast packets are malformed.
-- `cli.c` `cfg` with no argument passes NULL to `strncmp`.
-- `cli.c` passes three `strtok` calls as separate arguments to `set_server_ip_addr`; C leaves the
-  evaluation order unspecified.
 - `random.c` takes `% m` where `m` comes from the RNG and may be zero.
 - Tick waits use exact equality (`HAL_GetTick() != end`), which hangs for ~49 days on a missed tick.
 - Radio DIO polling loops have no timeout.
+- `encrypt <data>` answers "Encryption error - timeout"; the CRYP path in `crypt.c` is broken.
+- The `EthIf` thread runs with ~39 words of stack headroom. Check `status` before adding to it.

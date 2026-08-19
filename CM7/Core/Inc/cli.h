@@ -3,7 +3,10 @@
 #include "main.h"
 
 #define CLI_CMD_BUF_LEN     128
-#define CLI_RX_BUF_LEN      256
+/* Holds a full `status` dump, so it is sized by task count, not by line length. */
+#define CLI_RX_BUF_LEN      1024
+/* Kept free at the end of the response for the trailing prompt. */
+#define CLI_PROMPT_RESERVE  8
 
 typedef struct cli_data {
     int16_t response_len;
