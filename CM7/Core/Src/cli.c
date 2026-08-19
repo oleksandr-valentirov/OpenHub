@@ -19,6 +19,7 @@
 
 /* LWIP */
 #include "netif.h"
+#include "lwip/stats.h"
 
 /* defines */
 #define CLI_MAX_ARGS        6
@@ -52,6 +53,7 @@ static int cmd_ping(cli_data_t *cli, int argc, char **argv);
 static int cmd_cfg(cli_data_t *cli, int argc, char **argv);
 static int cmd_encrypt(cli_data_t *cli, int argc, char **argv);
 static int cmd_rfm(cli_data_t *cli, int argc, char **argv);
+static int cmd_lwip(cli_data_t *cli, int argc, char **argv);
 static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, char *name);
 
 static const cli_cmd_t commands[] = {
@@ -61,6 +63,7 @@ static const cli_cmd_t commands[] = {
     {"cfg",     1, 1, cmd_cfg,     "<save | load>",          "config subcommand"},
     {"encrypt", 1, 1, cmd_encrypt, "<data>",                 "AES-128 encrypt and decrypt"},
     {"rfm",     1, 2, cmd_rfm,     "<dump|add|remove> <hex>","radio subcommands"},
+    {"lwip",    0, 0, cmd_lwip,    "",                       "dump LwIP stack statistics"},
     {"?",       0, 0, cmd_help,    "",                       "print available commands"},
 };
 
@@ -175,6 +178,40 @@ static int cmd_status(cli_data_t *cli, int argc, char **argv) {
                 (unsigned long)tasks[i].usStackHighWaterMark);
     }
 
+    return 0;
+}
+
+/* stats_display() floods printf and overflows this task's stack, so print the essentials */
+static int cmd_lwip(cli_data_t *cli, int argc, char **argv) {
+    UNUSED(argc);
+    UNUSED(argv);
+
+    cli_out(cli, "\r\n%-7s %6s %6s %6s %6s %6s\r\n",
+            "proto", "recv", "xmit", "drop", "chkerr", "err");
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "link",
+            (unsigned)lwip_stats.link.recv, (unsigned)lwip_stats.link.xmit,
+            (unsigned)lwip_stats.link.drop, (unsigned)lwip_stats.link.chkerr,
+            (unsigned)lwip_stats.link.err);
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "etharp",
+            (unsigned)lwip_stats.etharp.recv, (unsigned)lwip_stats.etharp.xmit,
+            (unsigned)lwip_stats.etharp.drop, (unsigned)lwip_stats.etharp.chkerr,
+            (unsigned)lwip_stats.etharp.err);
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "ip",
+            (unsigned)lwip_stats.ip.recv, (unsigned)lwip_stats.ip.xmit,
+            (unsigned)lwip_stats.ip.drop, (unsigned)lwip_stats.ip.chkerr,
+            (unsigned)lwip_stats.ip.err);
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "icmp",
+            (unsigned)lwip_stats.icmp.recv, (unsigned)lwip_stats.icmp.xmit,
+            (unsigned)lwip_stats.icmp.drop, (unsigned)lwip_stats.icmp.chkerr,
+            (unsigned)lwip_stats.icmp.err);
+    cli_out(cli, "ip     lenerr=%u memerr=%u proterr=%u rterr=%u opterr=%u\r\n",
+            (unsigned)lwip_stats.ip.lenerr, (unsigned)lwip_stats.ip.memerr,
+            (unsigned)lwip_stats.ip.proterr, (unsigned)lwip_stats.ip.rterr,
+            (unsigned)lwip_stats.ip.opterr);
+    cli_out(cli, "heap free %lu, min ever %lu of %u bytes\r\n",
+            (unsigned long)xPortGetFreeHeapSize(),
+            (unsigned long)xPortGetMinimumEverFreeHeapSize(),
+            (unsigned)configTOTAL_HEAP_SIZE);
     return 0;
 }
 

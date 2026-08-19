@@ -292,7 +292,8 @@ static void low_level_init(struct netif *netif)
 /* USER CODE BEGIN OS_THREAD_NEW_CMSIS_RTOS_V2 */
   memset(&attributes, 0x0, sizeof(osThreadAttr_t));
   attributes.name = "EthIf";
-  attributes.stack_size = INTERFACE_THREAD_STACK_SIZE;
+  /* CMSIS-RTOS v2 takes stack_size in bytes; the define is a word count */
+  attributes.stack_size = INTERFACE_THREAD_STACK_SIZE * 4;
   attributes.priority = osPriorityRealtime;
   osThreadNew(ethernetif_input, netif, &attributes);
 /* USER CODE END OS_THREAD_NEW_CMSIS_RTOS_V2 */

@@ -99,6 +99,14 @@ post-generation hook; do not reintroduce one.
 `STM32_LINKER_SCRIPT`, not the `stm32h755xx_*.ld` files CubeMX writes. Custom sections
 (`.lwip_sec`, `.cli_dma_buffer`) live in the custom files; edit those.
 
+**CMSIS-RTOS v2 takes `stack_size` in bytes, not words.** CubeMX knows this and emits
+`512 * 4` in `main.c`, but the LwIP glue does not: `ethernetif.c` and `lwip.c` pass
+`INTERFACE_THREAD_STACK_SIZE` straight through, and `sys_arch.c` passes
+`TCPIP_THREAD_STACKSIZE` / `DEFAULT_THREAD_STACKSIZE` straight through. Taken as bytes these
+are ~4x too small; the first received frame then overflows the `EthIf` stack and hard-faults the
+core, which looks like a dead CLI with a frozen `xTickCount`. Check headroom with the `status`
+command after pushing traffic — the numbers are words of stack left.
+
 **Known template gaps** to re-apply if regeneration drops them:
 
 - `cmsis_os.h` under CMSIS-RTOS v2 does not pull in the raw FreeRTOS API. Files using
@@ -106,9 +114,30 @@ post-generation hook; do not reintroduce one.
   `queue.h`.
 - `ethernetif.c` still configures a global `TxConfig` in `low_level_init` that the current template
   no longer declares; the declaration is kept in `USER CODE 3`.
+- `custom_m7_flash.ld` must match the section names `ethernetif.c` actually emits:
+  `.RxDescripSection` / `.TxDescripSection`. The ST community article spells them without the
+  `s`, and with that spelling the ETH descriptors silently land in cacheable RAM_D1 instead of
+  the non-cacheable window the MPU opens at `0x30040000`.
+- `lwipopts.h` is generated too. `LWIP_STATS`, the thread stack sizes and `MEM_SIZE` are set in
+  the CubeMX LwIP panel; re-check them after regeneration.
 
 `docs/freertos-config-backup.md` records the FreeRTOS task and queue configuration plus the
 CMSIS v1 to v2 migration, in case the `.ioc` loses it again.
+
+## Testing Ethernet from the host
+
+The board holds a static `192.168.137.33/24`. Give the wired port the address the board expects
+as its gateway, and keep the default route where it is:
+
+```bash
+nmcli con mod "Wired connection 1" ipv4.method manual \
+      ipv4.addresses 192.168.137.1/24 ipv4.gateway "" ipv4.never-default yes
+nmcli con up "Wired connection 1"
+ping -c 100 -i 0.002 192.168.137.33
+```
+
+Then read `status` and `lwip` over the console. Healthy: no `drop`/`chkerr`/`err`, `icmp.recv`
+matching `icmp.xmit`, and every task with more than ~100 words of stack free.
 
 ## Known defects
 
@@ -120,4 +149,3 @@ Confirmed by type and control flow, not yet fixed:
 - Tick waits use exact equality (`HAL_GetTick() != end`), which hangs for ~49 days on a missed tick.
 - Radio DIO polling loops have no timeout.
 - `encrypt <data>` answers "Encryption error - timeout"; the CRYP path in `crypt.c` is broken.
-- The `EthIf` thread runs with ~39 words of stack headroom. Check `status` before adding to it.
