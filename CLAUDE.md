@@ -694,6 +694,20 @@ cores and no self-test reaches it. Said out loud in the file and the test,
 because a vector believed to cover more than it does is worse than one covering
 less.
 
+**And the set covers provenance on neither side, because the device side fixed
+it structurally instead.** It had the superframe as a parameter to two
+consumers and updated one of them; the fix was not to test for the wrong value
+but to delete it - both consumers now read the same struct field, so **there is
+no second value in scope to pass by mistake**. A test finds a caller passing the
+wrong value; removing the parameter means there is no wrong value to pass.
+Prefer that whenever the choice exists, and re-read what a test claims after
+someone removes its subject: this entry asserted a coverage that was true when
+written and false an hour later, with the vector unchanged. What survives is
+real and smaller - the format and the binding on both sides, plus **diagnosis**:
+publishing what each wrong read produces, so a future disagreement names its
+source instead of reporting a mismatch. That half generalises to any value with
+more than one plausible source.
+
 **A vector whose consumer does not exist is untested in the way that matters.**
 `key_hop_gen0` reproduced byte for byte for weeks and proved only that HKDF works
 — nothing consumed it, so nothing could disagree. That is how the pairwise-hop-key
