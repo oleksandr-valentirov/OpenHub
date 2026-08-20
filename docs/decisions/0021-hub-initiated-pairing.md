@@ -1,6 +1,10 @@
 # ADR-0021: pair_v3 changes discovery, not the key exchange
 
-**Status: accepted, not implemented.** Agreed with the device side on
+**Status: accepted and verified on air 2026-08-21.** A hub-built `PAIR_INIT`
+was received, its MAC verified and its superframe stored as a durable ceiling by
+an independent implementation sharing no code with this one - including the
+hub's `K_init` derived against a real enrolment record rather than the published
+vector. Agreed with the device side on
 2026-08-20; their answers are folded in below and changed two things. Frame
 sizes and duty-cycle arithmetic are settled. `PAIR_INIT` is pinned in
 `Common/test/vectors/pair_v3.txt`, which **has no consumer yet** - it reproduces
@@ -93,6 +97,13 @@ ephemeral point stays where `pair_v2` already puts it, in `PAIR_RSP`.
 
 At 28 bytes every 4th superframe the frame costs 0.156%, which is **less than
 the 0.200% join beacon it replaces**. Discovery gets cheaper, not dearer.
+
+**"Replaces" is a correctness requirement, not an efficiency note.** 4 is a
+multiple of 2, so every invitation shares a superframe with a beacon and both
+were keyed at the same offset ~8 ms apart - the device heard 15 beacons and no
+invitations at all until the beacon was suppressed on those superframes. This
+paragraph originally carried only the duty-cycle argument, which is why the
+replacement went unimplemented for a day with both sides having agreed it.
 
 ### The frames
 

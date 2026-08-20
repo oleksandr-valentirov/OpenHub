@@ -480,6 +480,29 @@ correct functions produce one wrong answer. **Fixing one instance of a hazard is
 not fixing the hazard.** Every user of CRYP must state the whole configuration it
 needs: algorithm, key, key size, data width, header size.
 
+**A fault with a duty cycle of 100% looks like a property, not an event.**
+`PAIR_INIT` fires every 4th superframe and the join beacon every 2nd, so every
+invitation shared a superframe with a beacon - not sometimes, always - and both
+were keyed at `join_offset_tk` about 8 ms apart. The device heard 15 beacons and
+zero invitations in one 59 s window through one receiver, and read the perfect
+regularity as evidence of a systematic fault, which it was: radiated correctly,
+on the right carrier, into the shadow of the frame in front of it. Everything
+intermittent announces itself by working sometimes; this could not.
+
+Nothing on the transmitting side could see it - `RegFrf` reads back 866.5 MHz
+*after* the transmit, `PacketSent` is observed, `tx_err` is zero, `sent` counts
+up. **A register read back off the part is evidence about the antenna; a
+function's return value is evidence about the function.** Reading `RegFrf` after
+the frame went out is what eliminated the carrier hypothesis in one measurement
+instead of an hour of argument.
+
+**A decision record can be correct, agreed, and unimplemented**, with nothing in
+either firmware disagreeing with it. ADR-0021 said the invitation replaces the
+join beacon; both sides agreed it; the replacement was never written. The
+document is not a check. It stayed invisible because the ADR carried the
+*duty-cycle* argument for replacing and not the reason it is load-bearing, so it
+read as an efficiency note rather than a correctness one.
+
 **The mirror of inheriting is asserting.** `pair_tx()` tuned the join channel
 itself - deliberately, and its comment says why: it removed a dependency on how
 the exchange got there. Reused for the downlink it kept doing that, and 93 frames
