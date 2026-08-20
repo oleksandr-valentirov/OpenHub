@@ -15,6 +15,7 @@
 #include "wire_v3.h"
 #include "pair_v2.h"
 #include "pair_v3.h"
+#include "pair_prov.h"
 #include "radio_protocol.h"
 
 #define CRYPTO_MISMATCH (-1)
@@ -971,8 +972,52 @@ const char *crypto_test_name(crypto_test_t t) {
     case CRYPTO_TEST_PAIRCOST: return "p-256 hub pairing share";
     case CRYPTO_TEST_PAIRV2: return "pair_v2 derive+confirm";
     case CRYPTO_TEST_PAIRV3: return "pair_v3 init key+mac";
+    case CRYPTO_TEST_PAIRPROV: return "superframe provenance";
     default:               return "?";
     }
+}
+
+/* pair_prov's consumer. Same exchange as pair_v2 with only the superframe
+ * moved, so a disagreement here is about that field and nothing else.
+ *
+ * **What this pins and what it does not.** The derivation takes the superframe
+ * as a parameter, so this cannot catch a caller that passes the wrong one -
+ * on this side the provenance lives in the wiring from the received frame to
+ * the call, which spans two cores and no self-test reaches it. What it does
+ * pin is that the field is bound at all, and that the published wrong answer
+ * really is what a wrong read produces.
+ *
+ * The second derive is the point. Without it the decoy is an unchecked
+ * constant, and a diagnostic nobody has ever seen fire is one that cannot be
+ * read in either direction. */
+static int test_pair_prov(void) {
+    crypto_pair_out_t o;
+    int rc;
+
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
+                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
+                         0x33442211u, 0x0000002Au, PROV_REQ_SUPERFRAME,
+                         PV_DEV_NONCE, &o);
+    if (rc != 0) return rc;
+    if (memcmp(o.transcript, PROV_TRANSCRIPT, sizeof(PROV_TRANSCRIPT)) != 0)
+        return CRYPTO_MISMATCH;
+    if (memcmp(o.key_session, PROV_KEY_SESSION, 16) != 0) return CRYPTO_MISMATCH;
+    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
+    if (memcmp(o.confirm_dev, PROV_CONFIRM_DEV, 16) != 0) return CRYPTO_MISMATCH;
+
+    /* Deriving from the last beacon's superframe instead of the request's is
+     * the defect this set exists for. It must produce the published wrong
+     * answer exactly - if it produces something else, the diagnostic would
+     * misname the source it is meant to identify. */
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
+                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
+                         0x33442211u, 0x0000002Au, PROV_BEACON_SUPERFRAME,
+                         PV_DEV_NONCE, &o);
+    if (rc != 0) return rc;
+    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB_IF_BEACON, 16) != 0)
+        return CRYPTO_MISMATCH;
+    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB, 16) == 0) return CRYPTO_MISMATCH;
+    return 0;
 }
 
 /* The consumer pair_v3.h did not have. Until something ran the production path
@@ -1033,6 +1078,7 @@ int crypto_run_test(crypto_test_t t) {
     case CRYPTO_TEST_PAIRCOST: rc = test_pairing_cost(); break;
     case CRYPTO_TEST_PAIRV2: rc = test_pair_v2(); break;
     case CRYPTO_TEST_PAIRV3: rc = test_pair_v3(); break;
+    case CRYPTO_TEST_PAIRPROV: rc = test_pair_prov(); break;
     default:               rc = CRYPTO_MISMATCH; break;
     }
     crypto_stage = 20u + (uint32_t)t;

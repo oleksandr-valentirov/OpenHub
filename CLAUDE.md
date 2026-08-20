@@ -680,7 +680,19 @@ the coincidence that had been doing the work was never named. Same family as the
 consumer-less vector below - the value reproduces and disagreement is
 unreachable. A field whose provenance matters needs **three distinct values** in
 the vectors, one per plausible source, so the wrong read fails a host test
-instead of an air test.
+instead of an air test. `Common/test/vectors/pair_prov` is that set: pair_v2's
+exchange with only the superframe moved - the generator checks the transcript
+differs from pair_v2's at offset 8..11 **and nowhere else** - carrying the
+request's value, a plausible last beacon's and a plausible live counter, all
+three legitimate at the same instant. It publishes what each *wrong* read
+produces, so a failure names the source instead of reporting a mismatch. Its
+consumer is `superframe provenance` in `crypto`, which derives twice: once for
+the answer and once to prove the decoy is really what the wrong source gives.
+On this side that pins the binding and not the provenance - the derivation
+takes the superframe as a parameter, so the wiring from frame to call spans two
+cores and no self-test reaches it. Said out loud in the file and the test,
+because a vector believed to cover more than it does is worse than one covering
+less.
 
 **A vector whose consumer does not exist is untested in the way that matters.**
 `key_hop_gen0` reproduced byte for byte for weeks and proved only that HKDF works

@@ -19,6 +19,7 @@ typedef enum {
     CRYPTO_TEST_PAIRCOST,
     CRYPTO_TEST_PAIRV2,
     CRYPTO_TEST_PAIRV3,
+    CRYPTO_TEST_PAIRPROV,
     CRYPTO_TEST_COUNT
 } crypto_test_t;
 

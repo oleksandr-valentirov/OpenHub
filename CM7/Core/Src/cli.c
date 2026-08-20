@@ -22,6 +22,8 @@
 /* For the fingerprint device list computes from the stored key. */
 #include "mbedtls/sha256.h"
 #include "pair_v2.h"
+#include "pair_v3.h"
+#include "pair_prov.h"
 #include "radio_slots.h"
 #include "radio_protocol.h"
 #include "rng.h"
@@ -821,6 +823,12 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "hop_v1     %-18s %-18s %s\r\n", HOP_VECTORS_DIGEST, v.hop,
             strcmp(HOP_VECTORS_DIGEST, v.hop) == 0 ? "ok" : "MISMATCH");
     cli_out(cli, "wire       %-18s %-18s\r\n", WIRE_VECTORS_DIGEST, "-");
+    /* CM7-only sets: CM4 compiles neither, so there is no column to compare.
+     * Listed anyway - the command's job is to name what is covered, and a set
+     * omitted here reads as a set that does not exist. */
+    cli_out(cli, "pair_v%-3d  %-18s %-18s\r\n", PAIR_V3_VECTORS_VERSION,
+            PAIR_V3_VECTORS_DIGEST, "-");
+    cli_out(cli, "pair_prov  %-18s %-18s\r\n", PAIR_PROV_VECTORS_DIGEST, "-");
 
     if (strcmp(PAIR_VECTORS_DIGEST, v.pair) != 0 ||
         strcmp(HOP_VECTORS_DIGEST, v.hop) != 0)
