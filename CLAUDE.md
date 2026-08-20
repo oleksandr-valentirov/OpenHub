@@ -749,6 +749,19 @@ mean something all look the same: `make -q` against a real target reading 0/1/0
 across settle-touch-rebuild, a mutation that must fail, a test length outside the
 defect's class that must pass. Found by the device side, in its own harness.
 
+**A guard can fail in the direction that guarantees the thing it prevents.**
+`ps -eo pid,cmd | grep "[w]inhold"`, meant to stop a second window-holder
+starting, **matched its own shell**: the wrapper's argv contains the whole
+script, pattern included. It printed "ALREADY RUNNING", started nothing, and the
+pairing window expired in silence. The bracket trick defeats grep matching
+itself and does nothing about the shell around it. Note which way it failed - a
+duplicate-suppressor that instead guarantees absence, and reports success doing
+it. Match on the process *name* as well as the pattern
+(`$2 ~ /python/ && /winhold\.py/`). The `pkill -f` form of this had already
+cost two exits earlier the same session: **fixing one instance of a hazard is
+not fixing the hazard**, and the read-only variant reads as harmless right up
+until the thing it guards is the only thing holding a window open.
+
 **A digest in a generated artifact detects regeneration, never tampering.** The
 value is a literal baked into the file it describes, so a hand-edited header
 keeps its old digest and every consumer compiles the tampered values and agrees.
