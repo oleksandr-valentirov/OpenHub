@@ -180,6 +180,8 @@ static uint8_t  pi_frame[RADIO_PAIR_INIT_MAX];
 static uint8_t  pi_len;
 static uint32_t pi_superframe;      /* 0 when nothing is queued */
 static uint32_t pi_given, pi_sent, pi_missed, pi_tx_err, pi_replaced;
+static uint32_t pi_frf;      /* RegFrf read back after the transmit */
+static uint8_t  pi_paylen;
 static uint32_t pi_last_sent_sf;
 static uint32_t dl_opportunities;
 static int16_t  up_rssi_peak_x2 = -32768, up_rssi_floor_x2 = 32767;
@@ -928,6 +930,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         p.replaced     = pi_replaced;
         p.last_sent_sf = pi_last_sent_sf;
         p.pending_sf   = pi_superframe;
+        p.frf          = pi_frf;
+        p.payload_len  = pi_paylen;
         (void)ipc_send_reply(req, IPC_ST_OK, &p, (uint8_t)sizeof(p));
         return;
     }
@@ -1485,7 +1489,21 @@ static void handle_uplink_frame(void) {
  * authenticated. That is the reason it is worth a region: a forger cannot
  * command a device without the key pairing established. */
 /* Keyed on the join channel, at the superframe CM7 named, while a window is
- * open. It replaces the join beacon rather than joining it: both are the hub
+ * open.
+ *
+ * **It replaces the join beacon on that superframe**, and the replacement is
+ * load-bearing rather than a duty-cycle nicety. The invitation cadence is 4 and
+ * the beacon's is 2, so 4 being a multiple of 2 means every invitation shares a
+ * superframe with a beacon - not sometimes, always - and both were keyed at the
+ * same offset, back to back. The device heard 15 beacons and zero invitations
+ * in one 59 s window through the same receiver, every invitation hidden in the
+ * beacon it followed by 8 ms.
+ *
+ * A collision that happens on every occurrence looks like a frame that never
+ * radiates, and the transmitter cannot tell the two apart: carrier read back
+ * correct, PacketSent observed, tx_err zero.
+ *
+ * It replaces the join beacon rather than joining it: both are the hub
  * saying "here I am" on 866.5, and only one of them is addressed and
  * authenticated. See ADR-0021.
  *
@@ -1518,6 +1536,24 @@ static void pair_init_service(void) {
     else {
         pi_sent++;
         pi_last_sent_sf = frame_counter;
+    }
+    /* Read back what the part actually holds, straight after the transmit.
+     * frame_tx returning 0 means PacketSent was observed; it is not evidence
+     * the carrier or the length were what was asked for, and the device hears
+     * 15 join beacons and none of these through the same receiver. A driver
+     * call that returns success is not evidence a field holds what was set. */
+    {
+        uint8_t v = 0;
+
+        pi_frf = 0;
+        if (rfm69_read_reg(&radio, RFM69_RegFrfMsb, &v) == RFM69_OK)
+            pi_frf |= (uint32_t)v << 16;
+        if (rfm69_read_reg(&radio, RFM69_RegFrfMid, &v) == RFM69_OK)
+            pi_frf |= (uint32_t)v << 8;
+        if (rfm69_read_reg(&radio, RFM69_RegFrfLsb, &v) == RFM69_OK)
+            pi_frf |= v;
+        if (rfm69_read_reg(&radio, RFM69_RegPayloadLength, &v) == RFM69_OK)
+            pi_paylen = v;
     }
     pi_len = 0u;
 }
@@ -1888,7 +1924,8 @@ static void join_region_service(void) {
             if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK)
                 return;
             join_beacon_pending = ((frame_counter % JOIN_BEACON_EVERY) == 0u);
-        } else if ((frame_counter % JOIN_BEACON_EVERY) == 0u) {
+        } else if ((frame_counter % JOIN_BEACON_EVERY) == 0u &&
+                   pi_superframe != frame_counter) {
             RFM_send_join_beacon();
         } else if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) {
             return;

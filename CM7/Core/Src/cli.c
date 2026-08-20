@@ -697,6 +697,12 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                         (unsigned long)ps.replaced,
                         (unsigned long)ps.last_sent_sf,
                         (unsigned long)ps.pending_sf);
+                /* Frf steps of 61.03515625 Hz; 866.5 MHz is 0xD8A000. */
+                cli_out(cli, "  cm4 readback: RegFrf %06lX (%lu Hz), "
+                             "RegPayloadLength %u\r\n",
+                        (unsigned long)ps.frf,
+                        (unsigned long)((uint64_t)ps.frf * 32000000ull / 524288ull),
+                        ps.payload_len);
             }
         }
         if (pi->last_len) {

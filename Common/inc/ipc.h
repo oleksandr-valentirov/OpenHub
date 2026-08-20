@@ -395,6 +395,9 @@ typedef struct ipc_pair_init_state {
     uint32_t replaced;       /* a new frame arrived while one was still pending */
     uint32_t last_sent_sf;
     uint32_t pending_sf;     /* 0 when nothing is queued */
+    /* Read back off the part after the transmit, not what was asked for. */
+    uint32_t frf;
+    uint8_t  payload_len;
 } __attribute__((packed)) ipc_pair_init_state_t;
 _Static_assert(sizeof(ipc_pair_init_state_t) <= IPC_PAYLOAD_MAX,
                "ipc_pair_init_state_t too large");
