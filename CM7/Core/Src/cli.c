@@ -1098,6 +1098,49 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
 
 /* The hub's own long-term identity. Devices are provisioned with the public
    half out of band, which is what lets them tell this hub from an impostor. */
+/* The bytes the last exchange's confirmations were taken over.
+ *
+ * Printed split at its field boundaries as well as flat: a confirm mismatch
+ * says only that two 119-byte strings differ, and the whole cost of diagnosing
+ * it is finding which field. Flat too, because the other end hashes a string
+ * and not a struct. */
+static int cmd_device_transcript(cli_data_t *cli) {
+    uint32_t dev_id = 0, sf = 0;
+    const uint8_t *t = pairing_last_transcript(&dev_id, &sf);
+
+    if (t == NULL) {
+        cli_out(cli, "\r\nno exchange has derived since boot\r\n");
+        return 0;
+    }
+
+    cli_out(cli, "\r\ntranscript of the last derive, device 0x%08lx\r\n",
+            (unsigned long)dev_id);
+    /* The value that reached the transcript, not the live counter and not the
+     * last beacon's: those three coincided before pair_v3 and no longer do. */
+    cli_out(cli, "superframe fed in: %lu\r\n", (unsigned long)sf);
+
+    static const struct { const char *name; uint8_t off, len; } f[] = {
+        { "hub_id    ",  0,  4 }, { "dev_id    ",  4,  4 },
+        { "superframe",  8,  4 }, { "dev_nonce ", 12,  8 },
+        { "hub_pub   ", 20, 33 }, { "eph_pub   ", 53, 33 },
+        { "dev_pub   ", 86, 33 },
+    };
+    for (unsigned i = 0; i < sizeof(f) / sizeof(f[0]); i++) {
+        cli_out(cli, "  %s ", f[i].name);
+        for (uint8_t b = 0; b < f[i].len; b++)
+            cli_out(cli, "%02x", t[f[i].off + b]);
+        cli_out(cli, "\r\n");
+    }
+
+    cli_out(cli, "flat 119:\r\n");
+    for (int b = 0; b < 119; b++) {
+        cli_out(cli, "%02x", t[b]);
+        if ((b % 32) == 31) cli_out(cli, "\r\n");
+    }
+    cli_out(cli, "\r\n");
+    return 0;
+}
+
 static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
     uint8_t priv[32], pub[33];
     int rc;
@@ -1292,6 +1335,9 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         }
         return 0;
     }
+    if (strcmp(argv[1], "transcript") == 0 && argc == 2)
+        return cmd_device_transcript(cli);
+
     if (strcmp(argv[1], "pair") == 0 && argc == 2)
         return cmd_device_pair(cli);
 

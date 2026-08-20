@@ -47,6 +47,14 @@ static struct {
 
 static pairing_stats_t stats;
 
+/* The last transcript the live derive actually hashed, kept past the exchange
+ * it belongs to. A confirm mismatch is a disagreement about these bytes, and
+ * the only thing that settles it is both ends printing the same 119. */
+static uint8_t  last_t[119];
+static uint8_t  last_t_valid;
+static uint32_t last_t_dev;
+static uint32_t last_t_sf;
+
 /* The hub's own public key. Recovered once from the stored private half rather
  * than kept in flash: it is one scalar multiplication and the store then holds
  * 32 bytes instead of 65. Cached because 167 ms inside the exchange would be
@@ -157,6 +165,13 @@ static void serve_pair_req(const ipc_msg_t *m) {
         goto refuse;
     }
     mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+
+    /* Recorded from the value passed, not re-read from anywhere: the question
+     * this answers is which superframe reached the transcript. */
+    memcpy(last_t, pending.out.transcript, sizeof(last_t));
+    last_t_dev   = e.dev_id;
+    last_t_sf    = e.superframe;
+    last_t_valid = 1;
 
     pending.active     = 1;
     pending.dev_id     = e.dev_id;
@@ -280,6 +295,14 @@ static void install_paired_devices(void) {
         mbedtls_platform_zeroize(&k, sizeof(k));
     }
     mbedtls_platform_zeroize(net_key, sizeof(net_key));
+}
+
+const uint8_t *pairing_last_transcript(uint32_t *dev_id, uint32_t *superframe) {
+    if (!last_t_valid)
+        return NULL;
+    if (dev_id != NULL)     *dev_id = last_t_dev;
+    if (superframe != NULL) *superframe = last_t_sf;
+    return last_t;
 }
 
 const pairing_stats_t *pairing_get_stats(void) {

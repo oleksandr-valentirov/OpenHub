@@ -36,6 +36,12 @@ void PairingTask(void *argument);
 
 const pairing_stats_t *pairing_get_stats(void);
 
+/* The 119 bytes the last exchange's confirmations were taken over, or NULL if
+ * no exchange has derived yet. The superframe is reported beside them because
+ * it is the field the two sides can disagree about while every other check
+ * passes. */
+const uint8_t *pairing_last_transcript(uint32_t *dev_id, uint32_t *superframe);
+
 /* 1 if the hub's public key has been recovered and was copied out. */
 uint8_t pairing_hub_pubkey(uint8_t pub[33]);
 

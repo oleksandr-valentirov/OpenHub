@@ -353,6 +353,7 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     pair_salt(salt, hub_id, dev_id, req_superframe, dev_nonce);
     pair_transcript(t, hub_id, dev_id, req_superframe, dev_nonce,
                     hub_pub, eph_pub, dev_pub);
+    memcpy(out->transcript, t, sizeof(out->transcript));
 
     rc = hkdf16(zz, salt, "openhub/v1/session", out->key_session, 16);
     if (rc != 0) goto done;

@@ -51,6 +51,10 @@ typedef struct crypto_pair_out {
     uint8_t key_session[16];  /* seals PAIR_ACCEPT and every uplink report */
     uint8_t confirm_hub[16];  /* goes out in PAIR_RSP */
     uint8_t confirm_dev[16];  /* what PAIR_CONF must contain */
+    /* The bytes the confirmations were taken over. Carried out because a
+     * confirm mismatch is a disagreement about these 119 bytes and nothing
+     * else, and the two ends can only compare what both can print. */
+    uint8_t transcript[119];
 } crypto_pair_out_t;
 
 /* One pairing's worth of arithmetic: two scalar multiplications, four HKDF
