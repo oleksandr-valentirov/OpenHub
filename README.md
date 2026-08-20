@@ -6,6 +6,12 @@ and my data security to their centralized servers.
 </p>
 <p>Proudly developed in Ukraine :ukraine:</p>
 
+<h2>Documentation</h2>
+<p>
+Design reasoning lives in <a href="docs/README.md">docs/</a> &mdash; the dual-core split,<br>
+the radio PHY and hop sequence, the security model, and the decision records behind them.
+</p>
+
 <h2>LWIP</h2>
 <p>
 LWIP configured as discribed <a href="https://community.st.com/t5/stm32-mcus/how-to-create-a-project-for-stm32h7-with-ethernet-and-lwip-stack/ta-p/49308">here</a>.</p>

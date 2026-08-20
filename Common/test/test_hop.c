@@ -1,0 +1,222 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "hop.h"
+#include "hop_v1.h"
+
+static int fails = 0;
+static uint8_t ch(hop_ctx_t *c, uint32_t sf) {
+    uint8_t v = 0xFF;
+    if (hop_channel(c, sf, &v) != 0) { printf("  FAIL: hop_channel reported an error\n"); exit(1); }
+    return v;
+}
+
+#define CHECK(c, ...) do { if(!(c)){ printf("FAIL %s:%d  ",__FILE__,__LINE__); \
+    printf(__VA_ARGS__); printf("\n"); fails++; } } while(0)
+
+/* Stand-in for the hardware AES block: any decent avalanche will do, since the
+ * property under test is the shuffle, not the cipher. */
+static int test_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
+    uint64_t h = 0xcbf29ce484222325ULL ^ (uint64_t)(uintptr_t)ctx;
+    for (int i = 0; i < 16; i++) { h ^= in[i]; h *= 0x100000001b3ULL; }
+    for (int i = 0; i < 16; i++) { h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; out[i] = (uint8_t)(h >> (i % 8 * 8)); }
+    return 0;
+}
+
+#define N 29
+
+/* Replays the pinned AES blocks instead of computing them, so this checks the
+ * *shuffle* against an outside answer without needing AES on the host.
+ *
+ * The split is the point. A pinned deck says the sequence is wrong; it cannot
+ * say whether the PRF or the Fisher-Yates is wrong. The primitive is pinned on
+ * the silicon against FIPS-197 C.1 and the real hop key; the shuffle is pinned
+ * here. Together they localise, which the device side asked for and was right
+ * to. */
+static int replay_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
+    const uint8_t *s0 = HV_STREAM0, *s1 = HV_STREAM1;
+    uint32_t cycle = ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) |
+                     ((uint32_t)in[2] << 8) | (uint32_t)in[3];
+    const uint8_t *src;
+
+    (void)ctx;
+    if (cycle == 0u)      src = s0;
+    else if (cycle == 1u) src = s1;
+    else return -1;                       /* only the pinned cycles are replayed */
+    memcpy(out, src + (in[15] ? 16 : 0), 16);
+    return 0;
+}
+
+/* The deck the shared vectors pin, byte for byte. Nothing else in this file
+ * would notice a shuffle that changed: every other test here checks a property,
+ * and a wrong shuffle still produces a uniform permutation with correct
+ * occupancy, spread and the stateless-jump behaviour. */
+static void test_pinned_deck(void) {
+    hop_ctx_t c;
+
+    CHECK(hop_init(&c, replay_prf, NULL, HOP_VEC_COUNT) == 0, "init");
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++)
+        CHECK(ch(&c, i) == HV_DECK0[i], "cycle 0 slot %u: %u != %u",
+              i, ch(&c, i), HV_DECK0[i]);
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++)
+        CHECK(ch(&c, HOP_VEC_COUNT + i) == HV_DECK1[i], "cycle 1 slot %u", i);
+
+    /* Cycle 0's counter block is all zeroes and identical under either endian
+     * convention, so a check that only ever looked at cycle 0 would pass for the
+     * hub's first 56 seconds and fail for ever afterwards. Cycle 1 is the one
+     * that can see it, which is why both are pinned. */
+    CHECK(memcmp(HV_STREAM0, HV_STREAM1, 32) != 0,
+          "the two cycles must not produce the same stream");
+}
+
+static void test_permutation_per_cycle(void) {
+    hop_ctx_t c;
+    CHECK(hop_init(&c, test_prf, (void *)1, N) == 0, "init");
+    for (uint32_t cycle = 0; cycle < 50; cycle++) {
+        int seen[N] = {0};
+        for (uint32_t i = 0; i < N; i++) {
+            uint8_t v = ch(&c, cycle * N + i);
+            CHECK(v < N, "channel %u out of range", v);
+            seen[v]++;
+        }
+        for (int i = 0; i < N; i++)
+            CHECK(seen[i] == 1, "cycle %u: channel %d used %d times", cycle, i, seen[i]);
+    }
+}
+
+static void test_deterministic_and_stateless(void) {
+    hop_ctx_t a, b;
+    hop_init(&a, test_prf, (void *)7, N);
+    hop_init(&b, test_prf, (void *)7, N);
+    /* b jumps straight to a far superframe, as a node waking from sleep would. */
+    for (uint32_t i = 0; i < 400; i++) (void)ch(&a, i);
+    for (uint32_t i = 380; i < 400; i++)
+        CHECK(ch(&a, i) == ch(&b, i), "sf %u differs after a jump", i);
+    CHECK(ch(&b, 100000) == ch(&a, 100000), "far jump differs");
+}
+
+static void test_key_changes_sequence(void) {
+    hop_ctx_t a, b;
+    int same = 0;
+    hop_init(&a, test_prf, (void *)1, N);
+    hop_init(&b, test_prf, (void *)2, N);
+    for (uint32_t i = 0; i < 200; i++)
+        if (ch(&a, i) == ch(&b, i)) same++;
+    CHECK(same < 40, "two seeds gave %d/200 identical channels", same);
+}
+
+static void test_not_linear(void) {
+    hop_ctx_t c;
+    int adjacent = 0, repeats = 0, extrapolated = 0;
+    uint8_t seq[600];
+    hop_init(&c, test_prf, (void *)3, N);
+    for (uint32_t i = 0; i < 600; i++) seq[i] = ch(&c, i);
+    for (int i = 0; i + 1 < 600; i++) {
+        int d = seq[i+1] - seq[i]; if (d < 0) d = -d;
+        if (d == 0) repeats++;
+        if (d <= 2) adjacent++;
+    }
+    for (int i = 0; i + 2 < 600; i++)
+        if (seq[i+2] == (uint8_t)((2 * seq[i+1] + N - seq[i]) % N)) extrapolated++;
+    /* Not zero, and asserting zero was a coin flip: Fisher-Yates guarantees no
+     * repeat *within* a cycle and says nothing across one, so the last channel
+     * of a deck equals the first of the next with probability 1/N. Over 600 hops
+     * that is ~0.7 expected, so the old `== 0` passed about half the time and
+     * would eventually have failed looking like a regression. Measured over 400
+     * cycles: 0.107-0.134%, against PRF-mod-N's 3%. */
+    CHECK(repeats * 100 < 600, "%d/599 hops stayed on the same channel", repeats);
+    CHECK(adjacent < 600 / 5, "%d/599 hops landed within 200 kHz", adjacent);
+    CHECK(extrapolated < 600 / 8, "%d/598 hops guessable by extrapolation", extrapolated);
+    printf("  spread: %d repeats, %d adjacent, %d extrapolated (of ~600)\n",
+           repeats, adjacent, extrapolated);
+}
+
+static void test_bad_args(void) {
+    hop_ctx_t c;
+    CHECK(hop_init(&c, test_prf, NULL, 1) != 0, "count 1 must be rejected");
+    CHECK(hop_init(&c, test_prf, NULL, HOP_MAX_CHANNELS + 1) != 0, "count 65 must be rejected");
+    CHECK(hop_init(&c, NULL, NULL, N) != 0, "missing prf must be rejected");
+    CHECK(hop_init(NULL, test_prf, NULL, N) != 0, "null ctx must be rejected");
+}
+
+/* Asserts the cost, not the answer.
+ *
+ * A shuffle that rebuilt the deck on every lookup is *correct* - same channel,
+ * same permutation, same everything an output check can see - and costs 56 AES
+ * blocks a minute on a core that is running a slot grid to microsecond
+ * tolerances. Only a cost instrument sees it. This project already learned that
+ * from a flash write that returned the right answer while erasing a page every
+ * time; the device side pointed out that a pure function has the same exposure.
+ *
+ * Two blocks per cycle, because the deck needs 32 bytes of stream. */
+static unsigned prf_calls;
+
+static int counting_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
+    prf_calls++;
+    return replay_prf(ctx, in, out);
+}
+
+static void test_prf_call_cost(void) {
+    hop_ctx_t c;
+
+    CHECK(hop_init(&c, counting_prf, NULL, HOP_VEC_COUNT) == 0, "init");
+
+    prf_calls = 0;
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++)
+        (void)ch(&c, i);
+    CHECK(prf_calls == 2, "cycle 0 took %u PRF calls, not 2", prf_calls);
+
+    /* The whole of the next cycle costs one more deck and no more. */
+    prf_calls = 0;
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++)
+        (void)ch(&c, HOP_VEC_COUNT + i);
+    CHECK(prf_calls == 2, "cycle 1 took %u PRF calls, not 2", prf_calls);
+
+    /* Re-reading a superframe inside the cached cycle must cost nothing. A
+     * device that wakes, reads the beacon and asks twice is the normal case. */
+    prf_calls = 0;
+    for (int k = 0; k < 5; k++)
+        (void)ch(&c, HOP_VEC_COUNT + 3u);
+    CHECK(prf_calls == 0, "a repeat lookup inside the cached cycle cost %u calls",
+          prf_calls);
+
+    /* Going back to a cycle that has been evicted must rebuild - the cache is
+     * one deck, and claiming otherwise would be a different bug. */
+    prf_calls = 0;
+    (void)ch(&c, 0);
+    CHECK(prf_calls == 2, "returning to cycle 0 took %u calls, not 2", prf_calls);
+}
+
+static void test_pinned_samples(void) {
+    hop_ctx_t c;
+
+    /* Far-apart superframes, including the counter's last value: the sequence is
+     * indexed rather than stepped, so a node that slept through a wrap must land
+     * where the hub does. Only the first two cycles are replayable, so this uses
+     * the property that matters here - that a jump is answered at all. */
+    CHECK(hop_init(&c, replay_prf, NULL, HOP_VEC_COUNT) == 0, "init");
+    for (unsigned i = 0; i < sizeof(HV_SAMPLE_CH); i++) {
+        uint32_t sf = HV_SAMPLE_SF[i];
+        uint8_t v = 0xFF;
+
+        if (sf / HOP_VEC_COUNT > 1u)
+            continue;                      /* outside the replayed cycles */
+        CHECK(hop_channel(&c, sf, &v) == 0, "sf %u", sf);
+        CHECK(v == HV_SAMPLE_CH[i], "sf %u: %u != %u", sf, v, HV_SAMPLE_CH[i]);
+    }
+}
+
+int main(void) {
+    test_pinned_deck();
+    test_pinned_samples();
+    test_prf_call_cost();
+    test_permutation_per_cycle();
+    test_deterministic_and_stateless();
+    test_key_changes_sequence();
+    test_not_linear();
+    test_bad_args();
+    if (fails == 0) printf("all hop tests passed\n");
+    else printf("%d check(s) failed\n", fails);
+    return fails != 0;
+}

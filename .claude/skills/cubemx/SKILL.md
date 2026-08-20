@@ -69,9 +69,62 @@ Patterns worth knowing:
 - **DMA requests** are `Dma.<NAME>.<n>.*` plus `Dma.Request<n>=` and
   `Dma.RequestsNb=`. Removing one means renumbering the rest.
 
-CubeMX fills in defaults for anything it needs and you left out — changing
-`CRYP.Algorithm` to `CRYP_AES_GCM` is enough, it adds the IV and header fields
-on its own. Let it, then read the diff.
+### Removal is automatic, addition is not
+
+`project generate` rewrites the `.ioc` as a side effect, but only in one
+direction. Setting `Dma.RequestsNb=0` was enough for it to drop `DMA` from
+`Mcu.IP*`, renumber every entry after it and fix `Mcu.IPNb` by itself. Adding an
+IP gets no such help: anything CubeMX does not recognise as fully declared is
+**silently deleted from the `.ioc` on the next generate**, with nothing in the
+log. If a new peripheral does not appear in `main.c`, look at the `.ioc` first —
+your lines are probably gone.
+
+To add a peripheral, all of these must be present:
+
+| Key | Note |
+|---|---|
+| `Mcu.IP<n>=<IP>` | list is alphabetical; renumber from 0 |
+| `Mcu.IPNb` | one **greater** than the number of `Mcu.IP<n>` lines |
+| `Mcu.Pin<n>=VP_<inst>_VS_<sig>` | needed even for peripherals with no pins, **and it must sit in CubeMX's own order, not appended** |
+| `Mcu.PinsNb` | exact count of `Mcu.Pin<n>` lines |
+| `<IP>.IPParameters` + one line per parameter | |
+| `VP_<inst>_VS_<sig>.Mode` / `.Signal` | the activation record — see below |
+| `ProjectManager.functionlistsort` | adds the `MX_<IP>_Init()` call |
+| `CortexM<n>.IPs` | append the name |
+
+**The `VP_` entry is what actually activates an IP.** TIM2 and IWDG2 were added
+in the same edit with everything else identical; TIM2 generated and IWDG2 did
+not, because only TIM2 had its virtual-pin record. Get the exact names from the
+IP's own modes file:
+
+```bash
+grep -o 'InstanceName="IWDG2" Name="[^"]*"' db/mcu/STM32H755ZITx.xml   # -> IWDG
+grep -oE '<(Mode|RefSignal) Name="[^"]*"' db/mcu/IP/IWDG-iwdg1_v1_1_Modes.xml
+```
+
+`RefSignal Name="VS_IWDG"` and `Mode Name="IWDG_Activate"` then give
+`VP_IWDG2_VS_IWDG.Mode=IWDG_Activate` and
+`VP_IWDG2_VS_IWDG.Signal=IWDG2_VS_IWDG` — signal is prefixed with the
+*instance*, mode is not.
+
+Defaults still come for free: changing `CRYP.Algorithm` to `CRYP_AES_GCM` is
+enough, CubeMX adds the IV and header fields on its own.
+
+**Position in `Mcu.Pin<n>` is load-bearing.** The `VP_` block is roughly
+alphabetical with the board's BSP entry pinned last, and CubeMX rejects an entry
+appended out of place — silently, as above. Adding `VP_IWDG2_VS_IWDG` at the end
+was dropped every time; at its sorted slot, with everything after it renumbered,
+it took. A scripted insert must renumber the whole tail.
+
+So: **use the GUI to add a peripheral, and scripts to change one that already
+exists.** Changing values, moving an IP between cores, removing things and
+editing NVIC or FreeRTOS entries are all reliable from a script. Introducing a
+new IP means seven interlocking keys, and the ordering rule above is not
+something the file advertises.
+
+Verify anchors before inserting. Several keys you might reach for as insertion
+points (`UART4.`, `TIM7.`) disappear once their IP is removed, and a
+`str.replace` on a missing anchor fails silently.
 
 ## Project-specific traps
 
@@ -91,6 +144,15 @@ These are documented in full in `CLAUDE.md`; the short version:
 - **`.RxDescripSection` / `.TxDescripSection`** — the spelling in
   `custom_m7_flash.ld` must match what `ethernetif.c` emits. The widely-copied
   ST community article spells them without the `s`.
+- **Shared EXTI vectors get one pin each.** For a vector covering several lines
+  CubeMX emits a single `HAL_GPIO_EXTI_IRQHandler(...)` call, so the other lines
+  never have their flag cleared and the handler re-enters forever. CM4 keeps the
+  extra calls for DIO0 and DIO4 in `USER CODE EXTI15_10_IRQn 1` and
+  `USER CODE EXTI9_5_IRQn 1`.
+- **The RNG clock mux is never generated.** `RCC.RNGCLockSelection` in the
+  `.ioc` produces no `HAL_RCCEx_PeriphCLKConfig` call at all, so the RNG runs
+  from its reset default — `hsi48_ck`. What matters is that HSI48 is actually
+  enabled; check `RCC_CR` bit 13 on the target rather than trusting the panel.
 
 ## Verification
 

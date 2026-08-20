@@ -9,36 +9,67 @@ import sys
 
 import numpy as np
 
+import frames
 import gfsk
 import iqfile
-
-
-def describe(payload):
-    """Best-effort read of the current broadcast layout, for eyeballing."""
-    if len(payload) < 1:
-        return ""
-    return "len=%d addr=0x%02x rest=%s" % (
-        payload[0], payload[1] if len(payload) > 1 else 0,
-        payload[2:].hex(" ") or "-")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", help="raw u8 IQ capture from capture.py")
-    ap.add_argument("-b", "--bitrate", type=float, default=32e6 / 0x0D05)
-    ap.add_argument("-w", "--bandwidth", type=float, default=15e3,
+    # 0x0500 is 25 kbps, which is what the link runs at. This defaulted to
+    # 0x0D05 - 9.6 kbps - left over from the PHY profile the project moved off
+    # weeks ago, so the documented invocation demodulated every capture at the
+    # wrong rate and found nothing. A stale default in a diagnostic tool is
+    # worse than no default: it produces a confident negative.
+    ap.add_argument("-b", "--bitrate", type=float, default=32e6 / 0x0500)
+    ap.add_argument("-w", "--bandwidth", type=float, default=60e3,
                     help="demod low-pass cutoff in Hz")
     ap.add_argument("--sync", default="hell", help="sync word, ASCII or 0x-prefixed hex")
+    # The hub sets DcFree = 00 in RegPacketConfig1 and has done since Manchester
+    # was dropped for doubling air time. This defaulted to "manchester", so the
+    # documented invocation decoded every frame through a coding the transmitter
+    # does not use - the same stale-default fault as the bitrate above, and with
+    # the same symptom: a confident negative from a tool nobody suspects.
     ap.add_argument("--coding", choices=["none", "manchester", "whitening"],
-                    default="manchester")
+                    default="none")
+    ap.add_argument("--keys", default=None,
+                    help="JSON of hex keys, so a sealed body can be read on the "
+                         "bench: {\"session\": \"..16 bytes..\", "
+                         "\"dev_id\": \"0xa5a5a5a5\"}. Debug only - the wire "
+                         "carries no dev_id, so the slot owner must be named")
+    ap.add_argument("--bridge-ms", type=float, default=0.0,
+                    help="merge fragments closer than this. A weak signal breaks "
+                         "one frame into several; bridging rejoins it, but the "
+                         "resulting air times are not measurements")
+    ap.add_argument("--tune", type=float, default=None,
+                    help="absolute Hz to demodulate, for a wideband capture of a "
+                         "hopping transmitter; without it the capture centre is used")
     a = ap.parse_args()
 
     sync = (bytes.fromhex(a.sync[2:]) if a.sync.startswith("0x")
             else a.sync.encode())
+    keys = frames.load_keys(a.keys) if a.keys else {}
+    if keys:
+        print("keys loaded: %s" % ", ".join(sorted(keys)))
 
     x, rate = iqfile.load(a.path)
-    bursts = iqfile.find_bursts(iqfile.lowpass(x, rate, a.bandwidth), rate)
+
+    # A hopping transmitter is never on the capture centre, so without this the
+    # low-pass below keeps whatever happens to sit at 866.5 MHz and discards the
+    # frame that was actually asked for.
+    if a.tune is not None:
+        meta = iqfile.read_meta(a.path)
+        if meta["signal"] is None:
+            sys.exit("--tune needs the .meta file to know what was captured")
+        delta = a.tune - meta["signal"]
+        n = np.arange(len(x), dtype=np.float64)
+        x = (x * np.exp(-2j * np.pi * delta * n / rate)).astype(np.complex64)
+        print(f"tuned {delta / 1e3:+.1f} kHz from the capture centre")
+
+    bursts = iqfile.find_bursts(iqfile.lowpass(x, rate, a.bandwidth), rate,
+                                bridge_us=a.bridge_ms * 1000.0)
     if not bursts:
         sys.exit("no bursts found - check frequency, gain and threshold")
 
@@ -64,7 +95,9 @@ def main():
         if a.coding == "whitening":
             data = gfsk.dewhiten(data)
         print(f"     bytes: {data[:24].hex(' ')}")
-        print(f"     {describe(data)}")
+        # data[0] is the RFM69 length byte; the frame proper starts after it.
+        n = data[0] if data else 0
+        print(f"     {frames.parse(data[1:1 + n], keys)}")
 
     total = sum(e - s for s, e in bursts) / rate
     span = len(x) / rate

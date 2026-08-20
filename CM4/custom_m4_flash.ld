@@ -44,6 +44,7 @@ MEMORY
 {
 FLASH (rx)      : ORIGIN = 0x08100000, LENGTH = 1024K
 RAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 288K
+RAM_D3 (xrw)   : ORIGIN = 0x38000000, LENGTH = 64K
 }
 
 /* Define output sections */
@@ -161,6 +162,15 @@ SECTIONS
   
 
   /* Remove information from the standard libraries */
+  /* Cross-core mailbox. NOLOAD so neither core's startup wipes what the other
+     wrote; both link one object here, so both land on the region origin. */
+  .shared_mem (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.shared_mem))
+    . = ALIGN(4);
+  } >RAM_D3
+
   /DISCARD/ :
   {
     libc.a ( * )

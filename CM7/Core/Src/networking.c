@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include "hsem_table.h"
+#include "rng.h"
 
 /* lwip includes */
 #include "lwip/netif.h"
@@ -65,10 +65,11 @@ static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
 
     /* generate random ID or use default */
     if (args->id == 0) {
-        while (HAL_HSEM_IsSemTaken(HSEM_RNG) && !((RNG->SR & RNG_SR_DRDY) != 0U)) {}
-        HAL_HSEM_FastTake(HSEM_RNG);
-        icmp_hdr->id = (uint16_t)RNG->DR;
-        HAL_HSEM_Release(HSEM_RNG, 0);
+        uint32_t r;
+        /* The old sequence tested the semaphore instead of holding it and used
+         * the word regardless of a seed error. A ping id is not security
+         * critical, so a failed draw falls back rather than aborting. */
+        icmp_hdr->id = (rng_word(&r) == RNG_OK) ? (uint16_t)r : ping_seq_num;
     } else
         icmp_hdr->id = args->id;
 

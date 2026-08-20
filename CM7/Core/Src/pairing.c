@@ -1,0 +1,508 @@
+/* The hub's half of the key exchange.
+ *
+ * It lives on CM7 because P-256 does: a scalar multiplication is 167 ms of
+ * software here and there is no room for it in a radio slot (ADR-0011). CM4
+ * owns the frames and the schedule and forwards two events across the mailbox;
+ * everything between them is arithmetic and flash.
+ *
+ * One exchange at a time. Sixty-four devices share one join channel and one
+ * quiesce, so a second concurrent pairing has nowhere to happen - and a
+ * "pending" array would be state that only ever holds one entry while implying
+ * it might hold more. */
+
+#include <string.h>
+
+#include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
+
+#include "pairing.h"
+#include "hubipc.h"
+#include "keystore.h"
+#include "crypto.h"
+#include "ipc.h"
+#include "radio_protocol.h"
+#include "radio_slots.h"
+
+#include "mbedtls/sha256.h"
+#include "mbedtls/platform_util.h"
+
+#define PAIR_POLL_MS  20u
+
+/* Long enough for a device to compute two scalar multiplications and answer,
+ * short enough that a device that walked away does not hold the slot until the
+ * next reboot. The quiesce it runs inside is 8 s. */
+#define PAIR_PENDING_MS  12000u
+
+static uint8_t hub_pub[33];
+static uint8_t hub_pub_ready;
+
+static struct {
+    uint8_t  active;
+    uint32_t dev_id;
+    uint32_t started_ms;
+    uint8_t  dev_nonce[8];
+    crypto_pair_out_t out;
+} pending;
+
+static pairing_stats_t stats;
+
+/* The hub's own public key. Recovered once from the stored private half rather
+ * than kept in flash: it is one scalar multiplication and the store then holds
+ * 32 bytes instead of 65. Cached because 167 ms inside the exchange would be
+ * spent for nothing on every pairing after the first. */
+static int ensure_hub_pub(const uint8_t priv[32]) {
+    if (hub_pub_ready)
+        return 0;
+    if (crypto_p256_public(priv, hub_pub) != 0)
+        return -1;
+    hub_pub_ready = 1;
+    return 0;
+}
+
+/* Constant-time. A confirmation compared with memcmp leaks where it first
+ * differs, and an attacker who can retry learns it a byte at a time. */
+static int ct_equal(const uint8_t *a, const uint8_t *b, size_t n) {
+    uint8_t d = 0;
+
+    for (size_t i = 0; i < n; i++)
+        d |= (uint8_t)(a[i] ^ b[i]);
+    return d == 0;
+}
+
+static int nonce_is_zero(const uint8_t n[8]) {
+    uint8_t d = 0;
+
+    for (int i = 0; i < 8; i++)
+        d |= n[i];
+    return d == 0;
+}
+
+static void drop_pending(void) {
+    mbedtls_platform_zeroize(&pending, sizeof(pending));
+}
+
+static void serve_pair_req(const ipc_msg_t *m) {
+    ipc_pair_req_evt_t e;
+    ipc_pair_rsp_evt_t r;
+    const ks_record_t *rec;
+    uint8_t hub_priv[32];
+    uint8_t fp[32];
+    uint8_t status = IPC_ST_BAD_ARG;
+
+    stats.reqs++;
+    if (m->len < sizeof(e)) {
+        stats.bad_len++;
+        goto refuse;
+    }
+    memcpy(&e, m->payload, sizeof(e));
+
+    /* Enrolment is what authenticates this exchange. Without a record there is
+     * no public key to check against, and ECDH with an unknown key is
+     * anonymous ECDH wearing the shape of an authenticated one. */
+    rec = ks_find(e.dev_id);
+    if (rec == NULL || rec->state == KS_STATE_DELETED) {
+        stats.not_enrolled++;
+        goto refuse;
+    }
+
+    /* An all-zero nonce is the unseeded-RNG signature and nothing more: an RNG
+     * stuck at any other constant walks straight through it. The repeat check
+     * below is the one that covers the general case. */
+    if (nonce_is_zero(e.dev_nonce)) {
+        stats.zero_nonce++;
+        goto refuse;
+    }
+    /* A nonce this device has already used. Catches every stuck-RNG mode, and
+     * refuses a replayed PAIR_REQ as a side effect - which is the attack the
+     * nonce was added for. */
+    if (rec->state == KS_STATE_PAIRED &&
+        memcmp(rec->last_nonce, e.dev_nonce, 8) == 0) {
+        stats.repeat_nonce++;
+        goto refuse;
+    }
+
+    /* The operator's out-of-band step, finally spent. Since ADR-0021 the record
+     * holds the key itself, so this compares points rather than hashes of them:
+     * cheaper, and it no longer depends on both sides agreeing which domain was
+     * hashed. That agreement was a real hazard - the domain is the 33-byte
+     * compressed point, not 0x04||X||Y and not bare X, and a wrong choice
+     * enrolled cleanly and then failed authentication forever, which is
+     * indistinguishable from the attack this check exists to detect.
+     *
+     * Still constant time, and still before any curve work. */
+    if (!ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
+        stats.bad_fingerprint++;
+        /* Reported as the fingerprint of what arrived, because that is the
+         * value the operator can compare against what the device printed. */
+        if (mbedtls_sha256(e.pubkey, sizeof(e.pubkey), fp, 0) == 0)
+            memcpy(stats.last_fp, fp, sizeof(stats.last_fp));
+        memcpy(stats.last_pubkey, e.pubkey, sizeof(stats.last_pubkey));
+        goto refuse;
+    }
+
+    if (ks_hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
+        stats.no_hub_key++;
+        status = IPC_ST_RADIO_ERR;
+        goto refuse;
+    }
+
+    drop_pending();
+    if (crypto_pair_derive(hub_priv, hub_pub, e.pubkey, PAIRING_HUB_ID,
+                           e.dev_id, e.superframe, e.dev_nonce,
+                           &pending.out) != 0) {
+        mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+        stats.derive_failed++;
+        status = IPC_ST_RADIO_ERR;
+        goto refuse;
+    }
+    mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+
+    pending.active     = 1;
+    pending.dev_id     = e.dev_id;
+    pending.started_ms = (uint32_t)osKernelGetTickCount();
+    memcpy(pending.dev_nonce, e.dev_nonce, 8);
+
+    memcpy(r.eph_pubkey, pending.out.eph_pub, sizeof(r.eph_pubkey));
+    memcpy(r.confirm, pending.out.confirm_hub, sizeof(r.confirm));
+    stats.derived++;
+    (void)ipc_send_event_reply(m, IPC_ST_OK, &r, (uint8_t)sizeof(r));
+    return;
+
+refuse:
+    /* Always answer. CM4 is waiting on this sequence number and a silent
+     * refusal costs it the whole quiesce rather than one frame. */
+    (void)ipc_send_event_reply(m, status, NULL, 0);
+}
+
+static void serve_pair_conf(const ipc_msg_t *m) {
+    ipc_pair_conf_evt_t e;
+    ipc_device_keys_t k;
+    const ks_record_t *rec;
+    uint8_t status = IPC_ST_BAD_ARG;
+
+    stats.confs++;
+    if (m->len < sizeof(e)) {
+        stats.bad_len++;
+        goto refuse;
+    }
+    memcpy(&e, m->payload, sizeof(e));
+
+    if (!pending.active || pending.dev_id != e.dev_id) {
+        stats.no_pending++;
+        goto refuse;
+    }
+    if (!ct_equal(e.confirm, pending.out.confirm_dev, sizeof(e.confirm))) {
+        /* The device did not derive the same secret. Dropping the pending state
+         * rather than allowing a retry under the same ephemeral: a confirmation
+         * that can be attempted repeatedly against one key is an oracle. */
+        stats.bad_confirm++;
+        drop_pending();
+        goto refuse;
+    }
+
+    rec = ks_find(e.dev_id);
+    if (rec == NULL) {
+        stats.not_enrolled++;
+        goto refuse;
+    }
+
+    memset(&k, 0, sizeof(k));
+    /* The network hop key, identical for every device, created on first use.
+     * Fetched before the record is written: a device told a key the store did
+     * not keep would hop apart from the network at the next reboot. */
+    if (ks_net_key_get(k.hop_key) != 0) {
+        stats.errors++;
+        status = IPC_ST_RADIO_ERR;
+        goto refuse;
+    }
+
+    if (ks_pair_complete(e.dev_id, pending.out.key_session,
+                         pending.dev_nonce, pairing_epoch_now()) != 0) {
+        stats.store_failed++;
+        status = IPC_ST_RADIO_ERR;
+        goto refuse;
+    }
+
+    k.dev_id       = e.dev_id;
+    k.key_gen      = rec->key_gen;
+    k.slot         = rec->slot;
+    k.report_every = pairing_report_every();
+    memcpy(k.session_key, pending.out.key_session, sizeof(k.session_key));
+
+    stats.paired++;
+    (void)ipc_send_event_reply(m, IPC_ST_OK, &k, (uint8_t)sizeof(k));
+    mbedtls_platform_zeroize(&k, sizeof(k));
+    drop_pending();
+    return;
+
+refuse:
+    (void)ipc_send_event_reply(m, status, NULL, 0);
+}
+
+/* Replays the store into a freshly booted CM4. Without it a paired device is
+ * unreachable after any hub reset: the keys live in CM7's flash and the radio
+ * core has none of them. */
+static void install_paired_devices(void) {
+    ipc_msg_t reply;
+    uint8_t net_key[16];
+    uint32_t i;
+
+    if (ks_count() == 0u)
+        return;
+    /* Only fetch the network key if something is actually paired - creating one
+     * here would be a flash write on every boot of a hub with no devices. */
+    if (ks_net_key_get(net_key) != 0) {
+        stats.errors++;
+        return;
+    }
+
+    for (i = 0; i < ks_count(); i++) {
+        const ks_record_t *r = ks_at(i);
+        ipc_device_keys_t k;
+
+        if (r == NULL || r->state != KS_STATE_PAIRED)
+            continue;
+
+        memset(&k, 0, sizeof(k));
+        k.dev_id       = r->dev_id;
+        k.key_gen      = r->key_gen;
+        k.slot         = r->slot;
+        k.report_every = pairing_report_every();
+        memcpy(k.session_key, r->session_key, sizeof(k.session_key));
+        memcpy(k.hop_key, net_key, sizeof(k.hop_key));
+
+        if (hub_ipc_call(IPC_REQ_INSTALL_DEVICE, 0, &k, (uint8_t)sizeof(k),
+                         &reply) == IPC_ST_OK)
+            stats.installed++;
+        else
+            stats.install_failed++;
+        mbedtls_platform_zeroize(&k, sizeof(k));
+    }
+    mbedtls_platform_zeroize(net_key, sizeof(net_key));
+}
+
+const pairing_stats_t *pairing_get_stats(void) {
+    return &stats;
+}
+
+uint8_t pairing_hub_pubkey(uint8_t pub[33]) {
+    if (!hub_pub_ready)
+        return 0;
+    memcpy(pub, hub_pub, 33);
+    return 1;
+}
+
+/* pair_v3's invitation, built here and keyed by CM4.
+ *
+ * The split is forced: CM4 has no SHA-256 and this MAC is HMAC-SHA256, so the
+ * crypto stays on the side with the vectors and the self-tests and CM4 keys 28
+ * opaque bytes at a superframe it is told. */
+static struct {
+    uint8_t  armed;
+    uint8_t  k_init[32];
+    uint32_t dev_id;
+    uint32_t expires_ms;
+    uint32_t last_target;     /* the superframe of the last frame pushed */
+    uint8_t  pending_arm;     /* the CLI asked; the derivation has not run yet */
+    uint32_t pending_dev;
+    uint32_t pending_ms;
+} pi;
+
+static pairing_init_stats_t pi_stats;
+
+const pairing_init_stats_t *pairing_init_get_stats(void) {
+    pi_stats.armed = pi.armed;
+    return &pi_stats;
+}
+
+void pairing_arm_init(uint32_t dev_id, uint32_t window_ms) {
+    pi.pending_dev = dev_id;
+    pi.pending_ms  = window_ms;
+    pi.pending_arm = 1;
+}
+
+void pairing_disarm_init(void) {
+    pi.armed = 0;
+    pi.pending_arm = 0;
+    mbedtls_platform_zeroize(pi.k_init, sizeof(pi.k_init));
+}
+
+/* Once per window, never per frame. It is a scalar multiplication, and the
+ * same cost on the device sits behind an unauthenticated frame - which is the
+ * denial of service its rate limit exists to bound. z1_derivations is reported
+ * because "once" is a claim that should be measured rather than asserted. */
+static void pair_init_derive(void) {
+    const ks_record_t *rec;
+    uint8_t hub_priv[32];
+
+    pi.pending_arm = 0;
+    pi.armed = 0;
+
+    rec = ks_find(pi.pending_dev);
+    if (rec == NULL || rec->state == KS_STATE_DELETED) {
+        pi_stats.derive_failed++;
+        return;
+    }
+    if (ks_hub_key_get(hub_priv) != 0) {
+        pi_stats.derive_failed++;
+        return;
+    }
+    if (crypto_pair_init_key(hub_priv, rec->pubkey, PAIRING_HUB_ID,
+                             pi.pending_dev, pi.k_init) != 0) {
+        mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+        pi_stats.derive_failed++;
+        return;
+    }
+    mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+
+    pi.dev_id      = pi.pending_dev;
+    pi.expires_ms  = (uint32_t)osKernelGetTickCount() + pi.pending_ms;
+    pi.last_target = 0;
+    pi.armed       = 1;
+    pi_stats.z1_derivations++;
+}
+
+/* Builds the next invitation and hands it to CM4 ahead of its superframe.
+ *
+ * The target is chosen with lead: CM4 drops a frame whose superframe has
+ * already passed rather than keying it late, because the device aligns its
+ * counter from that field and a late one is wrong by exactly the delay while
+ * looking like a good invitation. */
+static void pair_init_service(void) {
+    ipc_hop_at_t h;
+    ipc_pair_init_t msg;
+    radio_pair_init_t f;
+    ipc_msg_t reply;
+    uint32_t now, target;
+
+    if (pi.pending_arm)
+        pair_init_derive();
+    if (!pi.armed)
+        return;
+    if ((int32_t)(osKernelGetTickCount() - pi.expires_ms) > 0) {
+        pairing_disarm_init();
+        return;
+    }
+
+    if (hub_ipc_call(IPC_REQ_HOP_AT, 0, NULL, 0, &reply) != IPC_ST_OK ||
+        reply.len < sizeof(h))
+        return;
+    memcpy(&h, reply.payload, sizeof(h));
+    now = h.superframe;
+
+    /* One frame in flight at a time. Without this the target is recomputed
+     * every poll from `now + 2` rounded up, so it steps forward a whole cadence
+     * before the grid reaches the previous one and CM4's pending frame is
+     * replaced perpetually - 2 given, 0 sent, and `missed` stays 0 because the
+     * target was never left behind, it was always ahead.
+     *
+     * Strictly greater, not >=: CM4 keys at join_offset, late in the superframe,
+     * so replacing on equality would displace the frame during the very
+     * superframe it was queued for. */
+    if (pi.last_target != 0u && (int32_t)(now - pi.last_target) <= 0)
+        return;
+
+    /* Two superframes of lead, then rounded up to the retry cadence. */
+    target = now + 2u;
+    target += (RADIO_PAIR_INIT_EVERY - (target % RADIO_PAIR_INIT_EVERY))
+              % RADIO_PAIR_INIT_EVERY;
+    /* Guard the *build*, not the push. Keying it to push success rebuilt and
+     * re-MACed on every 20 ms poll for as long as the push kept failing - 417
+     * HMACs in twelve seconds, which is a busy loop wearing the shape of a
+     * retry. A failed push is retried on the next target, not immediately. */
+    if (target == pi.last_target)
+        return;
+    pi.last_target = target;
+
+    f.type       = RADIO_FRAME_PAIR_INIT;
+    f.version    = RADIO_PAIR_INIT_VERSION;
+    f.net_id     = RADIO_NET_ID;
+    f.hub_id     = PAIRING_HUB_ID;
+    f.dev_id     = pi.dev_id;
+    f.superframe = target;
+    if (crypto_pair_init_mac(pi.k_init, (const uint8_t *)&f,
+                             sizeof(f) - RADIO_PAIR_INIT_MAC_LEN, f.mac) != 0) {
+        pi_stats.push_failed++;
+        return;
+    }
+    pi_stats.built++;
+    memcpy(pi_stats.last_frame, &f, sizeof(f));
+    pi_stats.last_len = (uint8_t)sizeof(f);
+
+    memset(&msg, 0, sizeof(msg));
+    msg.superframe = target;
+    msg.len        = (uint8_t)sizeof(f);
+    memcpy(msg.frame, &f, sizeof(f));
+    if (hub_ipc_call(IPC_REQ_SET_PAIR_INIT, 0, &msg, (uint8_t)sizeof(msg),
+                     &reply) != IPC_ST_OK) {
+        pi_stats.push_failed++;
+        return;
+    }
+    pi_stats.pushed++;
+    pi_stats.last_superframe = target;
+}
+
+void PairingTask(void *argument) {
+    ipc_msg_t m;
+
+    (void)argument;
+    /* CM4 is released from HSEM_ID_0 by defaultTask once LwIP is up, and it
+     * then spends a superframe bringing the radio up. Nothing here is urgent
+     * and a request sent into a core that is not listening is a lost slot. */
+    osDelay(3000);
+    install_paired_devices();
+
+    for (;;) {
+        while (ipc_poll_event(&m)) {
+            switch (m.type) {
+            case IPC_EVT_PAIR_REQ:  serve_pair_req(&m);  break;
+            case IPC_EVT_PAIR_CONF: serve_pair_conf(&m); break;
+            default:
+                (void)ipc_send_event_reply(&m, IPC_ST_UNKNOWN_REQ, NULL, 0);
+                break;
+            }
+        }
+
+        /* A device that started an exchange and never confirmed must not hold
+         * the derived key until the next reboot. Dropping it is also what makes
+         * "one exchange at a time" safe rather than a way to be wedged. */
+        if (pending.active &&
+            (uint32_t)(osKernelGetTickCount() - pending.started_ms) > PAIR_PENDING_MS) {
+            stats.timed_out++;
+            drop_pending();
+        }
+
+        pair_init_service();
+
+        osDelay(PAIR_POLL_MS);
+    }
+}
+
+/* Granted at pairing rather than compiled into the device, so bench work can
+ * ask for a report every superframe without every device in the field doing
+ * the same. 13.44 ms of air per report: every superframe is 0.672%, and every
+ * eighth is 0.084%. */
+static uint8_t report_every = RADIO_REPORT_EVERY_DEFAULT;
+
+uint8_t pairing_report_every(void) {
+    return report_every;
+}
+
+void pairing_set_report_every(uint8_t n) {
+    report_every = (n == 0u) ? 1u : n;
+}
+
+/* The epoch a key agreed now belongs to. CM4 owns the counter, so this asks
+ * for it rather than keeping a second copy that could disagree - and a wrong
+ * epoch is a key schedule the two ends walk apart on, silently. */
+uint32_t pairing_epoch_now(void) {
+    ipc_msg_t reply;
+    ipc_timing_t t;
+
+    if (hub_ipc_call(IPC_REQ_GET_TIMING, 0, NULL, 0, &reply) != IPC_ST_OK ||
+        reply.len < sizeof(t))
+        return 0;
+    memcpy(&t, reply.payload, sizeof(t));
+    return t.superframe / SUPERFRAME_PER_DAY;
+}

@@ -89,6 +89,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ../Common/inc
+    ../Common/test/vectors
     rfm69_lib
 )
 
@@ -96,8 +97,13 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/radio.c
-    Core/Src/random.c
+    Core/Src/aead.c
+    ../Common/src/hop.c
+    ../Common/src/ipc.c
     rfm69_lib/rfm69.c
+    Core/Src/timebase.c
+    Core/Src/calib.c
+    Core/Src/kvstore.c
 )
 
 # Link directories setup

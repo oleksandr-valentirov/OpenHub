@@ -177,6 +177,15 @@ SECTIONS
   } >RAM_D2
   /* Modification end */
 
+  /* Cross-core mailbox. NOLOAD so neither core's startup wipes what the other
+     wrote; both link one object here, so both land on the region origin. */
+  .shared_mem (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.shared_mem))
+    . = ALIGN(4);
+  } >RAM_D3
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {

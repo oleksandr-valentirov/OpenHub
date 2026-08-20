@@ -30,17 +30,38 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
-    ap.add_argument("-w", "--bandwidth", type=float, default=15e3)
+    # Wideband by default. A lowpass around the capture centre only sees one
+    # channel, and the hub hops across 28 of them - measured on a real capture,
+    # the narrow path reported 0.011 % against a true 0.418 %, and passed.
+    ap.add_argument("--narrow", type=float, metavar="HZ", default=None,
+                    help="single-channel mode: lowpass at HZ instead of scanning "
+                         "the whole capture. Only correct for a transmitter that "
+                         "stays on the capture centre frequency.")
+    ap.add_argument("--snr", type=float, default=15.0,
+                    help="wideband threshold above the per-bin floor, dB")
+    ap.add_argument("--min-ms", type=float, default=2.0,
+                    help="discard bursts shorter than this")
     a = ap.parse_args()
 
     meta = iqfile.read_meta(a.path)
     x, rate = iqfile.load(a.path)
-    bursts = iqfile.find_bursts(iqfile.lowpass(x, rate, a.bandwidth), rate)
     span = len(x) / rate
-    total = sum(e - s for s, e in bursts) / rate
+
+    if a.narrow is not None:
+        bursts = iqfile.find_bursts(iqfile.lowpass(x, rate, a.narrow), rate)
+        total = sum(e - s for s, e in bursts) / rate
+        mode = f"narrow, {a.narrow / 1e3:.0f} kHz lowpass"
+    else:
+        x = x - x.mean()               # kill the RTL-SDR centre spike
+        wb, _, _, slot_s = iqfile.find_bursts_wideband(
+            x, rate, snr_db=a.snr, min_ms=a.min_ms)
+        bursts = [(int(s * slot_s * rate), int(e * slot_s * rate)) for s, e in wb]
+        total = sum((e - s) for s, e in wb) * slot_s
+        mode = "wideband"
     duty = 100 * total / span
 
-    print(f"capture {span:.2f} s, {len(bursts)} burst(s), {total * 1e3:.1f} ms on air")
+    print(f"capture {span:.2f} s ({mode}), {len(bursts)} burst(s), "
+          f"{total * 1e3:.1f} ms on air")
     if bursts:
         lens = [(e - s) / rate * 1e3 for s, e in bursts]
         print(f"burst length: min {min(lens):.2f} ms  max {max(lens):.2f} ms")

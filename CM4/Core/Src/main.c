@@ -21,10 +21,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "kvstore.h"
+#include "calib.h"
 #include "rfm69.h"
 #include "radio.h"
 #include "rfm69_registers.h"
 #include "hsem_table.h"
+#include "timebase.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,11 +62,14 @@ __ALIGN_BEGIN static const uint32_t pInitVectCRYP[4] __ALIGN_END = {
 __ALIGN_BEGIN static const uint32_t HeaderCRYP[1] __ALIGN_END = {
                             0x00000000};
 
+IWDG_HandleTypeDef hiwdg2;
+
 RNG_HandleTypeDef hrng;
 
 SPI_HandleTypeDef hspi1;
 
-TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim16;
 
 /* USER CODE BEGIN PV */
 
@@ -74,7 +80,9 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_CRYP_Init(void);
-static void MX_TIM7_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_IWDG2_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -130,9 +138,15 @@ int main(void)
   MX_GPIO_Init();
   MX_SPI1_Init();
   MX_CRYP_Init();
-  MX_TIM7_Init();
+  MX_TIM2_Init();
+  /* Before the watchdog: recovery may erase a 128 KB sector, which can
+     outlast the 512 ms IWDG period and stalls the bank this core runs from. */
+  kv_init();
+  MX_IWDG2_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
+  calib_init();   /* before RFM_Init: the grid must start already corrected */
   if(RFM_Init(1, 1))
     BSP_LED_On(LED_RED);
   else
@@ -149,6 +163,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    HAL_IWDG_Refresh(&hiwdg2);
+    calib_poll();
     RFM_Routine();
   }
   /* USER CODE END 3 */
@@ -184,6 +200,35 @@ static void MX_CRYP_Init(void)
   /* USER CODE BEGIN CRYP_Init 2 */
 
   /* USER CODE END CRYP_Init 2 */
+
+}
+
+/**
+  * @brief IWDG2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_IWDG2_Init(void)
+{
+
+  /* USER CODE BEGIN IWDG2_Init 0 */
+
+  /* USER CODE END IWDG2_Init 0 */
+
+  /* USER CODE BEGIN IWDG2_Init 1 */
+
+  /* USER CODE END IWDG2_Init 1 */
+  hiwdg2.Instance = IWDG2;
+  hiwdg2.Init.Prescaler = IWDG_PRESCALER_4;
+  hiwdg2.Init.Window = 4095;
+  hiwdg2.Init.Reload = 4095;
+  if (HAL_IWDG_Init(&hiwdg2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN IWDG2_Init 2 */
+
+  /* USER CODE END IWDG2_Init 2 */
 
 }
 
@@ -237,7 +282,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -257,46 +302,111 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-
+  /* The .ioc asks for /32. Register reads are clean at that rate and FIFO
+   * bursts are not - bit 7 of scattered bytes, on the air path and on a
+   * loopback alike - so the burst is what the part cannot keep up with. */
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_128;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END SPI1_Init 2 */
 
 }
 
 /**
-  * @brief TIM7 Initialization Function
+  * @brief TIM2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM7_Init(void)
+static void MX_TIM2_Init(void)
 {
 
-  /* USER CODE BEGIN TIM7_Init 0 */
+  /* USER CODE BEGIN TIM2_Init 0 */
 
-  /* USER CODE END TIM7_Init 0 */
+  /* USER CODE END TIM2_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
-  /* USER CODE BEGIN TIM7_Init 1 */
+  /* USER CODE BEGIN TIM2_Init 1 */
 
-  /* USER CODE END TIM7_Init 1 */
-  htim7.Instance = TIM7;
-  htim7.Init.Prescaler = 19;
-  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim7.Init.Period = 9999;
-  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 199;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM7_Init 2 */
-  HAL_TIM_Base_Start_IT(&htim7);
-  /* USER CODE END TIM7_Init 2 */
+  /* USER CODE BEGIN TIM2_Init 2 */
+  /* Free-running counter only; the compare interrupt arrives with the TDMA work. */
+  HAL_TIM_Base_Start(&htim2);
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM16 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM16_Init(void)
+{
+
+  /* USER CODE BEGIN TIM16_Init 0 */
+
+  /* USER CODE END TIM16_Init 0 */
+
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM16_Init 1 */
+
+  /* USER CODE END TIM16_Init 1 */
+  htim16.Instance = TIM16;
+  htim16.Init.Prescaler = 0;
+  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim16.Init.Period = 65535;
+  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim16.Init.RepetitionCounter = 0;
+  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV8;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim16, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIMEx_TISelection(&htim16, TIM_TIM16_TI1_RCC_LSE, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM16_Init 2 */
+
+  /* USER CODE END TIM16_Init 2 */
 
 }
 
@@ -331,15 +441,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(RFM_RESET_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : RFM_DIO3_Pin */
-  GPIO_InitStruct.Pin = RFM_DIO3_Pin;
+  /*Configure GPIO pins : RFM_DIO3_Pin RFM_DIO4_Pin RFM_DIO0_Pin */
+  GPIO_InitStruct.Pin = RFM_DIO3_Pin|RFM_DIO4_Pin|RFM_DIO0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(RFM_DIO3_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : RFM_DIO4_Pin RFM_DIO0_Pin */
-  GPIO_InitStruct.Pin = RFM_DIO4_Pin|RFM_DIO0_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
@@ -362,24 +466,33 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(RFM_DIO2_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void rfm_write(uint8_t addr, uint8_t *ptr, uint8_t len) {
-  uint8_t temp = addr | 128;
-  rfm_cs_low();
-  HAL_SPI_Transmit(&hspi1, &temp, 1, 100);
-  HAL_SPI_Transmit(&hspi1, ptr, len, 100);
-  rfm_cs_high();
-}
+/* The driver owns chip select and framing; this is only the bus. One
+ * full-duplex transfer rather than a transmit followed by a receive, so the
+ * clock never stalls mid-transaction. */
+int rfm_spi_transfer(const uint8_t *tx, uint8_t *rx, size_t len) {
+  static uint8_t scratch[80];
+  HAL_StatusTypeDef st;
 
-void rfm_read(uint8_t addr, uint8_t *ptr, uint8_t len) {
-  rfm_cs_low();
-  HAL_SPI_Transmit(&hspi1, &addr, 1, 100);
-  HAL_SPI_Receive(&hspi1, ptr, len, 100);
-  rfm_cs_high();
+  if (len > sizeof(scratch))
+    return -1;
+  st = HAL_SPI_TransmitReceive(&hspi1, (uint8_t *)tx, rx ? rx : scratch,
+                               (uint16_t)len, 100);
+  return (st == HAL_OK) ? 0 : -1;
 }
 /* USER CODE END 4 */
 

@@ -1,3 +1,6 @@
 [submodule "CM4/rfm69_lib"]
 	path = CM4/rfm69_lib
 	url = git@github.com:oleksandr-valentirov/rfm69_lib.git
+[submodule "third_party/mbedtls"]
+	path = third_party/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git

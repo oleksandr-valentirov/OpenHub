@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""hop_v1: the hop sequence pinned against outside answers.
+
+Two layers, pinned separately, because a deck says the sequence is wrong and not
+which half is wrong:
+
+  - the PRF block, against AES-128, including FIPS-197 C.1;
+  - the deck and the superframe -> channel map, against the Fisher-Yates in
+    Common/src/hop.c.
+
+Cycle 1 rather than cycle 0 for the PRF input: cycle 0's counter block is all
+zeroes and is *identical under both endian conventions*, so a test using it
+passes inside the hub's first 56 seconds and diverges for ever afterwards. This
+generator asserts that cycle 0 agrees under both conventions and cycle 1 does
+not, so that trap cannot come back silently. Raised by the device side.
+"""
+import hashlib
+import os
+import sys
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+HOP_KEY = bytes.fromhex("0b9d2943fe2fa389beae0257367d9008")   # wire_v3 key_hop_gen0
+COUNT = 28                                                    # 29 grid slots less the join channel
+
+# FIPS-197 appendix C.1.
+#
+# Read the provenance carefully before trusting this as an anchor, because the
+# obvious reading is wrong. Both sides' generators call the same OpenSSL through
+# `cryptography`, and neither side transcribed these bytes from the standard -
+# one produced them and the other copied them from a message. So the host assert
+# below is one implementation agreeing with itself, and it catches a *changed*
+# library rather than a wrong one.
+#
+# What actually anchors it is the silicon: the hub checks this block through
+# CRYP on the H755 and the device through the AES peripheral on the WL55, and
+# neither of those is OpenSSL. That is a software-against-hardware cross-check,
+# which is real independence. Two ST parts are not, quite - different
+# peripherals, probably different IP, but one vendor - so the strength comes
+# from the software/hardware split and not from there being two boards.
+#
+# The honest form of the rule: a transcribed constant is an anchor only if the
+# transcription came from outside. Ours came from each other.
+FIPS_KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
+FIPS_IN  = bytes.fromhex("00112233445566778899aabbccddeeff")
+FIPS_OUT = bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a")
+
+SAMPLES = [0, 1, 27, 28, 29, 55, 56, 1000, 100000, 4294967295]
+
+
+# The digest covers the pinned values, in a canonical form, and nothing else.
+#
+# It used to hash the emitted text, which made every comment load-bearing: a
+# reworded paragraph moved the digest of a set whose values could not have
+# changed, and anyone holding the old constant saw "the vectors changed" about
+# something that had not. That is a false alarm in the worse direction - a stale
+# constant fails a build, a redundant diff only wastes a minute. Raised by the
+# device side, whose digest had the identical defect.
+#
+# Sorted by key, so reordering the emitted rows does not move it either. What
+# moves it is a value.
+def value_digest(rows):
+    body = "".join(f"{k}={v}\n" for k, v in sorted(rows))
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def aes(key, block):
+    e = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+    return e.update(block) + e.finalize()
+
+
+def counter_block(cycle, second, big_endian=True):
+    b = bytearray(16)
+    b[0:4] = cycle.to_bytes(4, "big" if big_endian else "little")
+    if second:
+        b[15] = 1
+    return bytes(b)
+
+
+def stream(cycle, big_endian=True):
+    return (aes(HOP_KEY, counter_block(cycle, False, big_endian)) +
+            aes(HOP_KEY, counter_block(cycle, True, big_endian)))
+
+
+def deck(cycle, big_endian=True):
+    s = stream(cycle, big_endian)
+    d = list(range(COUNT))
+    for i in range(COUNT - 1, 0, -1):
+        j = s[i & 31] % (i + 1)
+        d[i], d[j] = d[j], d[i]
+    return d
+
+
+def main():
+    # A regression guard, not an anchor - see the note by FIPS_OUT. It catches
+    # the library changing under us; it cannot catch it having been wrong.
+    if aes(FIPS_KEY, FIPS_IN) != FIPS_OUT:
+        sys.exit("host AES does not reproduce FIPS-197 C.1")
+
+    # The trap this file exists to keep shut, asserted rather than described.
+    assert deck(0) == deck(0, False), "cycle 0 must be endian-agnostic"
+    assert deck(1) != deck(1, False), "cycle 1 must NOT be endian-agnostic"
+
+    d0, d1 = deck(0), deck(1)
+    assert sorted(d0) == list(range(COUNT)) and sorted(d1) == list(range(COUNT))
+
+    rows = [
+        ("hop_count", str(COUNT)),
+        ("vec_aes_fips_key", FIPS_KEY.hex()),
+        ("vec_aes_fips_in", FIPS_IN.hex()),
+        ("vec_aes_fips_out", FIPS_OUT.hex()),
+        ("vec_hop_key", HOP_KEY.hex()),
+        ("vec_hop_prf_in", counter_block(1, False).hex()),
+        ("vec_hop_prf_out", aes(HOP_KEY, counter_block(1, False)).hex()),
+        ("vec_hop_stream0", stream(0).hex()),
+        ("vec_hop_stream1", stream(1).hex()),
+        ("vec_hop_deck0", " ".join(map(str, d0))),
+        ("vec_hop_deck1", " ".join(map(str, d1))),
+    ]
+    for sf in SAMPLES:
+        rows.append((f"vec_hop_sf_{sf}", str(deck(sf // COUNT)[sf % COUNT])))
+
+    head = ("# OpenHub hop vectors, v1\n"
+            "# Generated by tools/gen_hop_vectors.py. Values immutable once published.\n"
+            "#\n"
+            "# AMENDED once, commentary only: every value below is byte-identical to the\n"
+            "# first publication and only the note on vec_aes_fips_* changed, because it\n"
+            "# claimed more than it could deliver.\n"
+            "#\n"
+            "# The digest did not move, and that is the point. It covers the values in a\n"
+            "# canonical form rather than this text, so prose cannot raise a false alarm\n"
+            "# about a set that has not changed - and a set that HAS changed cannot hide\n"
+            "# behind a reformat. Amending in place is then unambiguously correct and no\n"
+            "# version is ever minted for prose. The device side found this while being\n"
+            "# asked to referee whether to amend or supersede; the right answer was that\n"
+            "# the digest was manufacturing the dilemma.\n"
+            "#\n"
+            "# vec_aes_fips_* is FIPS-197 appendix C.1 - and it is NOT anchored by this\n"
+            "# file. Both sides' generators call the same OpenSSL, and neither side\n"
+            "# transcribed these bytes from the standard: one produced them and the other\n"
+            "# copied them from a message. The host assert is therefore one\n"
+            "# implementation agreeing with itself, and catches a *changed* library\n"
+            "# rather than a wrong one.\n"
+            "#\n"
+            "# What anchors it is the silicon. The hub runs this block through CRYP on\n"
+            "# the H755 and the device through the AES peripheral on the WL55, and\n"
+            "# neither is OpenSSL - a software-against-hardware cross-check, which is\n"
+            "# real independence. Two ST parts are not quite independent of each other:\n"
+            "# different peripherals, probably different IP, but one vendor. The strength\n"
+            "# is in the software/hardware split, not in there being two boards.\n"
+            "#\n"
+            "# The honest form of the rule: a transcribed constant is an anchor only if\n"
+            "# the transcription came from outside. Ours came from each other.\n"
+            "#\n"
+            "# vec_hop_prf_in is cycle 1, never cycle 0. Cycle 0's counter block is all\n"
+            "# zeroes and identical under both endian conventions, so a test built on it\n"
+            "# passes for the hub's first 56 seconds and fails for ever after - the worst\n"
+            "# place for the trap to hide. The generator asserts that cycle 0 agrees under\n"
+            "# both conventions and cycle 1 does not.\n"
+            "#\n"
+            "# The two layers are pinned separately on purpose. A deck says the sequence\n"
+            "# is wrong; it cannot say whether the PRF or the shuffle is wrong.\n")
+
+    text = head + "\n" + "\n".join(f"{k:20s} = {v}" for k, v in rows) + "\n"
+    digest = value_digest(rows)
+
+    stem = "Common/test/vectors/hop_v1"
+    if os.path.exists(stem + ".txt") and "--force" not in sys.argv:
+        if open(stem + ".txt").read() != text:
+            sys.exit("refusing to rewrite a published set; emit hop_v2 instead")
+    open(stem + ".txt", "w").write(text)
+
+    def carr(name, data):
+        body = ", ".join(f"0x{b:02x}" for b in data)
+        out, line = [], "    "
+        for tok in body.split(", "):
+            if len(line) + len(tok) + 2 > 76:
+                out.append(line.rstrip()); line = "    "
+            line += tok + ", "
+        out.append(line.rstrip().rstrip(","))
+        return f"static const uint8_t {name}[{len(data)}] = {{\n" + "\n".join(out) + "\n};\n"
+
+    h = ["/* Generated by tools/gen_hop_vectors.py - do not edit. */",
+         "/* Immutable once published: both firmwares compile against this. */",
+         "#pragma once", "", "#include <stdint.h>", "",
+         "#define HOP_VECTORS_DIGEST \"" + digest + "\"",
+         f"#define HOP_VEC_COUNT {COUNT}", ""]
+    h.append(carr("HV_FIPS_KEY", FIPS_KEY))
+    h.append(carr("HV_FIPS_IN", FIPS_IN))
+    h.append(carr("HV_FIPS_OUT", FIPS_OUT))
+    h.append(carr("HV_HOP_KEY", HOP_KEY))
+    h.append(carr("HV_PRF_IN", counter_block(1, False)))
+    h.append(carr("HV_PRF_OUT", aes(HOP_KEY, counter_block(1, False))))
+    h.append(carr("HV_STREAM0", stream(0)))
+    h.append(carr("HV_STREAM1", stream(1)))
+    h.append(carr("HV_DECK0", bytes(d0)))
+    h.append(carr("HV_DECK1", bytes(d1)))
+    h.append("static const uint32_t HV_SAMPLE_SF[%d] = {\n    %s\n};\n"
+             % (len(SAMPLES), ", ".join(f"{s}u" for s in SAMPLES)))
+    h.append(carr("HV_SAMPLE_CH", bytes(deck(sf // COUNT)[sf % COUNT] for sf in SAMPLES)))
+    open(stem + ".h", "w").write("\n".join(h))
+    print(f"wrote {stem}.txt and {stem}.h   digest {digest}")
+
+
+if __name__ == "__main__":
+    main()

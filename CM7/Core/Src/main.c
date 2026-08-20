@@ -24,10 +24,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "keystore.h"
 #include "cli.h"
 #include <string.h>
 #include "lwip/udp.h"
 #include "hsem_table.h"
+#include "rng.h"
+#include "ipc.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,9 +68,22 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for pairTask. Its own stack because a P-256 scalar
+   multiplication needs several kilobytes and defaultTask has 2 KB. */
+osThreadId_t pairTaskHandle;
+uint32_t pairTaskBuffer[ 3072 ];
+osStaticThreadDef_t pairTaskControlBlock;
+const osThreadAttr_t pairTask_attributes = {
+  .name = "pairTask",
+  .cb_mem = &pairTaskControlBlock,
+  .cb_size = sizeof(pairTaskControlBlock),
+  .stack_mem = &pairTaskBuffer[0],
+  .stack_size = sizeof(pairTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for cliTask */
 osThreadId_t cliTaskHandle;
-uint32_t cliTaskBuffer[ 512 ];
+uint32_t cliTaskBuffer[ 2048 ];
 osStaticThreadDef_t cliTaskControlBlock;
 const osThreadAttr_t cliTask_attributes = {
   .name = "cliTask",
@@ -88,12 +104,29 @@ static void MX_UART4_Init(void);
 static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 extern void CLI_Task(void *argument);
+#include "pairing.h"
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* CubeMX drops an oscillator nothing in its modelled clock tree consumes, and a
+ * timer's TI selection is not part of that model, so LSE is enabled by hand.
+ * CM4 measures TIM2 against it; see docs/radio/timebase.md. */
+static void LSE_Config(void)
+{
+  RCC_OscInitTypeDef osc = {0};
+
+  osc.OscillatorType = RCC_OSCILLATORTYPE_LSE;
+  osc.LSEState = RCC_LSE_ON;
+  osc.PLL.PLLState = RCC_PLL_NONE;   /* leave the running PLL alone */
+
+  /* Not fatal: without it the grid falls back to the nominal period, which the
+   * console reports as a zero ppm correction rather than a silent 4000. */
+  (void)HAL_RCC_OscConfig(&osc);
+}
 
 /* USER CODE END 0 */
 
@@ -162,6 +195,7 @@ Error_Handler();
 
   /* USER CODE BEGIN SysInit */
   HAL_HSEM_FastTake(HSEM_ID_0); /* to block CPU2 during dependent HW init process */
+  LSE_Config();   /* up before CM4 leaves the semaphore and calibrates */
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -169,6 +203,12 @@ Error_Handler();
   MX_UART4_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
+  /* Before the scheduler: recovery may erase a 128 KB sector, which stalls the
+     bank FreeRTOS and LwIP execute from for up to 1.4 s. */
+  (void)ks_init();
+  /* Stamped before CM4 is released from HSEM_ID_0, so the far side never
+   * reads a ring that .shared_mem left holding whatever was there. */
+  ipc_init();
 
   /* USER CODE END 2 */
 
@@ -199,7 +239,7 @@ Error_Handler();
   cliTaskHandle = osThreadNew(CLI_Task, NULL, &cliTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  pairTaskHandle = osThreadNew(PairingTask, NULL, &pairTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -264,8 +304,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 1;
@@ -322,7 +363,9 @@ static void MX_RNG_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RNG_Init 2 */
-
+  /* SEIS comes up latched on this part and the HAL never looks at it, so the
+   * generator is restarted and flushed before anything draws from it. */
+  (void)rng_init();
   /* USER CODE END RNG_Init 2 */
 
 }

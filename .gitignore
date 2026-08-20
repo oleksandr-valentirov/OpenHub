@@ -36,3 +36,7 @@ __pycache__/
 # SDR captures
 *.iq
 *.iq.meta
+
+# Host test binaries
+Common/test/test_hop
+Common/test/test_slots
