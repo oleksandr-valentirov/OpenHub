@@ -670,6 +670,18 @@ long as the caller's array size is visible. Keep a length parameter as well for
 callers that genuinely pass a pointer: two bounds catching two different callers,
 not belt and braces.
 
+**A vector set with one instance of a field tests its format and never its
+source.** `pair_v2.txt` carries a single `pair_req_superframe`, so inside it the
+request's superframe, the live counter and the last beacon's are the same
+number - and an implementation reading any of the three reproduces the vector
+forever. Both firmwares passed it and could still disagree on air, which is what
+pair_v3 exposed: the invitation and the beacon no longer share a superframe, and
+the coincidence that had been doing the work was never named. Same family as the
+consumer-less vector below - the value reproduces and disagreement is
+unreachable. A field whose provenance matters needs **three distinct values** in
+the vectors, one per plausible source, so the wrong read fails a host test
+instead of an air test.
+
 **A vector whose consumer does not exist is untested in the way that matters.**
 `key_hop_gen0` reproduced byte for byte for weeks and proved only that HKDF works
 — nothing consumed it, so nothing could disagree. That is how the pairwise-hop-key
