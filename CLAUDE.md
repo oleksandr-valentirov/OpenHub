@@ -612,6 +612,26 @@ what the denominator is a fraction of. The worst of the four produced not a
 wrong answer but a wrong *dismissal* - a working instrument argued out of the
 evidence pile, and a bad conclusion at least gets tested.
 
+**The denominator can be a contract nobody implemented.** `uplink windows 375,
+sync 1` was read here as eleven missing reports, because the grant says
+`report_every 8` and 182 s is eleven of those. The device had no reporting loop
+at all - `uplink_build` had two callers, both the CLI - so the population was
+**one transmission, one seen, one ok**, not one of twelve. `windows` counts this
+side's *opportunities* and the device's transmissions are the population that
+matters; the two have no relationship. It produced a wrong *dismissal*: three
+matching hop channels were about to be argued out of the evidence pile in favour
+of a carrier disagreement that did not exist.
+
+**And the instrument that would have prevented it would have made it worse.**
+The obvious fix is an `expected` column on `devices`, derived from the grant and
+the superframes elapsed. It would have printed **11**, in a column, next to
+`received 1` - promoting the assumption to a measurement and making the wrong
+dismissal look confirmed. The hub cannot know that denominator: it grants
+`report_every` and has no evidence any device honours it, so "reporting as
+granted" and "has no scheduler" are indistinguishable from here. **A derived
+denominator is the assumption with a column heading.** Do not add it; if a
+device's cadence needs checking, the device must say what it sent.
+
 **A counter can rise during the very event whose absence you are using it to
 detect.** The device read "two beacons heard" as proof no quiesce was armed -
 and the quiesce *announcement* is a beacon. Locally valid at every step, and the
