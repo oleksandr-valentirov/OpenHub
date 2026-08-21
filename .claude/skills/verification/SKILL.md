@@ -57,6 +57,33 @@ the comparison strict.
 The reverse sweep is cheap: grep for `>=` and `<=` in asserts and ask what
 happens at equality. If equality is the failure case, the operator is wrong.
 
+## A guard pinned to one term of a product dies when the other term moves
+
+`test_slots.c` asserted that `PAIR_RSP` **exceeds** a superframe's air allowance,
+and the page beside it said why: so nobody could quietly "fix" the exception by
+shrinking the frame. The frame never shrank. The **bit rate doubled**, the byte
+took half as long, and the assert had to be inverted to `<=`. It was retired
+correctly, by the one route it was not watching, and the reasoning it protected
+was left to be rewritten by hand - which is the thing it existed to prevent.
+
+Air time is `bytes x us_per_byte`. A guard on the product that is justified by an
+argument about **one** factor survives only until the other factor moves. When
+writing one, say which factor the argument is about, so the next change to the
+other factor reads as a reason to revisit rather than as a routine fix.
+
+**And the same change orphans every literal derived from it.** After the rate
+moved, one sum - beacon + join beacon + downlink - was carried in three places at
+two wrong values: the prose said 1.42%, a table on the same page said 0.74%, and
+the comment on the assert that recomputes it every build also said 0.74%. The
+true value was 0.800%. 0.74% was reconstructible as the downlink at **31 bytes**,
+which `link_v4` had grown to 39 - so the stale figure names the change it failed
+to follow. **A literal parked next to a live computation does not inherit its
+updates**, and a comment beside a correct assert is the last place anyone looks.
+
+The sweep, after any change to a shared constant: grep the documentation and the
+comments for the old value **and for figures derived from it**, and prefer citing
+the macro to restating the number.
+
 ## Know which artifact each assert pins
 
 **A constant one side owns, that the other side's arithmetic needs, is the same
