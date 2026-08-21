@@ -10,7 +10,7 @@
 #include "aead.h"
 #include "radio_protocol.h"
 #include "pair_v2.h"
-#include "link_v4.h"
+#include "link_v5.h"
 
 extern CRYP_HandleTypeDef hcryp;
 
@@ -210,6 +210,11 @@ int aead_selftest(void) {
                       buf, PV_FRAME_UPLINK + RADIO_UPLINK_AAD_LEN + sizeof(PV_UPLINK_PLAIN)) == 0)
             return -9;
     }
+
+    /* Sizes did not move v4 -> v5, so only the version sees a stale set.
+     * radio_devices_docs/radio/crypto/wire-crypto.md */
+    _Static_assert(LINK_VECTORS_VERSION == RADIO_LINK_VERSION,
+                   "the link vectors are not the wire this build speaks");
 
     /* pair_v2's frames stay: they check GCM, not the wire this build speaks. */
     _Static_assert(sizeof(LV_UPLINK_PLAIN) == sizeof(radio_uplink_report_t),

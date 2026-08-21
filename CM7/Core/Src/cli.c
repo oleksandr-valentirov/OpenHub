@@ -614,6 +614,7 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
     for (i = 0; i < x.devices; i++) {
         ipc_device_report_t d;
         char age[16];
+        char supply[12];
 
         rc = rfm_request(IPC_REQ_GET_DEVICE_INFO, i, NULL, 0);
         if (rc != IPC_ST_OK || rfm_reply.len < sizeof(d))
@@ -630,22 +631,36 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                      (unsigned long)((now - d.last_superframe) *
                                      (SUPERFRAME_US / 1000000u)));
 
-        cli_out(cli, "%4u  0x%08lX  %4d/%-5d %s  %4umV  %6lus  %lu/%lu  %s\r\n",
+        /* A rail never measured and a rail reading 0 mV print alike otherwise.
+         * radio_devices_docs/open_hub/cli.md */
+        if (d.flags & RADIO_REPORT_FLAG_SUPPLY_STALE)
+            snprintf(supply, sizeof(supply), "%6s", "--");
+        else
+            snprintf(supply, sizeof(supply), "%4umV", d.supply_mv);
+
+        cli_out(cli, "%4u  0x%08lX  %4d/%-5d %s  %s  %6lus  %lu/%lu  %s\r\n",
                 d.slot, (unsigned long)d.dev_id, d.rssi_up, d.rssi_down,
                 (d.flags & RADIO_REPORT_FLAG_RSSI_STALE) ? "stale" : "     ",
-                d.supply_mv, (unsigned long)d.uptime_s,
+                supply, (unsigned long)d.uptime_s,
                 (unsigned long)d.frames_ok, (unsigned long)d.frames_bad, age);
 
         /* Granted against observed, never a grant restated as a measurement.
          * radio_devices_docs/open_hub/cli.md */
         {
-            char asked[40];
+            char asked[56];
+            char applied[12];
             unsigned want = d.report_every;
 
             /* An acked command is what the hub believes; a riding one is not. */
             if (d.cmd_state == 2u) {
-                snprintf(asked, sizeof(asked), "grant %u, commanded %u acked",
-                         d.report_every, d.cmd_every);
+                /* 0 is not a rate a SET_RATE can apply, so it cannot mean one. */
+                if (d.ack_arg == 0u)
+                    snprintf(applied, sizeof(applied), "unstated");
+                else
+                    snprintf(applied, sizeof(applied), "%u", d.ack_arg);
+                snprintf(asked, sizeof(asked),
+                         "grant %u, commanded %u acked, applied %s",
+                         d.report_every, d.cmd_every, applied);
                 want = d.cmd_every;
             } else if (d.cmd_state == 1u) {
                 snprintf(asked, sizeof(asked), "grant %u, commanded %u riding",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the uplink and downlink frame vectors for the v4 wire.
+"""Generate the uplink and downlink frame vectors for the v5 wire.
 
 The session key is read from the published pairing set rather than re-derived,
 so these frames are anchored to bytes both firmwares already agree on and
@@ -8,6 +8,10 @@ cannot drift from them.
 pair_v2 pinned one uplink frame at the 8-byte body; the downlink was never
 pinned at all. Both directions are here, whole frames, so the little-endian
 struct fields meeting the big-endian nonce are checked rather than inferred.
+
+v5 adds ack_arg to the report and takes its byte from app[5] -> app[4]. The
+value is deliberately not the rate the downlink vector commands: a hub that
+echoes its own commanded value instead of reading the frame must fail here.
 
 A published set is immutable: the device repository includes the generated
 header directly. Changing any value below means emitting link_v(N+1).
@@ -23,7 +27,7 @@ import sys
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION      = 4
+VERSION      = 5
 DEV_ID       = 0x0000002A
 DIR_UPLINK   = 0x01
 DIR_DOWNLINK = 0x02
@@ -36,12 +40,13 @@ CMD_SET_RATE   = 1
 UP_SUPERFRAME = 0x1a2b3c58
 UP_SLOT       = 66            # not slot 0: the k=3 stride has to survive the nonce
 RPT_RSSI_DOWN = -92
-RPT_FLAGS     = 0x01
+RPT_FLAGS     = 0x05          # RSSI_STALE | RESUMED, so a mask beyond bit 0 is pinned
 RPT_SUPPLY_MV = 3287
 RPT_UPTIME_S  = 61
 RPT_ACK_SEQ   = 0x5B
 RPT_ACK_CMD   = CMD_SET_RATE
-RPT_APP       = bytes.fromhex("a1b2c3d4e5")
+RPT_ACK_ARG   = 31            # not DL_REPORT_EVERY: an echoed grant must not pass
+RPT_APP       = bytes.fromhex("a1b2c3d4")
 
 DL_SUPERFRAME = 0x1a2b3c59
 DL_SLOT       = 1
@@ -90,7 +95,7 @@ def main():
 
     report = (struct.pack("<bBHI", RPT_RSSI_DOWN, RPT_FLAGS, RPT_SUPPLY_MV,
                           RPT_UPTIME_S) +
-              bytes([RPT_ACK_SEQ, RPT_ACK_CMD, len(RPT_APP)]) + RPT_APP)
+              bytes([RPT_ACK_SEQ, RPT_ACK_CMD, RPT_ACK_ARG, len(RPT_APP)]) + RPT_APP)
     assert len(report) == 16, len(report)
 
     up_hdr = struct.pack("<BBBI", FRAME_UPLINK, VERSION, UP_SLOT, UP_SUPERFRAME)
@@ -136,6 +141,9 @@ def main():
             "#\n"
             "# The uplink sits in slot 66, not slot 0, so the k=3 stride is inside\n"
             "# the nonce rather than assumed away by a zero.\n"
+            "#\n"
+            "# ack_arg is 31 and the downlink commands 12: a hub echoing its own\n"
+            "# commanded value rather than reading the frame fails here.\n"
             "#\n"
             "# value_digest = %s\n\n" % (VERSION, digest) +
             "".join("%-22s = %s\n" % (k, v) for k, v in rows))

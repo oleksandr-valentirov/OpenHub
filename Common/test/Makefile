@@ -11,7 +11,7 @@ CFLAGS = -std=c11 -Wall -Wextra -Werror -O1 -g -I../inc -I vectors
 # Not -MMD: each test is one cc invocation over several sources, every source
 # writes the same .d, and only the last one's headers survive. It looks like
 # dependency tracking and tracks one translation unit.
-VECTORS = vectors/hop_v1.h vectors/wire_v3.h vectors/pair_v2.h vectors/link_v4.h
+VECTORS = vectors/hop_v1.h vectors/wire_v3.h vectors/pair_v2.h vectors/link_v5.h
 
 test_hop: test_hop.c ../src/hop.c ../inc/hop.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_hop.c ../src/hop.c

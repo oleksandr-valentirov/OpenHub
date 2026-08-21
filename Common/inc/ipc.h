@@ -469,7 +469,8 @@ typedef struct ipc_device_report {
     uint16_t supply_mv;
     uint8_t  report_every;
     uint8_t  flags;            /**< RADIO_REPORT_FLAG_* from the last report */
-    uint16_t reserved;
+    uint8_t  ack_arg;          /**< the argument the device said it applied, per ack_cmd */
+    uint8_t  reserved;
     uint32_t arrival_us;       /**< into its superframe, so the air half is checkable */
     uint8_t  cmd_every;        /**< report_every the last SET_RATE carried, 0 if none */
     uint8_t  cmd_state;        /**< 0 none, 1 still riding downlinks, 2 acked */

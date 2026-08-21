@@ -76,6 +76,7 @@ typedef struct dev_entry {
     uint8_t  dl_repeats;        /**< downlinks left to carry it; 0 means idle */
     uint8_t  dl_cmd_seq;        /**< names the command, so an ack can refer to it */
     uint8_t  dl_acked;          /**< the device echoed this seq back */
+    uint8_t  dl_ack_arg;        /**< ... and what it said it applied, never what was asked */
     uint32_t cyc_last_sf;       /**< superframe of the last cycle that arrived */
     uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
     uint16_t cyc_n;
@@ -654,6 +655,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->supply_mv       = e->supply_mv;
     d->report_every    = e->report_every;
     d->flags           = e->flags;
+    d->ack_arg         = e->dl_ack_arg;
     d->arrival_us      = e->arrival_us;
 }
 
@@ -1805,6 +1807,8 @@ static void handle_uplink_frame(void) {
         rpt.ack_seq == d->dl_cmd_seq && rpt.ack_cmd == d->dl_cmd) {
         d->dl_acked   = 1;
         d->dl_repeats = 0;
+        /* Recorded, never compared until the device fills it in. ROADMAP item 32 */
+        d->dl_ack_arg = rpt.ack_arg;
         dl_cmd_acked++;
     }
     d->arrival_us = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);

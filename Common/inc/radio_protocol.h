@@ -3,6 +3,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/**
+ * @file radio_protocol.h
+ * @brief Every frame on the air, as the one header both firmwares compile.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
+
 /* For the per-frame byte counts the slot budget is charged against.
  * radio_devices_docs/radio/tdma.md */
 #include "radio_slots.h"
@@ -20,7 +27,7 @@ typedef struct radio_pairing {
     uint8_t stage;
 } __attribute__((packed)) protocol_pairing_t;
 
-/* Frame types. Only the join beacon is readable without a key. */
+/** @brief Frame types. Only the join beacon is readable without a key. */
 enum {
     RADIO_FRAME_DATA_BEACON = 0x01,
     RADIO_FRAME_JOIN_BEACON = 0x02,
@@ -33,24 +40,34 @@ enum {
     RADIO_FRAME_PAIR_INIT   = 0x09    /**< hub -> device, join channel, MACed (pair_v3) */
 };
 
-/* The version byte the pairing exchange carries. ADR-0012 */
+/** @brief The version byte the pairing exchange carries. ADR-0012 */
 #define RADIO_PROTO_VERSION          2u
 
-/* The data frames alone: their bodies grew and pairing's did not.
- * radio_devices_docs/radio/tdma.md */
-#define RADIO_LINK_VERSION           4u
+/**
+ * @brief The data frames' own version, bumped whenever a sealed body's layout moves.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
+#define RADIO_LINK_VERSION           5u
 
-/* On the wire in four frame types, so both sides must compile the same one. */
+/** @brief On the wire in four frame types, so both sides must compile the same one. */
 #define RADIO_NET_ID                 0x0001u
 
+/** @brief The join beacon's only flag: the hub will answer a PAIR_REQ right now. */
 #define RADIO_JOIN_FLAG_WINDOW_OPEN  0x01
 
-/* The hub is about to leave the hop channels, announced in the data beacon.
- * radio_devices_docs/radio/decisions/0020-device-triggered-quiesce.md */
+/**
+ * @brief The hub is about to leave the hop channels, announced in the data beacon.
+ *
+ * radio_devices_docs/radio/decisions/0020-device-triggered-quiesce.md
+ */
 #define RADIO_BEACON_FLAG_QUIESCE    0x01
 
-/* Every superframe on the hop channel, and frozen at 14 bytes.
- * radio_devices_docs/radio/tdma.md */
+/**
+ * @brief Every superframe on the hop channel, and frozen at 14 bytes.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
 typedef struct radio_data_beacon {
     uint8_t  type;          /**< RADIO_FRAME_DATA_BEACON, like every other frame */
     uint8_t  version;
@@ -61,8 +78,11 @@ typedef struct radio_data_beacon {
     uint8_t  resume_in;     /**< superframes until traffic resumes; 0 while running */
 } __attribute__((packed)) radio_data_beacon_t;
 
-/* Sent on the fixed join channel while a pairing window is open.
- * radio_devices_docs/radio/joining.md */
+/**
+ * @brief Sent on the fixed join channel while a pairing window is open.
+ *
+ * radio_devices_docs/radio/joining.md
+ */
 typedef struct radio_join_beacon {
     uint8_t  type;
     uint8_t  version;
@@ -78,10 +98,10 @@ typedef struct radio_join_beacon {
 _Static_assert(sizeof(radio_data_beacon_t) == 14, "data beacon is 14 bytes on the wire");
 _Static_assert(sizeof(radio_join_beacon_t) == 14, "join beacon is 14 bytes on the wire");
 
-/* 3, while the rest of the exchange carries RADIO_PROTO_VERSION = 2. ADR-0021 */
+/** @brief 3, while the rest of the exchange carries RADIO_PROTO_VERSION = 2. ADR-0021 */
 #define RADIO_PAIR_INIT_VERSION  3u
 
-/* pair_v3's invitation, addressed to a named device. ADR-0021 */
+/** @brief pair_v3's invitation, addressed to a named device. ADR-0021 */
 typedef struct radio_pair_init {
     uint8_t  type;              /**< RADIO_FRAME_PAIR_INIT */
     uint8_t  version;           /**< RADIO_PAIR_INIT_VERSION */
@@ -99,14 +119,17 @@ _Static_assert(RADIO_PAIR_INIT_VERSION != RADIO_PROTO_VERSION,
 _Static_assert(RADIO_LINK_VERSION != RADIO_PROTO_VERSION &&
                RADIO_LINK_VERSION != RADIO_PAIR_INIT_VERSION,
                "the three version bytes must stay tellable apart on the wire");
-/* The split the MAC covers, written as an offset rather than a sum. */
+/** @brief The split the MAC covers, written as an offset rather than a sum. */
 #define RADIO_PAIR_INIT_MAC_LEN  12u
 _Static_assert(offsetof(radio_pair_init_t, mac) ==
                sizeof(radio_pair_init_t) - RADIO_PAIR_INIT_MAC_LEN,
                "the MAC must cover exactly the cleartext ahead of it");
 
-/* Device -> hub, join channel, cleartext; the only settled pairing frame.
- * radio_devices_docs/radio/pairing.md */
+/**
+ * @brief Device -> hub, join channel, cleartext; the only settled pairing frame.
+ *
+ * radio_devices_docs/radio/pairing.md
+ */
 typedef struct radio_pair_req {
     uint8_t  type;          /**< RADIO_FRAME_PAIR_REQ */
     uint8_t  version;
@@ -120,17 +143,26 @@ typedef struct radio_pair_req {
 
 _Static_assert(sizeof(radio_pair_req_t) == 57, "pair request is 57 bytes on the wire");
 
-/* The direction byte of the GCM nonce, pinned here and neither value zero.
- * radio_devices_docs/radio/crypto/wire-crypto.md */
+/**
+ * @brief The direction byte of the GCM nonce, pinned here and neither value zero.
+ *
+ * radio_devices_docs/radio/crypto/wire-crypto.md
+ */
 #define RADIO_DIR_UPLINK    0x01u   /* device -> hub */
 #define RADIO_DIR_DOWNLINK  0x02u   /* hub -> device */
 
-/* The nonce's slot field for frames in no uplink slot; low byte is a retry index.
- * radio_devices_docs/radio/crypto/wire-crypto.md */
+/**
+ * @brief The nonce's slot field for frames in no uplink slot; low byte is a retry index.
+ *
+ * radio_devices_docs/radio/crypto/wire-crypto.md
+ */
 #define RADIO_NONCE_SLOT_UNSLOTTED  0xFFFF00u
 
-/* Hub -> device, cleartext, in answer to a PAIR_REQ. No net_id, and dev_id
- * instead. radio_devices_docs/radio/pairing.md */
+/**
+ * @brief Hub -> device, cleartext, in answer to a PAIR_REQ; no net_id, and dev_id instead.
+ *
+ * radio_devices_docs/radio/pairing.md
+ */
 typedef struct radio_pair_rsp {
     uint8_t  type;              /**< RADIO_FRAME_PAIR_RSP */
     uint8_t  version;
@@ -140,7 +172,7 @@ typedef struct radio_pair_rsp {
     uint8_t  confirm[16];       /**< HMAC(confirm_key_hub, transcript), truncated */
 } __attribute__((packed)) radio_pair_rsp_t;
 
-/* Device -> hub, cleartext. Proves the device derived the same secret. */
+/** @brief Device -> hub, cleartext. Proves the device derived the same secret. */
 typedef struct radio_pair_conf {
     uint8_t  type;              /**< RADIO_FRAME_PAIR_CONF */
     uint8_t  version;
@@ -149,8 +181,11 @@ typedef struct radio_pair_conf {
     uint8_t  confirm[16];       /**< HMAC(confirm_key_dev, transcript), truncated */
 } __attribute__((packed)) radio_pair_conf_t;
 
-/* Sealed PAIR_ACCEPT body; hop_key is the NETWORK key, 19 bytes on purpose.
- * radio_devices_docs/radio/pairing.md */
+/**
+ * @brief Sealed PAIR_ACCEPT body; hop_key is the NETWORK key, 19 bytes on purpose.
+ *
+ * radio_devices_docs/radio/pairing.md
+ */
 typedef struct radio_pair_grant {
     uint8_t slot;               /**< uplink slot, 0..RADIO_SLOT_COUNT-1 */
     uint8_t report_every;       /**< superframes between uplink reports */
@@ -158,8 +193,11 @@ typedef struct radio_pair_grant {
     uint8_t hop_key[16];
 } __attribute__((packed)) radio_pair_grant_t;
 
-/* Hub -> device, sealed under the session key; AAD is everything before ct.
- * radio_devices_docs/radio/crypto/key-lifecycle.md */
+/**
+ * @brief Hub -> device, sealed under the session key; AAD is everything before ct.
+ *
+ * radio_devices_docs/radio/crypto/key-lifecycle.md
+ */
 typedef struct radio_pair_accept {
     uint8_t  type;              /**< RADIO_FRAME_PAIR_ACCEPT */
     uint8_t  version;
@@ -174,23 +212,33 @@ typedef struct radio_pair_accept {
 #define RADIO_PAIR_ACCEPT_AAD_LEN  15u
 #define RADIO_HOP_KEY_BYTES        16u
 
-/* The sealed body of an uplink report, which measures the link in both directions. */
+/** @brief The sealed body of an uplink report, which measures the link in both directions. */
 typedef struct radio_uplink_report {
     int8_t   rssi_down;         /**< dBm, the hub's last data beacon as the device heard it */
     uint8_t  flags;             /**< RADIO_REPORT_FLAG_* */
     uint16_t supply_mv;         /**< the rail, which may or may not be a battery */
-    uint32_t uptime_s;          /**< device seconds; wraps every 71.6 min, so not a reboot signal */
+    uint32_t uptime_s;          /**< device seconds since its last boot; it does not wrap */
     uint8_t  ack_seq;           /**< the cmd_seq this device last applied */
     uint8_t  ack_cmd;           /**< what it was, so a mismatched ack is visible */
+    uint8_t  ack_arg;           /**< the argument it applied, read according to ack_cmd */
     uint8_t  app_len;           /**< 0 means no application data, never a sentinel */
-    uint8_t  app[5];
+    uint8_t  app[4];
 } __attribute__((packed)) radio_uplink_report_t;
 
-/* Says when rssi_down is stale, since it carries a last value, not a sentinel. */
-#define RADIO_REPORT_FLAG_RSSI_STALE  0x01
+/**
+ * @brief The report's flags, as masks: the wire is never described in bit positions.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
+#define RADIO_REPORT_FLAG_RSSI_STALE    0x01   /**< rssi_down is a last value, not a sentinel */
+#define RADIO_REPORT_FLAG_SUPPLY_STALE  0x02   /**< supply_mv was never measured, so do not read it */
+#define RADIO_REPORT_FLAG_RESUMED       0x04   /**< the first report after a counter wait */
 
-/* Device -> hub, sealed, in its own slot and carrying no dev_id.
- * radio_devices_docs/radio/tdma.md */
+/**
+ * @brief Device -> hub, sealed, in its own slot and carrying no dev_id.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
 typedef struct radio_uplink {
     uint8_t  type;              /**< RADIO_FRAME_UPLINK */
     uint8_t  version;
@@ -204,8 +252,11 @@ typedef struct radio_uplink {
 
 /* --- the downlink ------------------------------------------------------ */
 
-/* Unicast, sealed, and the uplink's mirror image, one device per opportunity.
- * radio_devices_docs/radio/tdma.md */
+/**
+ * @brief Unicast, sealed, and the uplink's mirror image, one device per opportunity.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
 typedef struct radio_downlink {
     uint8_t  type;              /**< RADIO_FRAME_DOWNLINK */
     uint8_t  version;
@@ -217,12 +268,18 @@ typedef struct radio_downlink {
 
 #define RADIO_DOWNLINK_AAD_LEN  7u
 
-/* Never issued, so ack_seq 0 means "nothing applied" and cannot mean an echo.
- * radio_devices_docs/radio/tdma.md */
+/**
+ * @brief Never issued, so ack_seq 0 means "nothing applied" and cannot mean an echo.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
 #define RADIO_CMD_SEQ_NONE  0u
 
-/* The sealed body. An unknown cmd must be ignored, never refused.
- * radio_devices_docs/radio/tdma.md */
+/**
+ * @brief The sealed body. An unknown cmd must be ignored, never refused.
+ *
+ * radio_devices_docs/radio/tdma.md
+ */
 typedef struct radio_downlink_cmd {
     uint8_t  cmd;               /**< RADIO_CMD_* */
     uint8_t  report_every;      /**< superframes; 0 leaves the granted rate alone */
@@ -233,6 +290,7 @@ typedef struct radio_downlink_cmd {
     uint8_t  app[6];
 } __attribute__((packed)) radio_downlink_cmd_t;
 
+/** @brief What a downlink can ask for; an unknown value is ignored, never refused. */
 enum {
     RADIO_CMD_NOP = 0,          /**< the keepalive: the hub still holds this device */
     RADIO_CMD_SET_RATE,         /**< honour report_every from the next superframe */
