@@ -34,8 +34,14 @@ def touched_lines():
 def tracked(changed):
     if changed:
         return [f for f in touched_lines() if os.path.isfile(f)]
-    return subprocess.run(["git", "ls-files"], capture_output=True,
-                          text=True).stdout.split()
+    # Untracked too: a new file is invisible to `git ls-files` until it is
+    # committed, so the full-tree check was green on exactly the file that had
+    # never been checked. The --changed path already did this.
+    out = subprocess.run(["git", "ls-files"], capture_output=True,
+                         text=True).stdout.split()
+    out += subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                          capture_output=True, text=True).stdout.split()
+    return out
 
 def kind(path):
     base = os.path.basename(path)

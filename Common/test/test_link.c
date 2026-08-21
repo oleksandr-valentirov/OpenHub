@@ -16,8 +16,7 @@ static int fails;
     if (!(cond)) { printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); fails++; } \
 } while (0)
 
-/* The generator's field values, laid out by C rather than by struct.pack. Two
- * implementations of one wire; agreeing is the whole test. */
+/* The generator's values, laid out by C rather than by struct.pack. */
 #define V_RSSI_DOWN    (-92)
 #define V_FLAGS        (RADIO_REPORT_FLAG_RSSI_STALE | RADIO_REPORT_FLAG_RESUMED)
 #define V_SUPPLY_MV    3287u
