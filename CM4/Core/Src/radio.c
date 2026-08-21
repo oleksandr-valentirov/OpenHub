@@ -417,7 +417,8 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
         return 1;
     if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) return 1;
     if (rfm69_set_modulation(&radio, RFM69_SHAPING_BT_0_5) != RFM69_OK) return 1;
-    if (rfm69_set_preamble_bytes(&radio, 4) != RFM69_OK) return 1;
+    if (rfm69_set_preamble_bytes(&radio, RADIO_PREAMBLE_BYTES) != RFM69_OK)
+        return 1;
     if (rfm69_set_sync(&radio, sync_val, sizeof(sync_val), 0) != RFM69_OK) return 1;
 
     /* Neither Manchester nor whitening.
