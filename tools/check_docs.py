@@ -12,6 +12,7 @@ nobody can act on.
 """
 
 import os
+import argparse
 import re
 import subprocess
 import sys
@@ -116,6 +117,18 @@ def owned_names(text, fenced):
 
 
 def main():
+    global DOCS, SCOPES, ALLOW
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--docs", help="documentation root to check")
+    ap.add_argument("--scopes", help="comma-separated subdirectories")
+    ap.add_argument("--allow", help="exemption list")
+    args = ap.parse_args()
+    if args.docs:
+        DOCS = args.docs
+    if args.scopes:
+        SCOPES = tuple(args.scopes.split(","))
+    if args.allow:
+        ALLOW = args.allow
     if not os.path.isdir(DOCS):
         sys.stderr.write("no %s; nothing to check\n" % DOCS)
         return 0
