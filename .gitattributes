@@ -1,0 +1,20 @@
+# Line endings are pinned so a tool that rewrites them shows no diff at all.
+* text=auto eol=lf
+
+# CubeMX emits CRLF and rewrites these on every generate.
+**/Core/Inc/main.h                  text eol=crlf
+**/FreeRTOSConfig.h                 text eol=crlf
+**/stm32h7xx_hal_conf.h             text eol=crlf
+**/stm32h7xx_nucleo_conf.h          text eol=crlf
+**/stm32h7xx_it.h                   text eol=crlf
+**/stm32h7xx_it.c                   text eol=crlf
+**/stm32h7xx_hal_msp.c              text eol=crlf
+**/stm32h7xx_hal_timebase_tim.c     text eol=crlf
+**/Core/Src/freertos.c              text eol=crlf
+**/mx-generated.cmake               text eol=crlf
+**/stm32h755xx_*.ld                 text eol=crlf
+CM7/LWIP/**                         text eol=crlf
+starm-clang.cmake                   text eol=crlf
+
+# The custom linker scripts are this project's, not CubeMX's: they stay LF.
+**/custom_*.ld                      text eol=lf

@@ -1,12 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 include(ExternalProject)
 
-#
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
-#
-# User is free to modify the file as much as necessary
-#
+# Generated once by CubeMX and owned by this project thereafter.
 
 # In order to use CMake for cross-compiling
 set(CMAKE_CXX_COMPILER_FORCED "true")

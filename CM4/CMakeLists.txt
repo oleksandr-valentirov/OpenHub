@@ -1,11 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-#
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
-#
-# User is free to modify the file as much as necessary
-#
+# Generated once by CubeMX and owned by this project thereafter.
 
 # Setup compiler settings
 set(CMAKE_C_STANDARD 11)
@@ -39,10 +34,8 @@ project(${CMAKE_PROJECT_NAME})
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
-# Location of the STM32Cube H7 firmware package that CubeMX references.
-# The generated mx-generated.cmake refers to it through ${CUBE_FW_PATH}; the
-# rewrite from CubeMX's absolute paths is done by after_code_generation.py.
-# Override with -DCUBE_FW_PATH=<path> or the CUBE_FW_PATH environment variable.
+# The STM32Cube H7 firmware package CubeMX references.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
 if(NOT DEFINED CUBE_FW_PATH)
     if(DEFINED ENV{CUBE_FW_PATH})
         set(CUBE_FW_PATH "$ENV{CUBE_FW_PATH}")
@@ -56,10 +49,7 @@ if(NOT EXISTS "${CUBE_FW_PATH}/Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h"
         "Install it via CubeMX, or point CUBE_FW_PATH at your copy.")
 endif()
 
-# CubeMX запікає у mx-generated.cmake абсолютні шляхи на Cube FW тієї машини,
-# де генерувався код. Щоб закомічений файл працював будь-де, підміняємо цей
-# префікс на ${CUBE_FW_PATH} на етапі configure і підключаємо оброблену копію.
-# Регулярка не прив'язана ні до користувача, ні до версії FW.
+# Rewrite CubeMX's baked-in absolute Cube FW paths so a committed file builds anywhere.
 set(MX_GENERATED_IN  "${CMAKE_CURRENT_SOURCE_DIR}/mx-generated.cmake")
 set(MX_GENERATED_OUT "${CMAKE_CURRENT_BINARY_DIR}/mx-generated.portable.cmake")
 file(READ "${MX_GENERATED_IN}" MX_GENERATED_TEXT)
@@ -68,7 +58,7 @@ string(REGEX REPLACE
     "${CUBE_FW_PATH}/"
     MX_GENERATED_TEXT "${MX_GENERATED_TEXT}")
 file(WRITE "${MX_GENERATED_OUT}" "${MX_GENERATED_TEXT}")
-# перегенерувати копію, щойно CubeMX перепише оригінал
+# Redo the copy as soon as CubeMX rewrites the original.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MX_GENERATED_IN}")
 
 # Include mx-generated

@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Checks the comment conventions from CLAUDE.md; see that file for the rules."""
+import io, os, re, subprocess, sys, tokenize
+
+# CubeMX and vendor files: regeneration overwrites them, so the rules cannot hold there.
+GENERATED = re.compile(
+    r"(^|/)(LWIP/|third_party/|build/|\.git/|\.venv/|__pycache__/|\.cache/"
+    r"|system_stm32h7xx|stm32h7xx_(hal_conf|hal_msp|it|nucleo_conf|hal_timebase)"
+    r"|syscalls\.c|sysmem\.c|freertos\.c|FreeRTOSConfig\.h|startup_"
+    r"|starm-clang\.cmake)")
+# Vector files are emitted by tools/; the generator is the hand-written artifact.
+GENERATED_VEC = re.compile(r"Common/test/vectors/.*\.(txt|h)$")
+PREFIX = {".c": "//", ".h": "//", ".py": "#", ".sh": "#", ".cmake": "#"}
+
+def touched_lines():
+    """Line numbers added or changed against HEAD, per file. None = whole file."""
+    diff = subprocess.run(["git", "diff", "-U0", "HEAD"],
+                          capture_output=True, text=True).stdout
+    hits, cur = {}, None
+    for line in diff.split("\n"):
+        if line.startswith("+++ b/"):
+            cur = line[6:]
+            hits.setdefault(cur, set())
+        elif line.startswith("@@") and cur:
+            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            if m:
+                start, count = int(m.group(1)), int(m.group(2) or 1)
+                hits[cur].update(range(start, start + count))
+    for f in subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                            capture_output=True, text=True).stdout.split():
+        hits[f] = None
+    return hits
+
+def tracked(changed):
+    if changed:
+        return [f for f in touched_lines() if os.path.isfile(f)]
+    return subprocess.run(["git", "ls-files"], capture_output=True,
+                          text=True).stdout.split()
+
+def kind(path):
+    base = os.path.basename(path)
+    if base == ".gitignore" or base == "CMakeLists.txt":
+        return "#"
+    return PREFIX.get(os.path.splitext(path)[1])
+
+def hash_comment_lines(text):
+    """Line numbers holding a real # comment. A # inside a string is not one."""
+    try:
+        toks = tokenize.generate_tokens(io.StringIO(text).readline)
+        return {t.start[0] for t in toks if t.type == tokenize.COMMENT}
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return None
+
+def handwritten(text):
+    """Line numbers a human owns. In a CubeMX file that is the USER CODE regions only."""
+    lines = text.split("\n")
+    if "USER CODE BEGIN" not in text:
+        return None
+    own, inside = set(), False
+    for n, l in enumerate(lines, 1):
+        if "USER CODE BEGIN" in l:
+            # A "Header" region holds the banner CubeMX writes and rewrites.
+            inside = "USER CODE BEGIN Header" not in l
+        elif "USER CODE END" in l:
+            inside = False
+        elif inside:
+            own.add(n)
+    return own
+
+def check(files, only=None):
+    long_blocks, own_line, cyrillic, long_brief = [], [], [], []
+    for p in files:
+        if GENERATED.search(p) or GENERATED_VEC.search(p) or not os.path.isfile(p):
+            continue
+        pfx = kind(p)
+        if pfx is None:
+            continue
+        try:
+            text = open(p, errors="replace").read()
+        except OSError:
+            continue
+        if p != "CLAUDE.md" and re.search("[\u0400-\u04ff]", text):
+            cyrillic.append(p)
+        mine = handwritten(text)
+        # Shell and CMake are not tokenizable; only Python gets the string check.
+        hashes = hash_comment_lines(text) if p.endswith(".py") else None
+        run, start, incomment = [], 0, False
+        for n, line in enumerate(text.split("\n") + [""], 1):
+            st = line.strip()
+            # A USER CODE marker is structure, not a comment: it must not open a block.
+            marker = "USER CODE BEGIN" in st or "USER CODE END" in st
+            iscomment = not marker and (st.startswith(pfx) or (pfx == "//" and
+                                        (st.startswith("/*") or st.startswith("*"))))
+            # A /* */ body counts to its close, or a continuation dodges the limit
+            # by not opening with a star.
+            if pfx == "//":
+                if incomment:
+                    iscomment = True
+                if iscomment and "/*" in st and "*/" not in st.split("/*", 1)[1]:
+                    incomment = True
+                elif incomment and "*/" in st:
+                    incomment = False
+            if iscomment and hashes is not None and n not in hashes:
+                iscomment = False
+            if iscomment:
+                if not run:
+                    start = n
+                run.append(st)
+                continue
+            # A documentation path is exempt: CLAUDE.md allows it in full.
+            body = re.sub(r"radio_devices_docs/[A-Za-z0-9_./-]+", "", " ".join(run))
+            span = set(range(start, n))
+            mineok = run and (mine is None or start in mine)
+            onlyok = only is None or only.get(p) is None or (span & only[p])
+            # A Doxygen block's limit is per @brief, not per block.
+            if mineok and run[0].startswith("/**") and not run[0].startswith("/**<"):
+                for off, line in enumerate(run):
+                    m = re.search(r"@brief\s+(.*)", line)
+                    if m and len(m.group(1).rstrip("*/ ")) > 100 and onlyok:
+                        long_brief.append("%s:%d (%d chars)"
+                                          % (p, start + off, len(m.group(1).rstrip("*/ "))))
+            elif mineok and len(body) > 100 and onlyok:
+                long_blocks.append("%s:%d (%d chars)" % (p, start, len(body)))
+            run = []
+        if p.endswith((".c", ".h")):
+            inside = 0
+            for n, l in enumerate(text.split("\n"), 1):
+                if re.match(r"\s*(typedef\s+)?struct\b.*\{", l):
+                    inside = 1
+                elif inside and re.match(r"\s*\}", l):
+                    inside = 0
+                elif inside and re.match(r"\s*(/\*|//|\*)", l):
+                    if mine is not None and n not in mine:
+                        continue
+                    if only is None or only.get(p) is None or n in only[p]:
+                        own_line.append("%s:%d" % (p, n))
+    return long_blocks, own_line, cyrillic, long_brief
+
+def main():
+    changed = "--changed" in sys.argv
+    files = tracked(changed)
+    longb, own, cyr, brief = check(files, touched_lines() if changed else None)
+    scope = "lines changed against HEAD" if changed else "all tracked files"
+    print("scope: %s (%d), generated and vendored excluded\n" % (scope, len(files)))
+    for title, items in (("non-English outside CLAUDE.md", cyr),
+                         ("comment blocks over 100 characters", longb),
+                         ("struct-field comments on their own line", own),
+                         ("Doxygen @brief over 100 characters", brief)):
+        print("== %s: %d ==" % (title, len(items)))
+        for i in items[:15]:
+            print("   " + i)
+        if len(items) > 15:
+            print("   ... and %d more" % (len(items) - 15))
+    return 1 if (longb or own or cyr or brief) else 0
+
+sys.exit(main())
