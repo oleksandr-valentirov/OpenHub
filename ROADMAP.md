@@ -764,21 +764,27 @@ longer says it.
 
 `radio/phy.md` § duty cycle.
 
-### 34. Two dead types sit in the header both firmwares compile — `debt` `contract`
+### 34. `RADIO_REPORT_FLAG_RESUMED` is on the wire and means nothing yet — `contract`
 
-`protocol_header_t` and `protocol_pairing_t` open `Common/inc/radio_protocol.h`
-and nothing in either tree names them. They predate the frame types below and
-describe a header layout no frame on the air uses.
+The bit is defined, `0x04`, and both firmwares compile it. **Neither sets it.**
+The device session declined to set it rather than invent a meaning: it has two
+different self-imposed waits — a `tx_gate` refusal and a `reserve_covers` refusal
+— and picking one silently would have made the bit mean whatever it guessed.
 
-Left alone rather than deleted, because a contract file is not somewhere to
-remove a type unilaterally: the device build compiles this header and a name it
-does not use today is still a name it may reference. **Agree the deletion with
-the device session, then take both out in one commit.**
+The reader defines it, and the reader is the hub. Proposed, and awaiting the
+device session's agreement: **the first transmission after a silence the device
+imposed on itself**, whichever wait caused it. What the hub infers is the same
+either way — that the silence was the device's own choice and is therefore not
+evidence about the link. A reboot is not this; `uptime_s` carries that, and a
+device that rebooted *and* served a reservation should say both.
 
-Found during the Doxygen pass, which is the point worth keeping: the pass asked
-what every type is for and these two had no answer.
+**It cannot answer item 29 and must never be wired as though it could.** One
+retrospective report carries it; if that report is lost the hub never learns.
+Evidence when present, never evidence of absence.
 
-`radio/tdma.md`.
+`radio/tdma.md`, once agreed.
+
+---
 
 ## Design agreed but unbuilt
 
