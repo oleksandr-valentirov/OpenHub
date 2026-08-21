@@ -525,6 +525,9 @@ after the frame, and the sealed report still carries a level with no provenance.
 `afc_note()` consumes the sync-match sample before the frame handler runs, so
 the fix is to stash it for the frame just delivered rather than to read again.
 
+The −43 dBm reading stands; the window that admitted it did not, until `2aada5c`.
+Item 37 has the scope of that, and it is the distribution rather than this figure.
+
 `CM4/Core/Src/radio.c:1378`, `:1625`, `open_hub/radio/configuration.md`.
 
 ### 15. The data beacon is unauthenticated — `contract`
@@ -752,6 +755,32 @@ and seals nothing. The three must read 0/1/0.
 Unread until a boot. It joins item 35's four lines.
 
 `radio/crypto/wire-crypto.md`.
+
+---
+
+### 37. Every sync-RSSI reading before 2aada5c has an unbounded window — `defect`
+
+`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs measured from the sync
+edge, where the frame ends 6720 µs after that edge. Samples in the 1280 µs beyond
+it were the noise floor admitted as a frame level, and the guard was wrong in the
+permissive direction — it could never lose a sample, only admit a bad one, so
+nothing about the readings looked wrong.
+
+Fixed. What is not fixed is that **nobody knows whether it was ever reached.**
+`sync_rssi_sample()` runs from the superloop, whose period has never been
+measured, so the lag is bounded by nothing this side can compute.
+
+`sync_rssi_lag_max_us` is the instrument and it already exists: `device afcraw`
+prints it. **Read it before quoting any per-slot level out of `afcraw` again.**
+Under 6720 and the window never mattered; near or over it and some fraction of
+those levels are floor readings wearing a frame's name.
+
+**Item 14's −43 dBm against a −96 dBm floor is not in doubt** and should not be
+re-opened by this: 53 dB apart is a frame level by any window. What this touches
+is the per-slot distribution, where a single admitted floor sample moves a slot's
+mean without moving anything that looks like an error.
+
+`open_hub/radio/configuration.md`.
 
 ---
 
