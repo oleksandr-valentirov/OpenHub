@@ -606,6 +606,18 @@ and a 700 µs aim predicts 72 260. **The band's centre is 72 295** — 35 µs fr
 the aim, 735 µs from the hub's assumption. `UPLINK_AIM_US` belongs in
 `Common/inc/radio_slots.h` and the hub's geometry is the side that is wrong.
 
+**That arithmetic is 25 kbps and the run predates the rate change**, which makes
+the conclusion sound and the number unusable as it stands. The pre-sync term is
+`RADIO_PRE_SYNC_AIR_US`, derived rather than carried, so at 50 kbps it is
+**1 280 µs, not 2 560**. The same physical 700 µs aim now predicts a sync edge at
+**70 980 µs**, and flush-at-slot-start predicts 70 280.
+
+So the re-measurement has a falsifiable prediction rather than an expectation:
+**`device synctime` at 50 kbps must centre near 70 980.** If it centres near
+72 295 again, the offset is not being produced by the aim at all and something
+downstream of the rate is holding it — which would also bear on the boundary-lag
+contradiction in item 31, since both readings subtract the same pre-sync term.
+
 `verification` skill § know which artifact each assert pins.
 
 ### 22. The `uptime_s` comment is wrong, and it talked the hub out of a working field — `contract`
@@ -703,6 +715,38 @@ Make the wrong offset unrepresentable: carry the arg in its own field of
 short of it. Every new request type is another chance to get it wrong.
 
 `Common/src/ipc.c`, `CM7/Core/Src/hubipc.c`.
+
+### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
+
+Neither `BEACON_BOUNDARY_LAG_US` nor `UPLINK_AIM_US` appears anywhere in
+`radio_devices_docs/radio/`. **Silence cannot go stale**, which is why the
+contract page never disagreed with either side and nobody found this by reading.
+
+The hub measures superframe boundary to first bit directly: **358..366 µs over
+529 beacons**. The device compiles **260 ± 5 µs** in `Core/Inc/beacon.h`, applied
+as `at_us - BEACON_BOUNDARY_LAG_US` where `start_us` has already subtracted
+`RADIO_PRE_SYNC_US`. So the device's constant covers the hub's term **plus** its
+own detect-to-timestamp residual, and a residual cannot be negative — **the
+device's number must be larger than the hub's and it is 100 µs smaller.**
+
+One of three things is wrong: the hub's 358..366, the device's 260, or the
+pre-sync subtraction. **Adopting either number would be the worst outcome
+available** — the anchor moves 100 µs and may land correctly for a false reason.
+
+The discriminator is agreed and cheap: the device forges a beacon on its own
+boundary while the hub reports the lag it computes, so the device's own
+transmit-path boundary-to-first-bit is measurable locally and the difference is
+its receive residual with nothing else in it. To be run in the same boot as
+item 30's single-slot window, so it does not become another two-window fraction.
+
+**The pre-sync term is the suspect this side can contribute to.** It is
+`RADIO_PRE_SYNC_AIR_US`, derived from `RADIO_US_PER_BYTE`, so it halved when the
+rate did — 2 560 µs to 1 280. Any lag reading taken before the rate change and
+compared with one taken after is out by a preamble and a sync word. Item 21's
+`device synctime` run is exactly such a reading, and its re-measurement has a
+prediction attached.
+
+Raised by the device session. Device items 9 and 12.
 
 ## Design agreed but unbuilt
 

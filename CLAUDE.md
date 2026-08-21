@@ -111,18 +111,25 @@ task before starting.
 | `rfm69` | this repo | the radio will not transmit, will not receive, corrupts frames, or you are touching `CM4/rfm69_lib` or the PHY |
 | `sdr` | `~/.claude/skills` | a radio claim needs evidence from the air rather than from a counter |
 | `cubemx` | `~/.claude/skills` | peripherals, pins, clocks, FreeRTOS tasks or middleware change — or a change is about to be hand-written into a generated file |
-| `verification` | this repo | adding or reading a check, a self-test, a counter, a test vector or a probe; before quoting a measurement; whenever a first success is imminent |
+| `verification` | `~/.claude/skills` | adding or reading a check, a self-test, a counter, a test vector or a probe; before quoting a measurement; whenever a first success is imminent |
 
 Keep them current. A new surprise about the radio goes in `rfm69`, a new way a
 green check turned out to be worthless goes in `verification` — not here.
 
-**`sdr` and `cubemx` are shared with the WL55 device session and no longer live
-in this tree.** They are loaded by name exactly as before; what changed is that
-an edit to either is not a commit here. Make the edit in `~/.claude/skills` and
-**tell the device session**, so it picks the change up rather than finding it by
-accident. They were moved out because both repositories were told to keep them
-current while only one of them held the files, and two sessions committing into
-one working tree is a hazard no amount of care removes.
+**`sdr`, `cubemx` and `verification` are shared with the WL55 device session and
+no longer live in this tree.** Only `rfm69` is still committed here, because the
+RFM69 is the hub's radio and the device has an SX126x. The three are loaded by
+name exactly as before; what changed is that an edit to any of them is not a
+commit here. Make the edit in `~/.claude/skills` and **tell the device session**,
+so it picks the change up rather than finding it by accident.
+
+They were moved out because both repositories were told to keep them current
+while only one of them held the files, and two sessions committing into one
+working tree is a hazard no amount of care removes. `verification` moved last, on
+2026-08-22, and its case was the plainest of the three: the device session had a
+finished entry to add, could not commit it, and had to send the text across for
+this side to land — which is the shared-file hazard arriving as a delay rather
+than as a conflict.
 
 ## Where the open work lives
 
