@@ -1,3 +1,9 @@
+/**
+ * @file networking.c
+ * @brief lwIP addressing and ping, called from outside tcpip_thread under its lock.
+ *
+ * radio_devices_docs/open_hub/network/ethernet.md
+ */
 #include "cmsis_os.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -66,9 +72,7 @@ static void ping_send(ping_args_t *args, uint16_t ping_seq_num) {
     /* generate random ID or use default */
     if (args->id == 0) {
         uint32_t r;
-        /* The old sequence tested the semaphore instead of holding it and used
-         * the word regardless of a seed error. A ping id is not security
-         * critical, so a failed draw falls back rather than aborting. */
+        /* A ping id is not security critical, so a failed draw falls back. */
         icmp_hdr->id = (rng_word(&r) == RNG_OK) ? (uint16_t)r : ping_seq_num;
     } else
         icmp_hdr->id = args->id;
@@ -140,12 +144,7 @@ void Networking_ping_command(const char *ip_addr, uint8_t repeats, uint8_t break
     raw_remove(ping_args.pcb);
 }
 
-/*
- * it is implemented with temp variable and memcpy
- * because ip4addr_ntoa has static local variable which gets overwritten
- * with the latest argument passted to the function
- * if a ip4addr_ntoa call placed inside of the sprintf multiple times.
- */
+/* ip4addr_ntoa returns one static buffer, so two calls in one sprintf collide. */
 int Networking_get_network_info(char *resp_buffer) {
     char ip_addr[16] = {0};
     char netmask[16] = {0};

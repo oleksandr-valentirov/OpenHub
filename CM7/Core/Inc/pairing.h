@@ -1,9 +1,16 @@
 #pragma once
 
 #include <stdint.h>
+#include "ipc.h"
 
-/* Must match CM4's hub_id: it is bound into the salt and the transcript, so a
- * disagreement is a confirmation mismatch with nothing to diagnose. */
+/**
+ * @file pairing.h
+ * @brief The hub's half of the four-frame exchange, and the counters it is read by.
+ *
+ * radio_devices_docs/open_hub/radio/pairing.md
+ */
+
+/** @brief Must match CM4's hub_id: it is bound into the salt and the transcript. */
 #define PAIRING_HUB_ID  0x33442211u
 
 typedef struct pairing_stats {
@@ -25,57 +32,109 @@ typedef struct pairing_stats {
     uint32_t installed;
     uint32_t install_failed;
     uint32_t errors;
-    /* The fingerprint computed from the key that arrived, and the head of the
-     * key itself. A refusal that names the check still leaves the operator
-     * unable to see whether the domain or the key is what differs. */
-    uint8_t  last_fp[32];
-    uint8_t  last_pubkey[8];
+    uint8_t  last_fp[32];    /**< of the key that arrived, not of the enrolled one */
+    uint8_t  last_pubkey[8]; /**< ... and its head, so domain and key are separable */
 } pairing_stats_t;
 
+/**
+ * @brief The pairing task: does every scalar multiplication, on its own 12 KB stack.
+ * @param argument  unused, required by the CMSIS-RTOS signature
+ */
 void PairingTask(void *argument);
 
+/**
+ * @brief The exchange's counters, refusal reasons included.
+ * @return the live block; every refusal has its own field rather than one total
+ */
 const pairing_stats_t *pairing_get_stats(void);
 
-/* The 119 bytes the last exchange's confirmations were taken over, or NULL if
- * no exchange has derived yet. The superframe is reported beside them because
- * it is the field the two sides can disagree about while every other check
- * passes. */
+/**
+ * @brief The bytes the last confirmations were actually taken over.
+ * @param dev_id      receives the device the transcript belongs to
+ * @param superframe  receives the transcript's own superframe, not the live counter
+ * @return the 119 bytes, or NULL when no exchange has completed
+ *
+ * radio_devices_docs/open_hub/radio/pairing.md
+ */
 const uint8_t *pairing_last_transcript(uint32_t *dev_id, uint32_t *superframe);
 
-/* 1 if the hub's public key has been recovered and was copied out. */
+/**
+ * @brief The hub's public key, as provisioned to devices.
+ * @param pub  receives the 33-byte compressed point
+ * @retval 1  it has been recovered and was copied out
+ * @retval 0  none is available yet
+ */
 uint8_t pairing_hub_pubkey(uint8_t pub[33]);
 
-/* What PAIR_ACCEPT grants. Settable so bench work can ask for every superframe
- * without every device in the field doing the same. */
+/**
+ * @brief The reporting cadence PAIR_ACCEPT grants.
+ * @return superframes between reports, granted at pairing rather than compiled in
+ *
+ * radio_devices_docs/open_hub/radio/pairing.md
+ */
 uint8_t pairing_report_every(void);
+
+/**
+ * @brief Uplink arrivals CM4 pushed, so nothing infers a cadence from a poll.
+ * @param short_payload  receives the count CM7 judged too short
+ * @param last_tick      receives when the last one was handled
+ * @param last           receives the last report itself
+ * @return arrivals since boot
+ *
+ * A derived denominator is an assumption with a column heading, so this counts
+ * what arrived and never what should have. ROADMAP item 2
+ */
+uint32_t pairing_uplink_events(uint32_t *short_payload, uint32_t *last_tick,
+                               ipc_device_report_t *last);
+
+/**
+ * @brief Doorbell interrupts, read against the poll timeouts that stand in for them.
+ * @param timeouts  receives the polls that fired because no doorbell did
+ * @return doorbells taken since boot
+ *
+ * The poll fallback works, which is exactly why a dead doorbell is otherwise silent.
+ */
+uint32_t pairing_doorbells(uint32_t *timeouts);
+/**
+ * @brief Sets the cadence the next pairing is granted.
+ * @param n  superframes between reports; devices already in the field keep theirs
+ */
 void    pairing_set_report_every(uint8_t n);
 
-/* Arms pair_v3's invitation for an open window. Called from the CLI, which
- * cannot do the work itself: deriving Z1 is a P-256 scalar multiplication and
- * cliTask's stack is nowhere near the 12 KB it needs. So this only records the
- * request and PairingTask does the arithmetic on its own stack. */
+/**
+ * @brief Arms pair_v3's invitation for one device.
+ * @param dev_id     the enrolled device to invite
+ * @param window_ms  how long the window stays open
+ *
+ * Records the request only: deriving Z1 is a scalar multiplication and cliTask's
+ * stack is nowhere near what it needs. radio_devices_docs/open_hub/radio/pairing.md
+ */
 void    pairing_arm_init(uint32_t dev_id, uint32_t window_ms);
+
+/** @brief Closes the invitation window early. */
 void    pairing_disarm_init(void);
 
 typedef struct pairing_init_stats {
-    uint32_t z1_derivations;   /* must be 1 per window, not 1 per frame */
+    uint32_t z1_derivations;   /**< must be 1 per window, not 1 per frame */
     uint32_t built;
     uint32_t pushed;
     uint32_t push_failed;
     uint32_t derive_failed;
     uint32_t last_superframe;
-    /* The last frame the *live* path built, kept so it can be inspected
-     * without a second builder. A separate "build for printing" path is a
-     * parallel copy of the thing under test - which is how the device side's
-     * Z1 defect survived: its check reached the live verifier but stepped over
-     * the one function only the live path runs. */
-    uint8_t  last_frame[28];
+    uint8_t  last_frame[28]; /**< what the live path built, never a second builder */
     uint8_t  last_len;
     uint8_t  armed;
 } pairing_init_stats_t;
+/**
+ * @brief The invitation path's counters.
+ * @return the live block, carrying the frame the live path built rather than a copy
+ */
 const pairing_init_stats_t *pairing_init_get_stats(void);
 
-/* The rotation epoch a key agreed now belongs to. Indexed by the superframe
- * counter and not by wall time: there is no RTC, and a clock resetting on a
- * power cut would silently re-derive keys that were already used. */
+/**
+ * @brief The rotation epoch a key agreed now belongs to.
+ * @return superframe / SUPERFRAME_PER_DAY, indexed by the counter rather than stepped
+ *
+ * radio_devices_docs/open_hub/radio/pairing.md
+ */
 uint32_t pairing_epoch_now(void);

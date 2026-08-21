@@ -1,17 +1,9 @@
-/* Persistent device enrolment, in flash bank 1.
+/**
+ * @file keystore.c
+ * @brief Persistent device enrolment in flash bank 1: log-structured, newest record wins.
  *
- * Log-structured: records are appended and never revised, and the newest record
- * for a device id wins. An H7 flash word can be programmed exactly once between
- * erases, so revising in place is not available even if it were desirable.
- *
- * The erase is what shapes everything else. H7's minimum is a whole 128 KB
- * sector, it stalls the bank the core is executing from, and it can take up to
- * 1.4 s. CM7 runs FreeRTOS and LwIP out of bank 1, so an in-service erase would
- * freeze the scheduler and drop every connection. The spare sector is therefore
- * erased at boot, before the scheduler starts, and the log switches to a sector
- * that is already erased. When both fill, the store refuses to write rather
- * than erasing - and the refusal is acted on by every caller, because a refusal
- * nothing acts on is decoration. */
+ * radio_devices_docs/open_hub/arch/keystore.md
+ */
 
 #include <string.h>
 
@@ -21,10 +13,8 @@
 #include "radio_slots.h"
 
 #define KS_MAGIC        0x534B484Fu   /* 'OHKS' little-endian */
-/* 4: fingerprint[32] -> pubkey[33] out of spare, for pair_v3's Z1 (ADR-0021).
- * Version-3 records are stepped over, not migrated: a fingerprint cannot be
- * turned back into a curve point, so every device is re-enrolled by hand. That
- * is the one-wayness working, not a migration that was skipped. */
+/* 4: fingerprint[32] -> pubkey[33] out of spare, for pair_v3's Z1. ADR-0021
+ * radio_devices_docs/open_hub/arch/keystore.md */
 #define KS_VERSION      4u
 
 #define KS_SECTOR_A     FLASH_SECTOR_6
@@ -36,10 +26,8 @@
 #define KS_RECORD_BYTES 128u
 #define KS_SLOTS        (KS_SECTOR_BYTES / KS_RECORD_BYTES)   /* 1024 */
 
-/* Three flash words exactly. Not "at most": a short record leaves filler that a
- * future field could quietly claim, and a long one is more programs than the
- * write path performs. This is the invariant that breaks if a field is added
- * carelessly, so it is the one asserted. */
+/* Three flash words exactly, not "at most".
+ * radio_devices_docs/open_hub/arch/keystore.md */
 _Static_assert(sizeof(ks_record_t) == KS_RECORD_BYTES,
                "ks_record_t must fill exactly four H7 flash words");
 _Static_assert(KS_RECORD_BYTES % KS_FLASH_WORD == 0,
@@ -59,9 +47,8 @@ static uint32_t    errors;
 static uint8_t     spare_erased;
 static uint8_t     exhausted;
 static uint8_t     ready;
-/* Carried out of scan() so ks_init can re-append them at the current version.
- * Separate from hub_key/net_key so a legacy record can never be served as a
- * current one without the rewrite actually having succeeded. */
+/* Carried out of scan() separately, so a legacy record is never served as current.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 static uint32_t    migrated;      /* key records carried across a format bump */
 static uint8_t     legacy_hub_key[KS_ROOT_KEY_BYTES];
 static uint8_t     legacy_hub_valid;
@@ -88,21 +75,11 @@ static uint32_t record_crc(const ks_record_t *r) {
     return crc32(r, offsetof(ks_record_t, crc));
 }
 
-/* Every type the store writes must be listed here, or scan() rejects the record
- * before the branch that caches it and that branch becomes dead code that reads
- * as working. KS_TYPE_NETKEY was missing: the network key was rejected at every
- * boot, regenerated, and written again - so a hub reboot silently re-keyed the
- * hop sequence for every device already paired, and each boot spent a slot of a
- * store that never erases. */
-/* Version 3's layout, for the two record types that never had a fingerprint.
- *
- * Growing fingerprint[32] to pubkey[33] shifted root_key by one byte for every
- * type, because all three share one struct - so a change only device records
- * use invalidated the hub's own keypair and the network hop key, neither of
- * which has a fingerprint in it. The store never erases, so those records are
- * still in flash and readable: the CRC covers the same bytes either way.
- *
- * Only root_key is translated. It is the only field HUBKEY and NETKEY use. */
+/* Every type the store writes must be listed here, or its cache branch is dead.
+ * radio_devices_docs/open_hub/arch/keystore.md */
+
+/* Version 3's layout; only root_key is translated.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 typedef struct ks_record_v3 {
     uint32_t magic;
     uint8_t  version, type, state, slot;
@@ -120,9 +97,8 @@ _Static_assert(offsetof(ks_record_v3_t, root_key) + 1u ==
                offsetof(ks_record_t, root_key),
                "the shim exists because root_key moved by exactly one byte");
 
-/* A key-bearing record this build cannot parse but a previous one wrote. Kept
- * apart from record_valid() so nothing downstream mistakes it for a usable
- * record - it is only ever read through the shim above. */
+/* A key record this build cannot parse, read only through the shim above.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 static int legacy_key_record(const ks_record_t *r) {
     return r->magic == KS_MAGIC && r->version == 3u &&
            (r->type == KS_TYPE_HUBKEY || r->type == KS_TYPE_NETKEY) &&
@@ -147,14 +123,10 @@ static int slot_erased(const void *p) {
     return 1;
 }
 
-/* There is deliberately no erase function here. CM7 fetches from bank 1 and
- * this store is in bank 1; erasing it hangs the core and leaves the sector with
- * uncorrectable ECC, which faults every subsequent boot. See ks_init(). Keeping
- * an unused one would leave a loaded gun for the next person to call. */
+/* There is deliberately no erase function here.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 
-/* Four flash words. A power loss between them leaves a record whose CRC fails,
- * which the scan skips - a torn record is indistinguishable from one that was
- * never written, and both are correct outcomes. */
+/* Four flash words; a power loss between them leaves a record the scan skips. */
 static uint8_t write_record(uint32_t addr, const ks_record_t *r) {
     const uint8_t *src = (const uint8_t *)r;
     HAL_StatusTypeDef st = HAL_OK;
@@ -180,15 +152,8 @@ static ks_record_t *cache_find(uint32_t dev_id) {
     return NULL;
 }
 
-/* Newest record per device id, and the append point.
- *
- * The append point is the first *erased* slot, never one past the last valid
- * record. Those differ whenever a slot holds something the scanner rejects: a
- * torn write, or - as happened here - records from an older format that the
- * version gate correctly refuses. Deriving the append point from valid records
- * alone aims the next write at occupied flash, and an H7 flash word cannot be
- * programmed twice, so every write fails from then on. The version gate worked
- * exactly as intended and the store was bricked anyway. */
+/* Newest record per device id, and the append point: the first erased slot.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 static void scan(void) {
     uint32_t best_seq = 0;
     uint32_t first_erased[2];
@@ -215,10 +180,8 @@ static void scan(void) {
                 break;              /* the log is written in order */
             }
             if (!record_valid(r)) {
-                /* A v3 hub or network key: readable through the shim, and the
-                 * only records whose loss would cost more than a re-enrolment.
-                 * Recorded, not cached as valid - ks_init re-appends them at
-                 * the current version once the scan knows where to write. */
+                /* Recorded, never cached as valid; ks_init re-appends them.
+                 * radio_devices_docs/open_hub/arch/keystore.md */
                 if (legacy_key_record(r)) {
                     const ks_record_v3_t *v3 = (const ks_record_v3_t *)r;
 
@@ -237,10 +200,8 @@ static void scan(void) {
                         legacy_net_valid = 1;
                     }
                 }
-                /* Our magic with someone else's version is a format change,
-                 * not a torn write. Worth telling apart: a torn record is one
-                 * slot to step over, a whole sector of the wrong stride is not
-                 * appendable at all. */
+                /* Our magic at someone else's version is a format change.
+                 * radio_devices_docs/open_hub/arch/keystore.md */
                 if (r->magic == KS_MAGIC && r->version != KS_VERSION)
                     stale_format++;
                 continue;
@@ -252,9 +213,8 @@ static void scan(void) {
                 found       = 1;
             }
 
-            /* The hub's own key is not a device and does not belong in a cache
-             * keyed by device id - dev_id is zero on that record, which is a
-             * value ks_enrol refuses precisely so it can never collide. */
+            /* The hub's own key is not a device; its dev_id is the refused zero.
+             * radio_devices_docs/open_hub/arch/keystore.md */
             if (r->type == KS_TYPE_HUBKEY) {
                 if (!hub_key_valid || (int32_t)(r->seq - hub_key.seq) > 0) {
                     hub_key = *r;
@@ -296,45 +256,13 @@ uint8_t ks_init(void) {
     scan();
 
 
-    /* Records of an older format are *stepped over*, not erased.
-     *
-     * Erasing them was the obvious move and it hung the core. CM7 executes from
-     * bank 1 and the store is in bank 1; a 128 KB sector erase there stalls the
-     * bank the erase loop itself is being fetched from, and CM7 never came back
-     * - the console was dead and even SWD memory reads stalled. CM4 gets away
-     * with the same pattern in bank 2 only because a single erase completes;
-     * two back to back here did not.
-     *
-     * Nothing needs erasing anyway. The append point is the first *erased*
-     * slot, so stale records are simply skipped and the next write lands past
-     * them. The cost is a handful of slots out of 2048, once, at a format
-     * change. That is cheaper than an erase this core cannot safely perform.
-     *
-     * The count is kept and reported, because "some slots here are unreadable"
-     * should be visible rather than inferred from a slot total that does not
-     * add up. */
+    /* Older formats are stepped over, never erased, and the count is reported.
+     * radio_devices_docs/open_hub/arch/keystore.md */
 
     spare = (active_addr == KS_ADDR_A) ? KS_ADDR_B : KS_ADDR_A;
 
-    /* The spare is *checked* and never erased.
-     *
-     * CM7 executes from bank 1 and this store is in bank 1. A 128 KB sector
-     * erase there hangs this core - demonstrated, not feared: a single erase
-     * issued from a FreeRTOS task never returned, the console died, and SWD
-     * memory reads stalled. Worse, the interrupted erase left the sector with
-     * uncorrectable ECC, so every subsequent boot bus-faulted inside scan()
-     * before the scheduler started. The board needed an external programmer
-     * (`-e 6 7`) to come back.
-     *
-     * CM4's equivalent in bank 2 does work and has been observed to recover a
-     * full log. Same code, different bank, different outcome - so this is a
-     * property of erasing the bank you fetch from, not of the design.
-     *
-     * The consequence is accepted rather than worked around: this store has
-     * 2048 records and cannot reclaim any. For 64 devices, at a few records per
-     * device lifetime, that is not a capacity anyone reaches. If it ever
-     * matters, the fix is an erase routine resident in ITCM with interrupts
-     * masked - not a boot-time erase from flash. */
+    /* The spare is checked and never erased: an erase in bank 1 hangs this core.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     spare_erased = 1;
     for (uint32_t i = 0; i < KS_SLOTS; i++) {
         if (!slot_erased((const void *)(spare + i * KS_RECORD_BYTES))) {
@@ -350,18 +278,8 @@ uint8_t ks_init(void) {
     return 0;
 }
 
-/* The recovered v3 hub private key, for the caller to *verify* before anything
- * is written. Reading is safe; writing is not.
- *
- * The CRC cannot police this. It covers the same bytes whichever offset the
- * shim reads, so a read one byte out yields 32 bytes that pass CRC, are the
- * right length, and are a perfectly valid P-256 scalar. Nothing inside this
- * store can tell a correct recovery from a plausible neighbour.
- *
- * And a wrong recovery is worse than the outage it fixes: this store never
- * erases, so the v3 record survives physically - but an appended v4 record is
- * the one the scanner then prefers. A misread does not fail, it overwrites a
- * truth that was still reachable. Raised by the device side. */
+/* The recovered v3 hub private key, for the caller to verify before writing.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 int ks_legacy_hub_key_get(uint8_t priv[KS_ROOT_KEY_BYTES]) {
     if (priv == NULL || !legacy_hub_valid)
         return -1;
@@ -369,13 +287,8 @@ int ks_legacy_hub_key_get(uint8_t priv[KS_ROOT_KEY_BYTES]) {
     return 0;
 }
 
-/* Writes the recovered records forward, and only the caller can know it is
- * safe: the witness is the hub's public key as a *device* holds it, which is
- * outside this store and cannot be forged by anything in it.
- *
- * Both records go together on purpose. The hub key is the one with an external
- * witness; verifying it proves the shim's offset, and the network key is read
- * through the same shim, so one comparison licenses both. */
+/* Writes the recovered records forward, both together, once a witness agrees.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 int ks_legacy_commit(void) {
     ks_record_t r;
     int done = 0;
@@ -420,12 +333,8 @@ static int append(const ks_record_t *src) {
 
     if (next_slot >= KS_SLOTS) {
         if (!spare_erased) {
-            /* Both sectors full, and unlike CM4's store a reboot does not
-             * recover this one - see ks_init() for why nothing here erases.
-             * Refusing is still the safe direction and callers act on it: an
-             * enrolment that silently did not persist is a device that pairs
-             * today and is a stranger after a reboot. Recovery is an external
-             * erase of sectors 6 and 7. */
+            /* Both sectors full; recovery is an external erase of 6 and 7.
+             * radio_devices_docs/open_hub/arch/keystore.md */
             errors++;
             exhausted = 1;
             return -1;
@@ -477,11 +386,11 @@ static int append(const ks_record_t *src) {
     return 0;
 }
 
-/* Lowest free slot. Assignment counts up from zero on purpose: the join region
- * overlays the tail of the uplink region, so unassigned slots are the ones it
- * displaces. See docs/radio/pairing.md. */
+/* Lowest free slot, counting up from zero. See radio_devices_docs/radio/pairing.md. */
 static int lowest_free_slot(uint32_t skip_dev_id, uint8_t *out) {
-    for (uint32_t s = 0; s < KS_MAX_DEVICES && s < RADIO_SLOT_COUNT; s++) {
+    /* A slot is no longer a device index; RADIO_DEVICE_MAX is the cap.
+     * radio_devices_docs/radio/tdma.md */
+    for (uint32_t s = 0; s < KS_MAX_DEVICES && s < RADIO_DEVICE_MAX; s++) {
         uint32_t i;
 
         for (i = 0; i < cached; i++) {
@@ -508,9 +417,7 @@ int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
 
     if (pubkey == NULL || slot_out == NULL)
         return -1;
-    /* Zero is not a device id. It is what an uninitialised variable holds, and
-     * an id that can be produced by forgetting to set one is an id that will
-     * eventually be set by forgetting. */
+    /* Zero is not a device id: it is what an uninitialised variable holds. */
     if (dev_id == 0u)
         return -2;
 
@@ -518,10 +425,8 @@ int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
     memset(&r, 0, sizeof(r));
 
     if (have != NULL && have->state != KS_STATE_DELETED) {
-        /* Re-enrolling: keep the slot and the transmit floor, drop everything
-         * scoped to the old key. The receive floor belongs to a key, not to a
-         * device - a floor left over from a previous pairing locks out the very
-         * device that just paired, silently and forever. */
+        /* Re-enrolling keeps the slot and the transmit floor, and drops the rest.
+         * radio_devices_docs/open_hub/arch/keystore.md */
         r = *have;
         r.rx_floor = 0;
         r.key_gen  = have->key_gen + 1u;
@@ -538,8 +443,7 @@ int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
 
     r.type  = KS_TYPE_DEVICE;
     r.state = KS_STATE_ENROLLED;
-    /* Stays zero until the key exchange sets it to the epoch the root key was
-     * agreed at. An enrolment carries no key, so there is no epoch to record. */
+    /* Zero until the key exchange sets it: an enrolment carries no key. */
     r.rotate_epoch = 0;
     memcpy(r.pubkey, pubkey, KS_PUBKEY_BYTES);
 
@@ -560,8 +464,7 @@ int ks_forget(uint32_t dev_id) {
     r = *have;
     r.type  = KS_TYPE_DEVICE;
     r.state = KS_STATE_DELETED;
-    /* The transmit floor survives a tombstone: carrying it forward only skips
-     * counter space, which is free, and skipping is the conservative direction. */
+    /* The transmit floor survives a tombstone: skipping counter space is free. */
     r.rx_floor = 0;
     r.key_gen  = have->key_gen + 1u;
     memset(r.root_key, 0, sizeof(r.root_key));
@@ -616,18 +519,16 @@ int ks_pair_complete(uint32_t dev_id, const uint8_t session_key[16],
 
     if (session_key == NULL || dev_nonce == NULL)
         return -1;
-    /* Only an enrolled device may complete a pairing. Without this the exchange
-     * would create its own record and the operator's out-of-band public key
-     * would have been optional all along - which is unauthenticated ECDH
-     * wearing the shape of an authenticated one. */
+    /* Only an enrolled device may complete a pairing.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (have == NULL || have->state == KS_STATE_DELETED)
         return -2;
 
     r = *have;
     r.state        = KS_STATE_PAIRED;
     r.rotate_epoch = rotate_epoch;
-    /* Scoped to the key, not to the device: a floor carried over from the
-     * previous pairing would lock out the device that just paired. */
+    /* Scoped to the key, never to the device.
+     * radio_devices_docs/radio/crypto/key-lifecycle.md */
     r.rx_floor     = 0;
     memcpy(r.session_key, session_key, 16);
     memcpy(r.last_nonce, dev_nonce, 8);
@@ -645,9 +546,7 @@ int ks_net_key_get(uint8_t key[16]) {
         return 0;
     }
 
-    /* Created on first use rather than at boot: a hub with no devices has no
-     * network to key, and a key written before the first pairing is a flash
-     * write nothing asked for. */
+    /* Created on first use: a hub with no devices has no network to key. */
     if (crypto_random(key, 16) != 0)
         return -1;
 
@@ -658,9 +557,8 @@ int ks_net_key_get(uint8_t key[16]) {
     memcpy(r.root_key, key, 16);
 
     if (append(&r) != 0) {
-        /* The caller must not hand out a key the store did not keep: every
-         * device paired under it would be lost at the next reboot, and the
-         * symptom is a network that hops apart after a power cut. */
+        /* Never hand out a key the store did not keep.
+         * radio_devices_docs/open_hub/arch/keystore.md */
         memset(key, 0, 16);
         return -4;
     }
@@ -679,16 +577,8 @@ int ks_hub_key_set(const uint8_t priv[32]) {
 
     if (priv == NULL)
         return -1;
-    /* Refusing is the whole point. Replacing this key orphans every device ever
-     * paired: each holds hub_static from provisioning, and a hub that cannot
-     * prove the matching private key fails Z1 and therefore every pairing it
-     * already has. There is no "regenerate" that is not a fleet re-provision.
-     *
-     * legacy_hub_valid is checked too, and that is not belt and braces: a
-     * format bump made hub_key_valid false for a key that was still in flash,
-     * which disarmed this guard exactly when it mattered most. "This build
-     * cannot read the record" and "there is no record" are opposite facts that
-     * both leave hub_key_valid clear, and only one of them may proceed. */
+    /* legacy_hub_valid too: absent and unreadable are opposite facts.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (hub_key_valid || legacy_hub_valid)
         return -2;
 

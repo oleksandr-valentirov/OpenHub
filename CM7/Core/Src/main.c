@@ -112,9 +112,7 @@ extern void CLI_Task(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-/* CubeMX drops an oscillator nothing in its modelled clock tree consumes, and a
- * timer's TI selection is not part of that model, so LSE is enabled by hand.
- * CM4 measures TIM2 against it; see docs/radio/timebase.md. */
+/* LSE by hand: CubeMX will not emit it. radio_devices_docs/open_hub/radio/timebase.md */
 static void LSE_Config(void)
 {
   RCC_OscInitTypeDef osc = {0};
@@ -123,8 +121,7 @@ static void LSE_Config(void)
   osc.LSEState = RCC_LSE_ON;
   osc.PLL.PLLState = RCC_PLL_NONE;   /* leave the running PLL alone */
 
-  /* Not fatal: without it the grid falls back to the nominal period, which the
-   * console reports as a zero ppm correction rather than a silent 4000. */
+  /* Not fatal: the grid falls back to the nominal period, and says so. */
   (void)HAL_RCC_OscConfig(&osc);
 }
 
@@ -176,8 +173,8 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 /* USER CODE BEGIN Boot_Mode_Sequence_2 */
-/* When system initialization is finished, Cortex-M7 will release Cortex-M4 by means of
-HSEM notification */
+/* CM4 is released here, once init is done.
+ * radio_devices_docs/open_hub/arch/dual-core.md */
 /*HW semaphore Clock enable*/
 __HAL_RCC_HSEM_CLK_ENABLE();
 /*Take HSEM */
@@ -203,11 +200,11 @@ Error_Handler();
   MX_UART4_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
-  /* Before the scheduler: recovery may erase a 128 KB sector, which stalls the
-     bank FreeRTOS and LwIP execute from for up to 1.4 s. */
+  /* Before the scheduler: recovery may stall the bank it executes from.
+   * radio_devices_docs/open_hub/arch/keystore.md */
   (void)ks_init();
-  /* Stamped before CM4 is released from HSEM_ID_0, so the far side never
-   * reads a ring that .shared_mem left holding whatever was there. */
+  /* Stamped before CM4 is released from HSEM_ID_0.
+   * radio_devices_docs/open_hub/arch/ipc.md */
   ipc_init();
 
   /* USER CODE END 2 */
@@ -363,8 +360,8 @@ static void MX_RNG_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RNG_Init 2 */
-  /* SEIS comes up latched on this part and the HAL never looks at it, so the
-   * generator is restarted and flushed before anything draws from it. */
+  /* SEIS comes up latched and the HAL never looks at it.
+   * radio_devices_docs/open_hub/security/entropy.md */
   (void)rng_init();
   /* USER CODE END RNG_Init 2 */
 
@@ -477,6 +474,9 @@ void StartDefaultTask(void *argument)
   HAL_HSEM_Release(HSEM_ID_0, 0);
   /* Activate HSEM notification for Cortex-M7 */
   HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+  /* Below the FreeRTOS syscall ceiling of 5, so the ISR may signal a task. */
+  HAL_NVIC_SetPriority(HSEM1_IRQn, 6, 0);
+  HAL_NVIC_EnableIRQ(HSEM1_IRQn);
 
   /* Infinite loop */
   for(;;)
@@ -593,8 +593,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* No reporting path: the console is a task and this runs from anywhere. */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

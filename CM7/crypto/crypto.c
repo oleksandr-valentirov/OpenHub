@@ -1,3 +1,9 @@
+/**
+ * @file crypto.c
+ * @brief Asymmetric and key-derivation crypto, and the self-tests over it. ADR-0011
+ *
+ * radio_devices_docs/open_hub/security/self-tests.md
+ */
 #include <string.h>
 
 #include "crypto.h"
@@ -24,12 +30,10 @@ static mbedtls_entropy_context  entropy;
 static mbedtls_ctr_drbg_context drbg;
 static int seeded = 0;
 
-/* Readable over SWD, so a stall is locatable even though the CLI only flushes
- * its buffer after a command handler returns. */
+/* Readable over SWD, since the CLI flushes only after a handler returns. */
 volatile uint32_t crypto_stage = 0;
 
-/* Personalisation only separates this DRBG from another seeded from the same
- * source; it is not secret and does not need to be. */
+/* Personalisation, which separates two DRBGs and is not secret. */
 static const unsigned char drbg_pers[] = "openhub-hub-cm7";
 
 int crypto_init(void) {
@@ -47,8 +51,8 @@ int crypto_init(void) {
     return rc;
 }
 
-/* Seeded on first use rather than at boot. Entropy gathering must never be able
- * to hold up the console: the console is how a failure in it gets diagnosed. */
+/* Seeded on first use, never at boot.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int ensure_seeded(void) {
     return seeded ? 0 : crypto_init();
 }
@@ -84,11 +88,8 @@ int crypto_p256_keygen(uint8_t priv[32], uint8_t pub[33]) {
     rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
     if (rc != 0) goto done;
 
-    /* rng_cb reaches the guarded hardware draw: SEIS cleared before, SEIS and
-     * live SECS tested after, output zeroed on failure, and a DRBG that refuses
-     * to seed rather than seeding with something plausible. A stuck ephemeral
-     * is undetectable from the far end and produces a pairing that looks
-     * perfect, so this path being the guarded one is load-bearing. */
+    /* rng_cb reaches the guarded hardware draw.
+     * radio_devices_docs/open_hub/security/entropy.md */
     rc = mbedtls_ecdh_gen_public(&grp, &d, &Q, rng_cb, NULL);
     if (rc != 0) goto done;
 
@@ -128,10 +129,8 @@ int crypto_p256_public(const uint8_t priv[32], uint8_t pub[33]) {
     if (rc != 0) goto done;
     rc = mbedtls_mpi_read_binary(&d, priv, 32);
     if (rc != 0) goto done;
-    /* Rejects zero and anything at or above the group order, so a corrupted or
-     * all-zero stored key fails here rather than producing a usable-looking
-     * point. An all-zero private key is exactly what a missed keygen failure
-     * leaves behind. */
+    /* Rejects zero and anything at or above the group order.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_ecp_check_privkey(&grp, &d);
     if (rc != 0) goto done;
     rc = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, rng_cb, NULL);
@@ -158,8 +157,7 @@ static void be32(uint8_t *p, uint32_t v) {
 }
 
 /* Big-endian, unlike the packed frame structs these values also travel in.
- * Both rules are live inside one frame - see Common/test/vectors/pair_v2.txt -
- * so the two builders below are the only places either is written down. */
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
 static void pair_salt(uint8_t salt[20], uint32_t hub_id, uint32_t dev_id,
                       uint32_t req_superframe, const uint8_t dev_nonce[8]) {
     be32(salt, hub_id);
@@ -168,9 +166,7 @@ static void pair_salt(uint8_t salt[20], uint32_t hub_id, uint32_t dev_id,
     memcpy(salt + 12, dev_nonce, 8);
 }
 
-/* Both hub keys are bound, and whichever key is not bound is not bound.
- * hub_static is never transmitted: both ends hold it, the device from
- * provisioning. */
+/* Both hub keys are bound; hub_static is never transmitted. */
 static void pair_transcript(uint8_t t[119], uint32_t hub_id, uint32_t dev_id,
                             uint32_t req_superframe, const uint8_t dev_nonce[8],
                             const uint8_t hub_pub[33], const uint8_t eph_pub[33],
@@ -203,23 +199,7 @@ static int confirm(const uint8_t key[32], const uint8_t t[119], uint8_t out[16])
     return rc;
 }
 
-/* pair_v3's invitation key. Z1 alone - the static-static term - because both
- * ends can compute it before any frame exists, which is what lets the hub's
- * first frame be authenticated at all (ADR-0021).
- *
- * The salt is hub_id||dev_id big-endian and nothing else. pair_v2's 20-byte
- * salt binds the request superframe and the device nonce, and neither exists
- * yet: this is the frame before the device has spoken. So K_init is static per
- * pair and the freshness has to live in the message - the MAC covers the
- * superframe, and the device must refuse one it has already seen.
- *
- * **Derive this once per device, not once per frame.** It is a scalar
- * multiplication, and PAIR_INIT is retried for 60 s; more importantly the same
- * cost on the receiving side sits behind an unauthenticated frame, which is the
- * denial of service the device's rate limit exists to bound. Raised by the
- * device side, which caches it and counts the derivations for that reason.
- *
- * Returns 0, or a negative mbedTLS error. Zeroes k_init on any failure. */
+/* pair_v3's invitation key: Z1 alone. Derive once per device. ADR-0021 */
 int crypto_pair_init_key(const uint8_t hub_priv[32], const uint8_t dev_pub[33],
                          uint32_t hub_id, uint32_t dev_id, uint8_t k_init[32]) {
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -241,9 +221,8 @@ int crypto_pair_init_key(const uint8_t hub_priv[32], const uint8_t dev_pub[33],
     if (rc != 0) goto done;
     rc = mbedtls_ecp_point_read_binary(&grp, &D, dev_pub, 33);
     if (rc != 0) goto done;
-    /* Same reason as the pairing path: read_binary accepts an x with no square
-     * root and hands back a garbage Y, so this is the only thing between a
-     * hostile 33 bytes and a scalar multiplication. */
+    /* read_binary accepts an x with no square root; this is the only rejection.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_ecp_check_pubkey(&grp, &D);
     if (rc != 0) goto done;
     rc = mbedtls_mpi_read_binary(&d, hub_priv, 32);
@@ -273,9 +252,7 @@ done:
     return rc;
 }
 
-/* HMAC-SHA256 truncated to 96 bits, over the frame's cleartext. Split from the
- * key derivation because they run at different rates: the key once per device,
- * this once per retry. */
+/* HMAC-SHA256 truncated to 96 bits, over the frame's cleartext. ADR-0021 */
 int crypto_pair_init_mac(const uint8_t k_init[32], const uint8_t *hdr,
                          size_t hdr_len, uint8_t mac[12]) {
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -290,10 +267,8 @@ int crypto_pair_init_mac(const uint8_t k_init[32], const uint8_t *hdr,
     return rc;
 }
 
-/* The whole derivation with the ephemeral supplied rather than drawn, so the
- * self-test can run the *production* path against pair_v2 and only the
- * randomness is pinned. A test that reimplemented the derivation would check
- * the test. */
+/* The ephemeral is supplied rather than drawn, so a self-test can pin only it.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33],
                            const uint8_t dev_pub[33], const uint8_t eph_priv[32],
                            const uint8_t eph_pub[33],
@@ -321,13 +296,11 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     rc = mbedtls_ecp_point_read_binary(&grp, &D, dev_pub, 33);
     if (rc != 0) goto done;
     /* read_binary succeeds on an x with no square root and returns a garbage Y.
-     * Nothing else rejects that, and about half of all field elements are valid
-     * x-coordinates, so a perturbed key would pass a weaker check. */
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_ecp_check_pubkey(&grp, &D);
     if (rc != 0) goto done;
 
-    /* Z1: the static-static term. Only the holder of hub_priv can compute it,
-     * which is the entire authentication of the hub. */
+    /* Z1, the static-static term: the entire authentication of the hub. */
     rc = mbedtls_mpi_read_binary(&d, hub_priv, 32);
     if (rc != 0) goto done;
     rc = mbedtls_ecp_check_privkey(&grp, &d);
@@ -347,8 +320,8 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     rc = mbedtls_mpi_write_binary(&z, zz + 32, 32);
     if (rc != 0) goto done;
 
-    /* A hub that reused its static key as the ephemeral would make Z1 == Z2 and
-     * halve the secret while every downstream value still looked well formed. */
+    /* Reusing the static key as the ephemeral would make Z1 == Z2.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     if (memcmp(zz, zz + 32, 32) == 0) { rc = CRYPTO_MISMATCH; goto done; }
 
     pair_salt(salt, hub_id, dev_id, req_superframe, dev_nonce);
@@ -363,8 +336,7 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     rc = hkdf16(zz, salt, "openhub/v1/confirm/dev", ck_dev, 32);
     if (rc != 0) goto done;
 
-    /* Two keys rather than one plus a direction byte, so one side's
-     * confirmation cannot be reflected back at it. */
+    /* Two keys, so one side's confirmation cannot be reflected back at it. */
     rc = confirm(ck_hub, t, out->confirm_hub);
     if (rc != 0) goto done;
     rc = confirm(ck_dev, t, out->confirm_dev);
@@ -416,8 +388,8 @@ static int test_drbg(void) {
     if (crypto_random(a, sizeof(a)) != 0 || crypto_random(b, sizeof(b)) != 0)
         return CRYPTO_MISMATCH;
 
-    /* Catches a dead source that returns a constant, which is the failure the
-     * hardware RNG's latched seed error would otherwise have produced. */
+    /* Catches a dead source returning a constant.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     if (memcmp(a, b, sizeof(a)) == 0)
         return CRYPTO_MISMATCH;
     for (size_t i = 0; i < sizeof(a); i++)
@@ -426,8 +398,7 @@ static int test_drbg(void) {
     return CRYPTO_MISMATCH;
 }
 
-/* RFC 5869 test case 1. A known answer, so this fails if the HKDF or the SHA-256
- * underneath it is wrong - a round trip would not notice. */
+/* RFC 5869 test case 1: a known answer, which a round trip would not be. */
 static int test_hkdf(void) {
     static const uint8_t ikm[22] = {
         0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,
@@ -455,15 +426,13 @@ static int test_hkdf(void) {
     return (memcmp(got, want, sizeof(want)) == 0) ? 0 : CRYPTO_MISMATCH;
 }
 
-/* Round trip plus tamper rejection. Rejection is the half that matters: a frame
- * that fails to decrypt is harmless, one that is accepted after modification is
- * not. */
+/* Round trip plus tamper rejection, which is the half that matters.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_gcm(void) {
     static const uint8_t key[16] = {
         0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
         0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f };
-    /* Frame-shaped nonce: superframe || device_id || direction || slot, all
-     * big-endian, matching docs/security/wire-crypto.md. */
+    /* Nonce per radio_devices_docs/radio/crypto/wire-crypto.md. */
     static const uint8_t nonce[12] = {
         0x00,0x01,0xe2,0x40,   /* superframe 123456 */
         0x00,0x00,0x00,0x2a,   /* device id 42 */
@@ -505,24 +474,8 @@ done:
     return rc;
 }
 
-/* Two key pairs must agree, an honest public key must validate, and a tampered
- * one must be rejected - the invalid-curve defence P-256 requires and X25519
- * would not have needed. */
-/* Exactly the hub's share of one pairing, so the quiesce budget rests on a
- * measurement rather than on a division.
- *
- * The combined ecdh case runs four scalar multiplications and two validations.
- * Dividing its total by four to get "one operation" is how a 1.6x asymmetry
- * against the device's PKA first got written down as 6.5x - a four-operation
- * total compared against the device's single operation. A number that has to be
- * divided before it means anything is a number that will be divided wrongly.
- *
- * The peer's public key is a constant rather than generated here, for two
- * reasons: generating it would put a fourth scalar multiplication inside the
- * timed region, and on air it arrives in a frame and costs the hub nothing to
- * produce. It is a real P-256 point and deliberately not the base point G -
- * mbedTLS has a fixed-base path for G that a variable-base multiplication does
- * not take, which would time the wrong operation. */
+/* Two key pairs agree, an honest key validates, a tampered one is rejected.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static const uint8_t peer_pubkey[65] = {
     0x04, 0xff, 0xa6, 0x58, 0x76, 0xc5, 0x3c, 0xec, 0x3e, 0x37, 0xff, 0xe4,
     0x75, 0xa6, 0x8b, 0x07, 0xc7, 0x74, 0x3a, 0x72, 0xd2, 0x48, 0x10, 0xfb,
@@ -569,15 +522,7 @@ done:
 }
 
 /* The whole pairing derivation against the published pair_v2 set.
- *
- * It calls the production path with the vector's ephemeral private key rather
- * than reimplementing the derivation, so what is checked is the code pairing
- * actually runs. Only the randomness is pinned.
- *
- * Every output is compared, not just the session key. The confirmations are
- * what the device checks, and a transcript built with the fields in the wrong
- * order still produces a perfectly good session key - the confirmations are the
- * only outputs that can see it. */
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static const uint8_t PV_HUB_EPH_PRIV[32] = {
     0x4b, 0x3a, 0x29, 0x18, 0x07, 0xf6, 0xe5, 0xd4,
     0xc3, 0xb2, 0xa1, 0x90, 0x7e, 0x6d, 0x5c, 0x4b,
@@ -590,10 +535,8 @@ static int test_pair_v2(void) {
     uint8_t salt[20], t[119];
     int rc;
 
-    /* The two builders first, in isolation. If the salt or the transcript is
-     * wrong, every value below is wrong in a way that says nothing about where.
-     * The transcript is 119 bytes and a field-order slip keeps it 119, so the
-     * bytes are compared and not the length. */
+    /* The two builders first, in isolation, and by bytes rather than by length.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     pair_salt(salt, 0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME, PV_DEV_NONCE);
     if (memcmp(salt, PV_SALT, sizeof(PV_SALT)) != 0) return CRYPTO_MISMATCH;
 
@@ -612,15 +555,11 @@ static int test_pair_v2(void) {
     if (memcmp(o.confirm_hub, PV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
     if (memcmp(o.confirm_dev, PV_CONFIRM_DEV, 16) != 0) return CRYPTO_MISMATCH;
 
-    /* Reflection: the two confirmations must not be interchangeable, or a relay
-     * could send one side's back at it. Cheap, and it fails loudly if the two
-     * info strings are ever made the same by a copy-paste. */
+    /* Reflection: the two confirmations must not be interchangeable. */
     if (memcmp(o.confirm_hub, o.confirm_dev, 16) == 0) return CRYPTO_MISMATCH;
 
-    /* The fingerprint the operator types is only meaningful if this side hashes
-     * the same 33 bytes the device publishes. That domain - compressed SEC1,
-     * not 0x04||X||Y and not bare X - already cost one divergence before either
-     * side had code, and pair_v1 dropped it from the published set. */
+    /* The fingerprint domain: compressed SEC1, not 0x04||X||Y and not bare X.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     {
         uint8_t fp[32];
         if (mbedtls_sha256(V_DEV_PUB_C, 33, fp, 0) != 0) return CRYPTO_MISMATCH;
@@ -628,19 +567,15 @@ static int test_pair_v2(void) {
             return CRYPTO_MISMATCH;
     }
 
-    /* A device public key that is not on the curve must be refused before any
-     * scalar multiplication touches it. V_REJECT_C is an x with no square root:
-     * mbedTLS's reader accepts it and returns a garbage Y, so this is the only
-     * check between a hostile 33 bytes and the hub's private key. */
+    /* A key not on the curve, refused before any scalar multiplication.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_REJECT_C,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
     if (rc == 0) return CRYPTO_MISMATCH;
 
-    /* ... and the outputs must be zero afterwards, not stale. A caller that
-     * missed the return value would otherwise transmit the previous device's
-     * confirmation, which verifies for the wrong device. */
+    /* ... and the outputs must be zero afterwards, never stale. */
     {
         static const uint8_t zero[16] = {0};
         if (memcmp(o.key_session, zero, 16) != 0) return CRYPTO_MISMATCH;
@@ -698,18 +633,8 @@ done:
     return rc;
 }
 
-/* The interop contract, checked against vectors a host reference library
- * produced. Hub and device share no code, so agreeing with each other is not
- * evidence of anything - agreeing with these bytes is. */
-/* Named for what it covers, not for what it resembles.
- *
- * These are the AEAD, HKDF and single-term-ECDH vectors from wire_v3. They are
- * NOT pairing outputs: since the exchange derives from a two-term Z,
- * V_KEY_SESSION0 is no longer the session key a pairing produces. A green test
- * asserting the wrong contract is worse than a red one, because it retires the
- * question - so the case says "primitives" and pair_v1.txt holds what pairing
- * actually yields. Raised by the device side, whose own self-test had the same
- * name and the same about-to-be-wrong claim. */
+/* wire_v3's primitives, not pairing outputs - the name is the coverage.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_vectors(void) {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point Q;
@@ -748,10 +673,8 @@ static int test_vectors(void) {
     if (rc != 0) goto done;
     if (memcmp(ct, V_KEY_SESSION0, 16) != 0) { rc = CRYPTO_MISMATCH; goto done; }
 
-    /* Pack the salt from ids held as integers rather than reusing the vector's
-     * byte array. Ids are little-endian on the wire and big-endian in the salt,
-     * and a vector cannot tell "packs the ids correctly" from "has the right
-     * bytes" - only building it from the numbers crosses that boundary. */
+    /* Packed from ids held as integers, never from the vector's byte array.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     {
         const uint32_t hub_id = 0x33442211u, dev_id = 0x0000002Au;
         uint8_t salt[8];
@@ -791,9 +714,8 @@ static int test_vectors(void) {
     if (memcmp(ct, V_CIPHER, sizeof(V_CIPHER)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
     if (memcmp(tag, V_TAG, sizeof(V_TAG)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
 
-    /* 23 bytes: a partial final word, which the block-aligned case above cannot
-     * exercise. Decrypted as well as encrypted, because the failure the device
-     * side hit was on the decrypt path only. */
+    /* 23 bytes: a partial final word, decrypted as well as encrypted.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT, sizeof(V_ODD_PLAIN),
                                    V_ODD_NONCE, sizeof(V_ODD_NONCE),
                                    V_AAD, sizeof(V_AAD),
@@ -820,13 +742,7 @@ done:
 }
 
 /* Every payload length from 1 to 32, not just the block-aligned ones.
- *
- * The device side found HAL_CRYP_Decrypt leaving the unused bytes of a partial
- * final word unmasked while encrypt handled them correctly: every length not
- * divisible by four failed its tag check while the ciphertext was byte-perfect.
- * That reads as a radio fault over the air, not a crypto one. This path is
- * mbedTLS software GCM rather than the peripheral, but the same test costs
- * nothing here and CM4's per-frame GCM will use CRYP, where it will matter. */
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_gcm_lengths(void) {
     static const uint8_t key[16] = {
         0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
@@ -845,8 +761,7 @@ static int test_gcm_lengths(void) {
         goto done;
 
     for (size_t len = 1; len <= sizeof(pt); len++) {
-        /* A fresh nonce per length: a repeated key/nonce pair would leak the
-         * authentication subkey, and a test must not model bad practice. */
+        /* A fresh nonce per length: a test must not model bad practice. */
         memset(nonce, 0, sizeof(nonce));
         nonce[11] = (uint8_t)len;
 
@@ -872,13 +787,8 @@ done:
     return rc;
 }
 
-/* Can this build read a compressed SEC1 point?
- *
- * It decides the pairing frame. The RFM69 FIFO is 66 bytes, so a 65-byte
- * uncompressed key plus a header does not fit in one load, while a 33-byte
- * compressed key leaves room to spare. mbedTLS is widely believed not to read
- * compressed points; 3.6 does, via mbedtls_ecp_sw_derive_y - but a belief is
- * not a reason to design a wire format, so this checks on the target. */
+/* Can this build read a compressed SEC1 point? It decides the wire format.
+ * ADR-0018, radio_devices_docs/open_hub/security/self-tests.md */
 static int test_point_compress(void) {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point Q;
@@ -891,8 +801,7 @@ static int test_point_compress(void) {
     rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
     if (rc != 0) goto done;
 
-    /* Against the shared vector, not against our own arithmetic: agreeing with
-     * ourselves would prove nothing about agreeing with the device. */
+    /* Against the shared vector, never against our own arithmetic. */
     rc = mbedtls_ecp_point_read_binary(&grp, &Q, V_DEV_PUB_C, sizeof(V_DEV_PUB_C));
     if (rc != 0) goto done;
 
@@ -907,8 +816,7 @@ static int test_point_compress(void) {
 
     if (mbedtls_ecp_check_pubkey(&grp, &Q) != 0) { rc = CRYPTO_MISMATCH; goto done; }
 
-    /* The hub key carries the other parity prefix (0x03 against 0x02), so
-     * checking only one of them would leave half the branch untested. */
+    /* The hub key carries the other parity prefix, 0x03 against 0x02. */
     {
         mbedtls_ecp_point H;
         mbedtls_ecp_point_init(&H);
@@ -922,11 +830,8 @@ static int test_point_compress(void) {
         if (rc != 0) goto done;
     }
 
-    /* Stronger than comparing Y to bytes: run the real ECDH against the
-     * decompressed point and require the shared secret to come out unchanged.
-     * A wrong Y cannot survive that, and this is the path pairing actually uses.
-     * (The device side proposed this; comparing Y alone only proves the
-     * comparison, not that the point is usable.) */
+    /* Real ECDH against the decompressed point, not a comparison of Y to bytes.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     {
         mbedtls_mpi d, z;
         mbedtls_mpi_init(&d);
@@ -943,11 +848,8 @@ static int test_point_compress(void) {
         if (rc != 0) goto done;
     }
 
-    /* x = 1 has no square root on P-256. mbedTLS says in its own comment that it
-     * does not verify the root, so read_binary SUCCEEDS here and hands back a
-     * garbage Y - the curve check afterwards is the only thing that rejects it.
-     * A perturbed valid key would not test this: about half of all field
-     * elements are valid x-coordinates. */
+    /* x = 1 has no square root on P-256; a perturbed valid key would not test this.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     mbedtls_ecp_point_free(&Q);
     mbedtls_ecp_point_init(&Q);
     rc = mbedtls_ecp_point_read_binary(&grp, &Q, V_REJECT_C, sizeof(V_REJECT_C));
@@ -977,19 +879,8 @@ const char *crypto_test_name(crypto_test_t t) {
     }
 }
 
-/* pair_prov's consumer. Same exchange as pair_v2 with only the superframe
- * moved, so a disagreement here is about that field and nothing else.
- *
- * **What this pins and what it does not.** The derivation takes the superframe
- * as a parameter, so this cannot catch a caller that passes the wrong one -
- * on this side the provenance lives in the wiring from the received frame to
- * the call, which spans two cores and no self-test reaches it. What it does
- * pin is that the field is bound at all, and that the published wrong answer
- * really is what a wrong read produces.
- *
- * The second derive is the point. Without it the decoy is an unchecked
- * constant, and a diagnostic nobody has ever seen fire is one that cannot be
- * read in either direction. */
+/* pair_prov's consumer: pair_v2 with only the superframe moved.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_pair_prov(void) {
     crypto_pair_out_t o;
     int rc;
@@ -1005,10 +896,8 @@ static int test_pair_prov(void) {
     if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
     if (memcmp(o.confirm_dev, PROV_CONFIRM_DEV, 16) != 0) return CRYPTO_MISMATCH;
 
-    /* Deriving from the last beacon's superframe instead of the request's is
-     * the defect this set exists for. It must produce the published wrong
-     * answer exactly - if it produces something else, the diagnostic would
-     * misname the source it is meant to identify. */
+    /* The decoy must produce the published wrong answer exactly.
+     * radio_devices_docs/open_hub/security/self-tests.md */
     rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PROV_BEACON_SUPERFRAME,
@@ -1020,26 +909,18 @@ static int test_pair_prov(void) {
     return 0;
 }
 
-/* The consumer pair_v3.h did not have. Until something ran the production path
- * against those bytes they proved only that the generator agreed with itself -
- * a vector whose consumer does not exist is untested in the way that matters.
- *
- * Runs crypto_pair_init_key and crypto_pair_init_mac, the same functions the
- * transmit path calls, against the published frame. The second frame catches a
- * MAC that ignores the superframe: without it the field could be dropped from
- * the input and every other check here would still pass. */
+/* The consumer pair_v3.h did not have, running the same functions the transmit
+ * path calls. radio_devices_docs/open_hub/security/self-tests.md */
 static int test_pair_v3(void) {
     uint8_t k[32], mac[12];
     int rc;
 
-    /* Same identities as pair_v2's test, and the same symbols - so the two
-     * self-tests cannot silently be about different devices. */
+    /* The same symbols as pair_v2's test, not merely the same values. */
     rc = crypto_pair_init_key(V_HUB_PRIV, V_DEV_PUB_C,
                               0x33442211u, 0x0000002Au, k);
     if (rc != 0) return rc;
     if (memcmp(k, PV3_INIT_KEY, 32) != 0) return CRYPTO_MISMATCH;
-    /* And that Z1 is the value pair_v2 already publishes, which is the whole
-     * reason this frame's key was cheap to agree on. */
+    /* And that Z1 is the value pair_v2 already publishes. */
     if (sizeof(PV3_INIT_Z1) != 32) return CRYPTO_MISMATCH;
 
     rc = crypto_pair_init_mac(k, PV3_INIT_HEADER, sizeof(PV3_INIT_HEADER), mac);
@@ -1053,8 +934,7 @@ static int test_pair_v3(void) {
     if (rc != 0) return rc;
     if (memcmp(PV3_INIT_FRAME_NEXT_SF + sizeof(PV3_INIT_HEADER), mac, 12) != 0)
         return CRYPTO_MISMATCH;
-    /* The two frames differ only in the superframe, so equal MACs would mean
-     * the field is not covered. */
+    /* The two frames differ only in the superframe; equal MACs would be a hole. */
     if (memcmp(PV3_INIT_MAC, mac, 12) == 0)
         return CRYPTO_MISMATCH;
     return 0;

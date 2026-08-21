@@ -1,3 +1,9 @@
+/**
+ * @file newlib_stubs.c
+ * @brief Newlib's I/O hooks, kept so nothing links against a missing symbol.
+ *
+ * The console does not go through stdio: _read polls the same peripheral
+ */
 #include "main.h"
 #include "cmsis_os.h"
 #include "FreeRTOS.h"
@@ -33,10 +39,8 @@ int getchar(void) {
     return c;
 }
 
-/* 
- * Defining malloc/free should overwrite the standard versions provided by the compiler.
- * https://community.st.com/t5/stm32-mcus-embedded-software/lwip-rand-uses-newlib-rand-and-fails/m-p/720026/highlight/true#M51347
- */
+/* Defining malloc/free overrides the compiler's, but not calloc.
+ * radio_devices_docs/open_hub/security/crypto-architecture.md */
 void *malloc(size_t size) {
     /* Call the FreeRTOS version of malloc. */
     return pvPortMalloc(size);

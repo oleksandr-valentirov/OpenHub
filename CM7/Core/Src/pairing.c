@@ -1,18 +1,15 @@
-/* The hub's half of the key exchange.
+/**
+ * @file pairing.c
+ * @brief The hub's half of the key exchange, one at a time.
  *
- * It lives on CM7 because P-256 does: a scalar multiplication is 167 ms of
- * software here and there is no room for it in a radio slot (ADR-0011). CM4
- * owns the frames and the schedule and forwards two events across the mailbox;
- * everything between them is arithmetic and flash.
- *
- * One exchange at a time. Sixty-four devices share one join channel and one
- * quiesce, so a second concurrent pairing has nowhere to happen - and a
- * "pending" array would be state that only ever holds one entry while implying
- * it might hold more. */
+ * radio_devices_docs/open_hub/radio/pairing.md
+ */
 
 #include <string.h>
 
 #include "cmsis_os.h"
+#include "main.h"
+#include "hsem_table.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -29,9 +26,7 @@
 
 #define PAIR_POLL_MS  20u
 
-/* Long enough for a device to compute two scalar multiplications and answer,
- * short enough that a device that walked away does not hold the slot until the
- * next reboot. The quiesce it runs inside is 8 s. */
+/* Long enough for two scalar multiplications, short enough to free the slot. */
 #define PAIR_PENDING_MS  12000u
 
 static uint8_t hub_pub[33];
@@ -47,18 +42,15 @@ static struct {
 
 static pairing_stats_t stats;
 
-/* The last transcript the live derive actually hashed, kept past the exchange
- * it belongs to. A confirm mismatch is a disagreement about these bytes, and
- * the only thing that settles it is both ends printing the same 119. */
+/* The transcript the live derive hashed, kept past its exchange.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static uint8_t  last_t[119];
 static uint8_t  last_t_valid;
 static uint32_t last_t_dev;
 static uint32_t last_t_sf;
 
-/* The hub's own public key. Recovered once from the stored private half rather
- * than kept in flash: it is one scalar multiplication and the store then holds
- * 32 bytes instead of 65. Cached because 167 ms inside the exchange would be
- * spent for nothing on every pairing after the first. */
+/* Recovered once from the stored private half, then cached.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static int ensure_hub_pub(const uint8_t priv[32]) {
     if (hub_pub_ready)
         return 0;
@@ -68,8 +60,7 @@ static int ensure_hub_pub(const uint8_t priv[32]) {
     return 0;
 }
 
-/* Constant-time. A confirmation compared with memcmp leaks where it first
- * differs, and an attacker who can retry learns it a byte at a time. */
+/* Constant-time: memcmp leaks where it first differs. */
 static int ct_equal(const uint8_t *a, const uint8_t *b, size_t n) {
     uint8_t d = 0;
 
@@ -105,44 +96,31 @@ static void serve_pair_req(const ipc_msg_t *m) {
     }
     memcpy(&e, m->payload, sizeof(e));
 
-    /* Enrolment is what authenticates this exchange. Without a record there is
-     * no public key to check against, and ECDH with an unknown key is
-     * anonymous ECDH wearing the shape of an authenticated one. */
+    /* Enrolment is what authenticates this exchange.
+     * radio_devices_docs/open_hub/radio/pairing.md */
     rec = ks_find(e.dev_id);
     if (rec == NULL || rec->state == KS_STATE_DELETED) {
         stats.not_enrolled++;
         goto refuse;
     }
 
-    /* An all-zero nonce is the unseeded-RNG signature and nothing more: an RNG
-     * stuck at any other constant walks straight through it. The repeat check
-     * below is the one that covers the general case. */
+    /* The unseeded-RNG signature only; the repeat check below is the general one. */
     if (nonce_is_zero(e.dev_nonce)) {
         stats.zero_nonce++;
         goto refuse;
     }
-    /* A nonce this device has already used. Catches every stuck-RNG mode, and
-     * refuses a replayed PAIR_REQ as a side effect - which is the attack the
-     * nonce was added for. */
+    /* A nonce this device has already used: every stuck-RNG mode, and replay. */
     if (rec->state == KS_STATE_PAIRED &&
         memcmp(rec->last_nonce, e.dev_nonce, 8) == 0) {
         stats.repeat_nonce++;
         goto refuse;
     }
 
-    /* The operator's out-of-band step, finally spent. Since ADR-0021 the record
-     * holds the key itself, so this compares points rather than hashes of them:
-     * cheaper, and it no longer depends on both sides agreeing which domain was
-     * hashed. That agreement was a real hazard - the domain is the 33-byte
-     * compressed point, not 0x04||X||Y and not bare X, and a wrong choice
-     * enrolled cleanly and then failed authentication forever, which is
-     * indistinguishable from the attack this check exists to detect.
-     *
-     * Still constant time, and still before any curve work. */
+    /* Points, not hashes of them, constant time and before any curve work.
+     * radio_devices_docs/open_hub/radio/pairing.md */
     if (!ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
         stats.bad_fingerprint++;
-        /* Reported as the fingerprint of what arrived, because that is the
-         * value the operator can compare against what the device printed. */
+        /* The fingerprint of what arrived, which is what the operator can compare. */
         if (mbedtls_sha256(e.pubkey, sizeof(e.pubkey), fp, 0) == 0)
             memcpy(stats.last_fp, fp, sizeof(stats.last_fp));
         memcpy(stats.last_pubkey, e.pubkey, sizeof(stats.last_pubkey));
@@ -166,8 +144,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
     }
     mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
 
-    /* Recorded from the value passed, not re-read from anywhere: the question
-     * this answers is which superframe reached the transcript. */
+    /* From the value passed, never re-read: which superframe reached the transcript. */
     memcpy(last_t, pending.out.transcript, sizeof(last_t));
     last_t_dev   = e.dev_id;
     last_t_sf    = e.superframe;
@@ -185,8 +162,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
     return;
 
 refuse:
-    /* Always answer. CM4 is waiting on this sequence number and a silent
-     * refusal costs it the whole quiesce rather than one frame. */
+    /* Always answer: a silent refusal costs CM4 the whole quiesce. */
     (void)ipc_send_event_reply(m, status, NULL, 0);
 }
 
@@ -208,9 +184,8 @@ static void serve_pair_conf(const ipc_msg_t *m) {
         goto refuse;
     }
     if (!ct_equal(e.confirm, pending.out.confirm_dev, sizeof(e.confirm))) {
-        /* The device did not derive the same secret. Dropping the pending state
-         * rather than allowing a retry under the same ephemeral: a confirmation
-         * that can be attempted repeatedly against one key is an oracle. */
+        /* Dropped, never retried under the same ephemeral: a retry is an oracle.
+         * radio_devices_docs/open_hub/radio/pairing.md */
         stats.bad_confirm++;
         drop_pending();
         goto refuse;
@@ -223,9 +198,8 @@ static void serve_pair_conf(const ipc_msg_t *m) {
     }
 
     memset(&k, 0, sizeof(k));
-    /* The network hop key, identical for every device, created on first use.
-     * Fetched before the record is written: a device told a key the store did
-     * not keep would hop apart from the network at the next reboot. */
+    /* Fetched before the record is written, never after.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (ks_net_key_get(k.hop_key) != 0) {
         stats.errors++;
         status = IPC_ST_RADIO_ERR;
@@ -255,9 +229,8 @@ refuse:
     (void)ipc_send_event_reply(m, status, NULL, 0);
 }
 
-/* Replays the store into a freshly booted CM4. Without it a paired device is
- * unreachable after any hub reset: the keys live in CM7's flash and the radio
- * core has none of them. */
+/* Replays the store into a freshly booted CM4.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static void install_paired_devices(void) {
     ipc_msg_t reply;
     uint8_t net_key[16];
@@ -265,8 +238,7 @@ static void install_paired_devices(void) {
 
     if (ks_count() == 0u)
         return;
-    /* Only fetch the network key if something is actually paired - creating one
-     * here would be a flash write on every boot of a hub with no devices. */
+    /* Only if something is paired: creating one is a flash write. */
     if (ks_net_key_get(net_key) != 0) {
         stats.errors++;
         return;
@@ -317,10 +289,7 @@ uint8_t pairing_hub_pubkey(uint8_t pub[33]) {
 }
 
 /* pair_v3's invitation, built here and keyed by CM4.
- *
- * The split is forced: CM4 has no SHA-256 and this MAC is HMAC-SHA256, so the
- * crypto stays on the side with the vectors and the self-tests and CM4 keys 28
- * opaque bytes at a superframe it is told. */
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static struct {
     uint8_t  armed;
     uint8_t  k_init[32];
@@ -351,10 +320,8 @@ void pairing_disarm_init(void) {
     mbedtls_platform_zeroize(pi.k_init, sizeof(pi.k_init));
 }
 
-/* Once per window, never per frame. It is a scalar multiplication, and the
- * same cost on the device sits behind an unauthenticated frame - which is the
- * denial of service its rate limit exists to bound. z1_derivations is reported
- * because "once" is a claim that should be measured rather than asserted. */
+/* Once per window, never per frame, and z1_derivations measures the claim.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static void pair_init_derive(void) {
     const ks_record_t *rec;
     uint8_t hub_priv[32];
@@ -387,11 +354,7 @@ static void pair_init_derive(void) {
 }
 
 /* Builds the next invitation and hands it to CM4 ahead of its superframe.
- *
- * The target is chosen with lead: CM4 drops a frame whose superframe has
- * already passed rather than keying it late, because the device aligns its
- * counter from that field and a late one is wrong by exactly the delay while
- * looking like a good invitation. */
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static void pair_init_service(void) {
     ipc_hop_at_t h;
     ipc_pair_init_t msg;
@@ -414,15 +377,8 @@ static void pair_init_service(void) {
     memcpy(&h, reply.payload, sizeof(h));
     now = h.superframe;
 
-    /* One frame in flight at a time. Without this the target is recomputed
-     * every poll from `now + 2` rounded up, so it steps forward a whole cadence
-     * before the grid reaches the previous one and CM4's pending frame is
-     * replaced perpetually - 2 given, 0 sent, and `missed` stays 0 because the
-     * target was never left behind, it was always ahead.
-     *
-     * Strictly greater, not >=: CM4 keys at join_offset, late in the superframe,
-     * so replacing on equality would displace the frame during the very
-     * superframe it was queued for. */
+    /* One frame in flight, and strictly greater rather than >=.
+     * radio_devices_docs/open_hub/radio/pairing.md */
     if (pi.last_target != 0u && (int32_t)(now - pi.last_target) <= 0)
         return;
 
@@ -430,10 +386,8 @@ static void pair_init_service(void) {
     target = now + 2u;
     target += (RADIO_PAIR_INIT_EVERY - (target % RADIO_PAIR_INIT_EVERY))
               % RADIO_PAIR_INIT_EVERY;
-    /* Guard the *build*, not the push. Keying it to push success rebuilt and
-     * re-MACed on every 20 ms poll for as long as the push kept failing - 417
-     * HMACs in twelve seconds, which is a busy loop wearing the shape of a
-     * retry. A failed push is retried on the next target, not immediately. */
+    /* Guard the build, not the push.
+     * radio_devices_docs/open_hub/radio/pairing.md */
     if (target == pi.last_target)
         return;
     pi.last_target = target;
@@ -466,13 +420,68 @@ static void pair_init_service(void) {
     pi_stats.last_superframe = target;
 }
 
+/* The poll stays as the fallback: a dead doorbell must not be a wedge. */
+static osSemaphoreId_t doorbell_sem;
+static uint32_t doorbell_isr, wake_timeout;
+
+/* Re-armed here: one notification is consumed by the interrupt that delivers it. */
+void HAL_HSEM_FreeCallback(uint32_t SemMask) {
+    if ((SemMask & __HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7)) == 0u)
+        return;
+    doorbell_isr++;
+    /* The NVIC line is enabled from another task; the semaphore may not exist. */
+    if (doorbell_sem != NULL)
+        (void)osSemaphoreRelease(doorbell_sem);
+    HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
+}
+
+uint32_t pairing_doorbells(uint32_t *timeouts) {
+    if (timeouts != NULL)
+        *timeouts = wake_timeout;
+    return doorbell_isr;
+}
+
+/* Counted here, so nothing has to infer arrivals from a poll. ROADMAP item 2 */
+static struct {
+    uint32_t seen;
+    uint32_t short_payload;    /* an event too small to be the report it claims */
+    uint32_t last_tick;        /* when this core handled it, in its own clock */
+    ipc_device_report_t last;
+} up_evt;
+
+/* Answered even when refused: the reply is what times the hub half.
+ * ROADMAP item 2 */
+static void serve_uplink(const ipc_msg_t *m) {
+    if (m->len < sizeof(up_evt.last)) {
+        up_evt.short_payload++;
+        (void)ipc_send_event_reply(m, IPC_ST_BAD_ARG, NULL, 0);
+        return;
+    }
+    memcpy(&up_evt.last, m->payload, sizeof(up_evt.last));
+    up_evt.last_tick = osKernelGetTickCount();
+    up_evt.seen++;
+    /* Sent after the handling, never before: it is the handling it reports. */
+    (void)ipc_send_event_reply(m, IPC_ST_OK, NULL, 0);
+}
+
+uint32_t pairing_uplink_events(uint32_t *short_payload, uint32_t *last_tick,
+                               ipc_device_report_t *last) {
+    if (short_payload != NULL)
+        *short_payload = up_evt.short_payload;
+    if (last_tick != NULL)
+        *last_tick = up_evt.last_tick;
+    if (last != NULL)
+        *last = up_evt.last;
+    return up_evt.seen;
+}
+
 void PairingTask(void *argument) {
     ipc_msg_t m;
 
     (void)argument;
-    /* CM4 is released from HSEM_ID_0 by defaultTask once LwIP is up, and it
-     * then spends a superframe bringing the radio up. Nothing here is urgent
-     * and a request sent into a core that is not listening is a lost slot. */
+    doorbell_sem = osSemaphoreNew(1, 0, NULL);
+    /* CM4 is not listening until LwIP is up and its radio has come up.
+     * radio_devices_docs/open_hub/radio/pairing.md */
     osDelay(3000);
     install_paired_devices();
 
@@ -481,15 +490,15 @@ void PairingTask(void *argument) {
             switch (m.type) {
             case IPC_EVT_PAIR_REQ:  serve_pair_req(&m);  break;
             case IPC_EVT_PAIR_CONF: serve_pair_conf(&m); break;
+            case IPC_EVT_UPLINK:    serve_uplink(&m);    break;
             default:
                 (void)ipc_send_event_reply(&m, IPC_ST_UNKNOWN_REQ, NULL, 0);
                 break;
             }
         }
 
-        /* A device that started an exchange and never confirmed must not hold
-         * the derived key until the next reboot. Dropping it is also what makes
-         * "one exchange at a time" safe rather than a way to be wedged. */
+        /* The timeout is what makes "one at a time" safe rather than wedged.
+         * radio_devices_docs/open_hub/radio/pairing.md */
         if (pending.active &&
             (uint32_t)(osKernelGetTickCount() - pending.started_ms) > PAIR_PENDING_MS) {
             stats.timed_out++;
@@ -498,14 +507,16 @@ void PairingTask(void *argument) {
 
         pair_init_service();
 
-        osDelay(PAIR_POLL_MS);
+        /* Woken by the doorbell, or by the timeout when it does not come. */
+        if (doorbell_sem == NULL)
+            osDelay(PAIR_POLL_MS);
+        else if (osSemaphoreAcquire(doorbell_sem, PAIR_POLL_MS) != osOK)
+            wake_timeout++;
     }
 }
 
-/* Granted at pairing rather than compiled into the device, so bench work can
- * ask for a report every superframe without every device in the field doing
- * the same. 13.44 ms of air per report: every superframe is 0.672%, and every
- * eighth is 0.084%. */
+/* Granted at pairing, not compiled into the device.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 static uint8_t report_every = RADIO_REPORT_EVERY_DEFAULT;
 
 uint8_t pairing_report_every(void) {
@@ -516,9 +527,8 @@ void pairing_set_report_every(uint8_t n) {
     report_every = (n == 0u) ? 1u : n;
 }
 
-/* The epoch a key agreed now belongs to. CM4 owns the counter, so this asks
- * for it rather than keeping a second copy that could disagree - and a wrong
- * epoch is a key schedule the two ends walk apart on, silently. */
+/* The epoch a key agreed now belongs to, asked of CM4 rather than kept twice.
+ * radio_devices_docs/open_hub/radio/pairing.md */
 uint32_t pairing_epoch_now(void) {
     ipc_msg_t reply;
     ipc_timing_t t;

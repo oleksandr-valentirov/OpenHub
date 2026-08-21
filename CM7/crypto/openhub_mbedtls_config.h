@@ -1,20 +1,11 @@
 #pragma once
 
-/* mbedTLS build for the hub's CM7 core.
- *
- * Scope for now is the radio's crypto: P-256 ECDH at pairing, HKDF-SHA256 for
- * key derivation and the daily ratchet, AES-128-GCM for frames. TLS for Ethernet
- * lands later and only adds to this file - see docs/network/tls.md.
- *
- * Asymmetric work runs here rather than on CM4 because a software P-256 scalar
- * multiplication is tens of milliseconds and would blow a TDMA slot. */
+/* mbedTLS for CM7: radio crypto now, TLS later. radio_devices_docs/open_hub/security/ */
 
 /* --- platform ---------------------------------------------------------- */
 #include <stddef.h>
 
-/* Pinned to the FreeRTOS heap. newlib_stubs.c overrides malloc/free but not
- * calloc, so the default pairing would allocate from one heap and free into
- * another - see CM7/crypto/mbedtls_alloc.c. */
+/* Pinned to the FreeRTOS heap; see CM7/crypto/mbedtls_alloc.c. */
 void *openhub_calloc(size_t n, size_t size);
 void  openhub_free(void *p);
 #define MBEDTLS_PLATFORM_CALLOC_MACRO  openhub_calloc
@@ -25,9 +16,7 @@ void  openhub_free(void *p);
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_MEMORY
 
-/* Entropy comes from the guarded RNG service, never from the HAL directly:
- * on this part the HAL cannot report a seed error at all. See CM7/crypto/entropy_hw.c
- * and docs/security/entropy.md. */
+/* Entropy from the guarded RNG service, not the HAL. radio_devices_docs/open_hub/security/entropy.md */
 #define MBEDTLS_ENTROPY_HARDWARE_ALT
 
 /* --- random ------------------------------------------------------------ */
@@ -49,12 +38,12 @@ void  openhub_free(void *p);
 #define MBEDTLS_BIGNUM_C
 #define MBEDTLS_ECP_C
 #define MBEDTLS_ECDH_C
-/* P-256 only. The device side accelerates it in PKA hardware and has no
- * accelerator for anything else - see docs/decisions/0010-p256-over-x25519.md. */
+/* P-256 only. ADR-0010 */
 #define MBEDTLS_ECP_DP_SECP256R1_ENABLED
 
 /* --- diagnostics ------------------------------------------------------- */
-/* Self-tests are the only on-target check available while there is no device to
- * talk to; the `crypto` console command runs them. */
+
+/* Self-tests, run by the `crypto` console command.
+ * radio_devices_docs/open_hub/security/self-tests.md */
 #define MBEDTLS_SELF_TEST
 #define MBEDTLS_ERROR_C

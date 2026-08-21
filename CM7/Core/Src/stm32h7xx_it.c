@@ -190,4 +190,10 @@ void ETH_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+/* HSEM is not an .ioc IP here, so its vector is user code. ROADMAP item 2 */
+void HSEM1_IRQHandler(void)
+{
+  HAL_HSEM_IRQHandler();
+}
+
 /* USER CODE END 1 */

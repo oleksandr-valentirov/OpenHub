@@ -1,3 +1,9 @@
+/**
+ * @file cli.c
+ * @brief The console, which is how almost every measurement in these sources was taken.
+ *
+ * radio_devices_docs/open_hub/cli.md
+ */
 /* includes */
 #include "cmsis_os.h"
 #include "FreeRTOS.h"
@@ -49,7 +55,7 @@ typedef int (*cli_handler_t)(cli_data_t *cli, int argc, char **argv);
 
 typedef struct cli_cmd {
     const char   *name;
-    uint8_t       min_args;  /* arguments after the name */
+    uint8_t       min_args;  /**< arguments after the name */
     uint8_t       max_args;
     cli_handler_t handler;
     const char   *args;
@@ -61,9 +67,8 @@ extern struct netif gnetif;   /* defined in lwip.c */
 static QueueHandle_t cli_rx_queue;
 static StaticQueue_t cli_rx_queue_cb;
 static uint8_t cli_rx_queue_storage[CLI_RX_QUEUE_LEN];
-/* Serialises CM7's requesters. The ring holds several messages, but a caller
- * waiting on its own sequence number must not have another thread drain the
- * reply out from under it. */
+/* Serialises CM7's requesters across the whole transaction.
+ * radio_devices_docs/open_hub/arch/ipc.md */
 static ipc_msg_t   rfm_reply;
 
 /* static functions */
@@ -89,7 +94,7 @@ static const cli_cmd_t commands[] = {
     {"ping",    1, 1, cmd_ping,    "<ip addr>",              "send ping message"},
     {"cfg",     1, 1, cmd_cfg,     "<save | load>",          "config subcommand"},
     {"device",  1, 3, cmd_device,  "<add|window|remove|list|pair|...>","devices and the radio"},
-    {"devices", 0, 1, cmd_devices, "[rate <n>]",             "paired devices and their link"},
+    {"devices", 0, 4, cmd_devices, "[rate <n> | cmd <dev_id> ...]",  "paired devices and their link"},
     {"vectors", 0, 0, cmd_vectors, "",                       "vector sets each core was built against"},
     {"lwip",    0, 0, cmd_lwip,    "",                       "dump LwIP stack statistics"},
     {"rng",     0, 1, cmd_rng,     "[count]",                "draw random words, report RNG health"},
@@ -159,9 +164,7 @@ static int parse_hex(const char *s, uint32_t *out) {
     return 0;
 }
 
-/* Fixed-length hex into bytes. Rejects anything that is not exactly 2*len hex
- * digits: a fingerprint that silently parsed short would authenticate against a
- * prefix, which is the whole point of it not being allowed to. */
+/* Fixed-length hex into bytes, rejecting anything but exactly 2*len digits. */
 static int parse_hex_bytes(const char *s, uint8_t *out, size_t len) {
     size_t i;
 
@@ -182,10 +185,8 @@ static int parse_hex_bytes(const char *s, uint8_t *out, size_t len) {
     return 0;
 }
 
-/* The console's half of the mailbox. rfm_reply is read by the caller after
- * this returns, so it belongs to this task and not to the transaction - see
- * hubipc.h for why the shared static it replaces was only safe while cliTask
- * was the only caller. */
+/* The console's half of the mailbox; rfm_reply belongs to this task.
+ * radio_devices_docs/open_hub/arch/ipc.md */
 static int rfm_request(uint8_t type, uint8_t arg, const uint8_t *payload, uint8_t len) {
     return hub_ipc_call(type, arg, payload, len, &rfm_reply);
 }
@@ -255,8 +256,7 @@ static int cmd_lwip(cli_data_t *cli, int argc, char **argv) {
     return 0;
 }
 
-/* Draws from the guarded RNG so a latched seed error is visible from the console
- * instead of only over SWD. */
+/* Draws from the guarded RNG, so a latched seed error is visible here. */
 static int cmd_rng(cli_data_t *cli, int argc, char **argv) {
     static const char *const names[] = {"ok", "bad argument", "seed error",
                                         "clock error", "timeout"};
@@ -339,8 +339,8 @@ static int cmd_crypto(cli_data_t *cli, int argc, char **argv) {
 }
 
 
-/* Devices measure the superframe period from consecutive beacons, so beacon
- * jitter lands in their drift. Making it readable stops it being assumed. */
+/* Beacon jitter lands in every device's drift.
+ * radio_devices_docs/open_hub/cli.md */
 static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
     ipc_timing_t t;
     int rc;
@@ -365,33 +365,30 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
             (unsigned long)t.late_last_us, (unsigned long)t.late_min_us,
             (unsigned long)t.late_max_us,
             (unsigned long)(t.late_max_us - t.late_min_us));
-    /* The grid steps ticks, not microseconds: HSE is the ST-Link MCO and runs
-     * fast, so a period printed only as nominal hides the real air timing. */
+    /* The grid steps ticks, not microseconds.
+     * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "clock %+ld ppm vs nominal, grid steps %lu ticks\r\n",
             (long)t.calib_ppm, (unsigned long)t.period_tk);
     cli_out(cli, "calib: %lu windows, %lu rejected%s\r\n",
             (unsigned long)t.calib_windows, (unsigned long)t.calib_rejects,
             t.calib_windows ? "" : "  <- LSE never measured, period is nominal");
-    /* A window lands every ~8 ms. Anything past a second means the reference
-     * has stopped and the ppm figure above is a memory, not a measurement -
-     * which "N windows, 0 rejected" states as confidently either way. */
+    /* A window lands every ~8 ms; past a second the ppm above is a memory.
+     * radio_devices_docs/open_hub/cli.md */
     if (t.calib_windows) {
         unsigned long age_ms = (unsigned long)(t.calib_age_tk / 1000u);
 
         cli_out(cli, "       last window %lu ms ago%s\r\n", age_ms,
                 age_ms > 1000u ? "  <- STALE, the ppm above is not current" : "");
     }
-    /* A sound window lands within a ppm or two of the last one. A wide spread
-     * means the reference is being mismeasured, not that the clock is moving. */
+    /* A wide spread means the reference is mismeasured, not that the clock moved.
+     * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "       spread %+ld..%+ld ppm\r\n",
             (long)t.calib_ppm_min, (long)t.calib_ppm_max);
-    /* Two reads far apart give the tick rate against the host clock, which is
-     * how the calibration gets checked rather than believed. */
+    /* Two reads far apart give the tick rate against the host clock. */
     cli_out(cli, "       last window spans %lu..%lu ticks\r\n",
             (unsigned long)t.span_lo, (unsigned long)t.span_hi);
-    /* No figure quoted. CM4 does the counting against a limit compiled into
-       CM4; naming CM7's copy of that constant here would print a number the
-       count was not measured against the moment the two builds differ. */
+    /* No figure quoted: CM4 counted against CM4's limit.
+     * radio_devices_docs/open_hub/cli.md */
     if (t.late_over)
         cli_out(cli, "*** %lu beacon(s) left late past the cost limit - something"
                      " in the radio superloop is expensive\r\n",
@@ -401,8 +398,8 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
 }
 
 
-/* Exposes what the accelerator computes, so a byte-level disagreement with the
- * device is found here rather than as silence on air. */
+/* Exposes what the accelerator computes, byte for byte.
+ * radio_devices_docs/radio/hopping.md */
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv) {
     uint8_t in[16];
     int rc;
@@ -526,15 +523,8 @@ static const char *pair_state_name(uint8_t st) {
 }
 
 
-/* The operator's view of the network: who is paired, how well each end hears
- * the other, and when each device was last heard.
- *
- * Both RSSI figures are shown because a link that is good in one direction and
- * not the other is the common case and the one that is otherwise mysterious -
- * the hub transmits at 13 dBm into a real antenna and a sensor node usually
- * does not. `up` is measured here on the device's last frame; `down` is what
- * the device reported about the hub's last beacon, so it is one report old by
- * construction and may be marked stale. */
+/* The operator's view of the network, in both RSSI directions.
+ * radio_devices_docs/open_hub/cli.md */
 static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
     ipc_exchange_state_t x;
     uint32_t now = 0;
@@ -542,6 +532,34 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
     uint8_t i;
     int rc;
 
+    /* Aimed at one device already out there, unlike `rate`, which grants the next. */
+    if (argc >= 4 && strcmp(argv[1], "cmd") == 0) {
+        ipc_device_cmd_t c;
+        int n = (argc == 5) ? atoi(argv[4]) : 0;
+
+        memset(&c, 0, sizeof(c));
+        c.dev_id  = (uint32_t)strtoul(argv[2], NULL, 0);
+        c.repeats = 4;
+        if (strcmp(argv[3], "rejoin") == 0 && argc == 4) {
+            c.cmd = RADIO_CMD_REJOIN;
+        } else if (strcmp(argv[3], "rate") == 0 && argc == 5 && n >= 1 && n <= 255) {
+            c.cmd          = RADIO_CMD_SET_RATE;
+            c.report_every = (uint8_t)n;
+        } else {
+            cli_out(cli, "\r\nUsage: devices cmd <dev_id> rejoin | rate <1..255>\r\n");
+            return 0;
+        }
+        rc = rfm_request(IPC_REQ_SET_DEVICE_PARAM, 0, (const uint8_t *)&c,
+                         (uint8_t)sizeof(c));
+        if (rc != IPC_ST_OK) {
+            cli_out(cli, "\r\nError: no such device, status %d\r\n", rc);
+            return 0;
+        }
+        /* Nothing on the wire acknowledges it, so this says queued, not delivered. */
+        cli_out(cli, "\r\nqueued for 0x%08lX, riding the next %u downlinks\r\n",
+                (unsigned long)c.dev_id, c.repeats);
+        return 0;
+    }
     if (argc == 3 && strcmp(argv[1], "rate") == 0) {
         int n = atoi(argv[2]);
 
@@ -555,15 +573,13 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             return 0;
         }
         pairing_set_report_every((uint8_t)n);
-        /* Granted at the next pairing and not to the devices already out there:
-         * changing a live device's rate needs a sealed downlink, and there is
-         * no downlink queue yet. Saying so beats leaving an operator to wonder
-         * why nothing changed. */
+        /* Granted at the next pairing, not to devices already out there.
+         * radio_devices_docs/open_hub/cli.md */
         cli_out(cli, "\r\nreport rate %d superframes, granted at the next pairing\r\n", n);
         return 0;
     }
     if (argc != 1) {
-        cli_out(cli, "\r\nUsage: devices [rate <n>]\r\n");
+        cli_out(cli, "\r\nUsage: devices [rate <n>] | cmd <dev_id> rejoin | cmd <dev_id> rate <n>\r\n");
         return 0;
     }
 
@@ -605,9 +621,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         memcpy(&d, rfm_reply.payload, sizeof(d));
         total = d.total;
 
-        /* Superframes, converted to seconds for a human. A device that has
-         * never reported shows "never" rather than an age counted from zero,
-         * which would read as "just now" at boot. */
+        /* Never an age counted from zero, which reads as "just now" at boot.
+         * radio_devices_docs/open_hub/cli.md */
         if (d.frames_ok == 0u)
             snprintf(age, sizeof(age), "never");
         else
@@ -620,11 +635,40 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                 (d.flags & RADIO_REPORT_FLAG_RSSI_STALE) ? "stale" : "     ",
                 d.supply_mv, (unsigned long)d.uptime_s,
                 (unsigned long)d.frames_ok, (unsigned long)d.frames_bad, age);
+
+        /* Granted against observed, never a grant restated as a measurement.
+         * radio_devices_docs/open_hub/cli.md */
+        {
+            char asked[40];
+            unsigned want = d.report_every;
+
+            /* An acked command is what the hub believes; a riding one is not. */
+            if (d.cmd_state == 2u) {
+                snprintf(asked, sizeof(asked), "grant %u, commanded %u acked",
+                         d.report_every, d.cmd_every);
+                want = d.cmd_every;
+            } else if (d.cmd_state == 1u) {
+                snprintf(asked, sizeof(asked), "grant %u, commanded %u riding",
+                         d.report_every, d.cmd_every);
+            } else {
+                snprintf(asked, sizeof(asked), "grant %u", d.report_every);
+            }
+            if (d.cyc_n == 0u)
+                cli_out(cli, "      cadence: %s, not yet observed\r\n", asked);
+            else
+                cli_out(cli, "      cadence: %s, seen every %u"
+                             " (mean %lu.%lu over %u gaps)%s\r\n",
+                        asked, d.cyc_min,
+                        (unsigned long)(d.cyc_sum / d.cyc_n),
+                        (unsigned long)((d.cyc_sum * 10u / d.cyc_n) % 10u),
+                        d.cyc_n,
+                        (want != 0u && d.cyc_min != want)
+                            ? "  <- not what the device does" : "");
+        }
     }
 
-    /* The count CM4 reports and the count actually printed. They can only
-     * differ if a listing was cut short, and a total that quietly disagrees
-     * with the rows above it is worse than no total. */
+    /* The count CM4 reports and the count actually printed.
+     * radio_devices_docs/open_hub/cli.md */
     if (x.devices != 0u && total != x.devices)
         cli_out(cli, "listing incomplete: %u of %u\r\n", total, x.devices);
 
@@ -643,25 +687,26 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         cli_out(cli, "refused %lu, timed out %lu, tx err %lu, seal err %lu\r\n",
                 (unsigned long)x.cm7_refused, (unsigned long)x.timeouts,
                 (unsigned long)x.tx_err, (unsigned long)x.seal_err);
-    /* "malformed" and "the tag did not verify" are the difference between the
-     * air being wrong and the key being wrong. One number for both names
-     * neither, which is the whole reason they are separate. */
+    /* Malformed and bad-tag stay apart: the air wrong against the key wrong.
+     * radio_devices_docs/open_hub/cli.md */
     {
         ipc_downlink_state_t dl;
 
         if (rfm_request(IPC_REQ_GET_DOWNLINK, 0, NULL, 0) == IPC_ST_OK &&
             rfm_reply.len >= sizeof(dl)) {
             memcpy(&dl, rfm_reply.payload, sizeof(dl));
-            /* Opportunities beside sends, because "sent 0" reads the same for a
-             * hub that never reached the region and one whose parity never
-             * came up - and those need different work. */
+            /* Opportunities beside sends, which "sent 0" cannot separate.
+             * radio_devices_docs/open_hub/cli.md */
             cli_out(cli, "downlink %lu sent of %lu opportunities, next slot %u"
                          " (%lu seal err, %lu tx err, %lu no device)\r\n",
                     (unsigned long)dl.sent, (unsigned long)dl.opportunities,
                     dl.next_slot, (unsigned long)dl.seal_err,
                     (unsigned long)dl.tx_err, (unsigned long)dl.no_device);
-            /* The channel, because every counter above reads success on a frame
-             * transmitted where nobody is listening. */
+            /* Sent is not delivered: no uplink field acknowledges a command. */
+            cli_out(cli, "  cmds %lu sent, %lu acked, %lu lost, %lu replaced\r\n",
+                    (unsigned long)dl.cmd_sent, (unsigned long)dl.cmd_acked,
+                    (unsigned long)dl.cmd_lost, (unsigned long)dl.cmd_replaced);
+            /* The channel: every counter above reads success on a wrong one. */
             if (dl.sent)
                 cli_out(cli, "last downlink sf %lu on %lu Hz (%lu prf err)\r\n",
                         (unsigned long)dl.last_superframe,
@@ -671,9 +716,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
     {
         const pairing_init_stats_t *pi = pairing_init_get_stats();
 
-        /* z1_derivations beside the frame counts, because "derived once per
-         * window" is the property that keeps a scalar multiplication off the
-         * per-frame path, and a claim like that should be measured. */
+        /* z1_derivations beside the frame counts, so the claim is measured.
+         * radio_devices_docs/open_hub/cli.md */
         if (pi->armed || pi->built || pi->derive_failed)
             cli_out(cli, "pair_init %s: %lu built, %lu pushed, %lu push err,"
                          " %lu derive err, z1 x%lu, last sf %lu\r\n",
@@ -684,9 +728,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                     (unsigned long)pi->z1_derivations,
                     (unsigned long)pi->last_superframe);
         {
-            /* CM4's half. "pushed" only proves CM7 handed it over; a frame can
-             * still be dropped for arriving after its superframe, and a send
-             * counter is the only thing that separates those. */
+            /* CM4's half: pushed only proves CM7 handed the frame over.
+             * radio_devices_docs/open_hub/cli.md */
             ipc_pair_init_state_t ps;
 
             if (rfm_request(IPC_REQ_GET_PAIR_INIT, 0, NULL, 0) == IPC_ST_OK &&
@@ -726,6 +769,33 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                     ud.up_rssi_peak, ud.up_rssi_floor);
         }
     }
+    {
+        ipc_device_report_t last;
+        uint32_t shrt = 0, tick = 0;
+        uint32_t seen = pairing_uplink_events(&shrt, &tick, &last);
+
+        /* Both sides of one number: CM4 sent ok minus drops, CM7 handled seen. */
+        cli_out(cli, "uplink events: cm4 sent %lu (%lu dropped), cm7 handled %lu"
+                     " (%lu short)\r\n",
+                (unsigned long)(x.uplink_ok - x.uplink_evt_drop),
+                (unsigned long)x.uplink_evt_drop, (unsigned long)seen,
+                (unsigned long)shrt);
+        {
+            uint32_t tmo = 0;
+            uint32_t rings = pairing_doorbells(&tmo);
+
+            /* Zero rings with events handled means the poll did all the work. */
+            cli_out(cli, "  wakes: %lu doorbell, %lu timeout\r\n",
+                    (unsigned long)rings, (unsigned long)tmo);
+        }
+        if (seen != 0u)
+            cli_out(cli, "  last: dev 0x%08lX slot %u, sf %lu at +%lu us,"
+                         " handled %lu ms ago\r\n",
+                    (unsigned long)last.dev_id, last.slot,
+                    (unsigned long)last.last_superframe,
+                    (unsigned long)last.arrival_us,
+                    (unsigned long)(osKernelGetTickCount() - tick));
+    }
     cli_out(cli, "uplink %lu seen, %lu ok, %lu unknown slot, %lu malformed,"
                  " %lu bad tag, %lu replay\r\n",
             (unsigned long)x.uplink_frames, (unsigned long)x.uplink_ok,
@@ -751,9 +821,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                     (unsigned long)ps->bad_confirm, (unsigned long)ps->no_hub_key,
                     (unsigned long)ps->derive_failed, (unsigned long)ps->store_failed,
                     (unsigned long)ps->timed_out);
-        /* Both halves, because the two failures need different fixes: a key
-         * that is not the enrolled one, and the right key hashed over the
-         * wrong domain, refuse identically and look identical from here. */
+        /* Both halves: a wrong key and a wrong domain refuse identically.
+         * radio_devices_docs/open_hub/cli.md */
         if (ps->bad_fingerprint) {
             cli_out(cli, "computed fp: ");
             for (int b = 0; b < 32; b++)
@@ -768,39 +837,16 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
 }
 
 
-/* Which vector sets each core was actually built against.
- *
- * The digests had no consumer at all until this command: three generators
- * computed them, three headers carried them, and nothing read one. That is the
- * decorative class - correct, and acted on by nobody - and `wire-crypto.md`
- * claimed they made a change "visible", which is only true if something looks.
- *
- * The check that can fail is the cross-core one. The two cores are flashed
- * separately, this project has already been bitten by flashing one and not the
- * other, and a mismatch here says so before the radio is trusted rather than
- * after a pairing fails on air with no diagnosable cause.
- *
- * What it does NOT cover, stated here because the command's name is broader
- * than its coverage and would otherwise be remembered as "the vectors are
- * correct": the digest is a literal baked into a generated header, so a
- * hand-edited header keeps its old digest and both cores compile the same
- * tampered values and agree. Verified - editing two bytes of HV_DECK0 leaves
- * this command reading `ok` and fails the host deck test immediately.
- *
- * The values are checked by the things that consume them: the pinned decks and
- * call counts on the host, the frame and PRF self-tests on the silicon. A
- * digest in a generated artifact detects regeneration, never tampering. The
- * device side put it best - the values are the check and the digest is a
- * label. */
+/* Which vector sets each core was built against; never tampering.
+ * radio_devices_docs/open_hub/arch/build-and-generation.md */
 static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
     ipc_vectors_t v;
     int rc;
 
     (void)argc; (void)argv;
 
-    /* Named on every run rather than in a comment nobody opens: an operator who
-     * reads "ok" twice will otherwise carry away that the vectors were
-     * validated, which is not what happened. */
+    /* Named on every run, so "ok" is not carried away as "validated".
+     * radio_devices_docs/open_hub/arch/build-and-generation.md */
     cli_out(cli, "\r\ncompares what each core was BUILT with; does not validate the values\r\n");
     cli_out(cli, "           CM7                CM4\r\n");
 
@@ -812,8 +858,7 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
     memcpy(&v, rfm_reply.payload, sizeof(v));
-    /* CM4 does not compile the wire set, so there is nothing to compare it
-     * against - and printing a blank column beats printing CM7's twice. */
+    /* CM4 does not compile the wire set: a blank column, never CM7's twice. */
     v.pair[sizeof(v.pair) - 1] = '\0';
     v.hop[sizeof(v.hop) - 1] = '\0';
 
@@ -823,9 +868,8 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "hop_v1     %-18s %-18s %s\r\n", HOP_VECTORS_DIGEST, v.hop,
             strcmp(HOP_VECTORS_DIGEST, v.hop) == 0 ? "ok" : "MISMATCH");
     cli_out(cli, "wire       %-18s %-18s\r\n", WIRE_VECTORS_DIGEST, "-");
-    /* CM7-only sets: CM4 compiles neither, so there is no column to compare.
-     * Listed anyway - the command's job is to name what is covered, and a set
-     * omitted here reads as a set that does not exist. */
+    /* CM7-only sets, listed anyway: an omission reads as a set that does not exist.
+     * radio_devices_docs/open_hub/arch/build-and-generation.md */
     cli_out(cli, "pair_v%-3d  %-18s %-18s\r\n", PAIR_V3_VECTORS_VERSION,
             PAIR_V3_VECTORS_DIGEST, "-");
     cli_out(cli, "pair_prov  %-18s %-18s\r\n", PAIR_PROV_VECTORS_DIGEST, "-");
@@ -863,34 +907,27 @@ static int cmd_device_pair(cli_data_t *cli) {
                 (unsigned long)p.reqs_seen, (unsigned long)p.reqs_dropped,
                 p.reqs_drop_last < RADIO_DROP_COUNT ? why[p.reqs_drop_last] : "?");
     }
-    /* Zero here now means the band really was empty, which it could not mean
-     * before: a frame failing CRC was discarded by the part with nothing
-     * counted anywhere. */
-    /* Below the frame layer, and the three counters together are the
-     * diagnosis: sync 0 means nothing was detected at all; sync with crc errors
-     * means frames are arriving broken; sync with neither means one started and
-     * never finished. Printed here because this is the screen an operator is
-     * looking at when nothing works. */
+    /* Below the frame layer; the three counters together are the diagnosis.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     {
         ipc_rx_diag_t d;
 
         if (rfm_request(IPC_REQ_GET_RXDIAG, 0, NULL, 0) == IPC_ST_OK &&
             rfm_reply.len >= sizeof(d)) {
             memcpy(&d, rfm_reply.payload, sizeof(d));
-            /* Since this window opened, not since boot: a running maximum
-             * from an unknown superframe cannot answer "did that arrive". */
+            /* Since this window opened, not since boot. */
             cli_out(cli, "rx (this window): sync %lu, crc err %lu, frames %lu\r\n",
                     (unsigned long)d.sync_match, (unsigned long)d.crc_err,
                     (unsigned long)d.frames);
-            /* Below the sync word. Every counter above needs the sync word to
-             * match first, so they all read zero for a transmission this part
-             * does not recognise - and an empty band looks identical. A peak
-             * well above the floor means something is being radiated whether or
-             * not this radio can make sense of it. */
+            /* Each one is a window that would otherwise have ended there. */
+            if (d.flushes != 0u)
+                cli_out(cli, "rx: %lu receiver restart(s) on an undrainable FIFO\r\n",
+                        (unsigned long)d.flushes);
+            /* Below the sync word, which every counter above needs first.
+             * radio_devices_docs/open_hub/radio/configuration.md */
             cli_out(cli, "rx level: peak %d dBm, floor %d dBm, %lu samples\r\n",
                     d.rssi_peak, d.rssi_floor, (unsigned long)d.rssi_samples);
-            /* Printed whenever an identity refusal has happened, because the
-             * field name alone leaves both sides certain they agree. */
+            /* Printed on any identity refusal: the field name settles nothing. */
             if (d.drop_head[0]) {
                 cli_out(cli, "cm4 saw head:");
                 for (int b = 0; b < 16; b++)
@@ -976,11 +1013,8 @@ static int cmd_device_list(cli_data_t *cli) {
         live++;
         cli_out(cli, "%08lx  %3u %-8s ", (unsigned long)r->dev_id,
                 (unsigned)r->slot, ks_state_name(r->state));
-        /* Computed from the stored key, never stored beside it, so the two
-           cannot drift apart. First eight bytes only: an operator compares
-           against what the device printed, the full 32 do not fit a terminal
-           line, and a truncated display must never be mistaken for the check
-           itself - the check compares the whole point, above. */
+        /* Display only, eight bytes of it; the check above compares the point.
+         * radio_devices_docs/open_hub/cli.md */
         {
             uint8_t fp[KS_FINGERPRINT_BYTES];
 
@@ -993,9 +1027,8 @@ static int cmd_device_list(cli_data_t *cli) {
         }
         cli_out(cli, "...\r\n");
     }
-    /* Counts what was printed, not what the cache holds: the cache keeps
-       tombstones so their slots and transmit floors survive, and a summary that
-       disagreed with the rows above it would be read as a missing row. */
+    /* Counts what was printed, not what the cache holds.
+     * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "%lu enrolled, flash: %lu writes, %lu errors, %lu slots left\r\n",
             (unsigned long)live, (unsigned long)ks_writes(),
             (unsigned long)ks_errors(), (unsigned long)ks_slots_left());
@@ -1008,10 +1041,8 @@ static int cmd_device_list(cli_data_t *cli) {
     return 0;
 }
 
-/* Enrol, then open the window - in that order. The stored key is what makes
- * the key exchange refuse an impostor, so opening a pairing window for a device
- * whose key did not persist would be pairing without authentication and would
- * look exactly like pairing with it. */
+/* Enrol, then open the window, in that order.
+ * radio_devices_docs/open_hub/cli.md */
 static int cmd_device_add(cli_data_t *cli, char **argv) {
     uint8_t pubkey[KS_PUBKEY_BYTES];
     uint32_t dev_id = 0;
@@ -1028,12 +1059,8 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
                 (unsigned)(KS_PUBKEY_BYTES * 2u));
         return 0;
     }
-    /* A compressed point starts 02 or 03. This is not validation - it does not
-     * check the point is on the curve - but it catches the operator pasting the
-     * fingerprint into the key argument, which is the mistake the two values
-     * sitting next to each other on the device's screen invites. Named rather
-     * than dressed up: a 32-byte hash pasted here is refused on length anyway,
-     * and this catches the case where it happens not to be. */
+    /* A prefix check, not validation: it catches a fingerprint pasted here.
+     * radio_devices_docs/open_hub/cli.md */
     if (pubkey[0] != 0x02u && pubkey[0] != 0x03u) {
         cli_out(cli, "\r\nError: not a compressed point - first byte is %02x,"
                      " expected 02 or 03.\r\n"
@@ -1042,11 +1069,8 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         return 0;
     }
 
-    /* Enrolling is also the only way to open a window, so an operator holding
-     * a window open re-runs this command - and ks_enrol correctly drops the
-     * session key and bumps key_gen, which unpairs a working device with no
-     * warning. Splitting the two: 'device window' reopens, 'device add'
-     * re-enrols and now says what it would destroy. */
+    /* Says what re-enrolling would destroy; 'device window' is the reopen.
+     * radio_devices_docs/open_hub/cli.md */
     {
         const ks_record_t *have = ks_find(dev_id);
 
@@ -1098,20 +1122,257 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nError: not enrolled, or flash write failed\r\n");
         return 0;
     }
-    /* Nothing is sent to CM4: it holds no per-device state yet. When it does,
-       this is where the removal has to reach it, and the reply has to matter. */
+    /* Nothing is sent to CM4: it holds no per-device state yet.
+     * radio_devices_docs/open_hub/arch/ipc.md */
     cli_out(cli, "\r\nremoved 0x%08lx\r\n", (unsigned long)dev_id);
     return 0;
 }
 
-/* The hub's own long-term identity. Devices are provisioned with the public
-   half out of band, which is what lets them tell this hub from an impostor. */
-/* The bytes the last exchange's confirmations were taken over.
- *
- * Printed split at its field boundaries as well as flat: a confirm mismatch
- * says only that two 119-byte strings differ, and the whole cost of diagnosing
- * it is finding which field. Flat too, because the other end hashes a string
- * and not a struct. */
+/* Newton on integers: the CLI has no float printf, and a sd is a sqrt.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static uint64_t isqrt64(uint64_t v) {
+    uint64_t x, y;
+
+    if (v < 2u)
+        return v;
+    x = v;
+    y = (x + 1u) / 2u;
+    while (y < x) {
+        x = y;
+        y = (x + v / x) / 2u;
+    }
+    return x;
+}
+
+/* The second moment of the same edge cmd_device_synctime reports the range of. */
+static int cmd_device_afcraw(cli_data_t *cli) {
+    ipc_afc_raw_t r;
+    unsigned i;
+    int rc = rfm_request(IPC_REQ_GET_AFC_RAW, 0, NULL, 0);
+
+    if (rc < 0 || rfm_reply.len < sizeof(r)) {
+        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        return 0;
+    }
+    memcpy(&r, rfm_reply.payload, sizeof(r));
+
+    /* Total against held: a full ring is a window, not the whole history. */
+    cli_out(cli, "\r\nafc raw: %lu taken, %u held, newest first\r\n",
+            (unsigned long)r.total, r.n);
+    /* Level, gain and outcome beside the correction: one line is one frame. */
+    for (i = 0; i < r.n; i++) {
+        char level[16];
+
+        /* A level taken after the frame ended is the floor, and says so. */
+        if (((r.in_frame >> i) & 1u) != 0u)
+            snprintf(level, sizeof(level), "%4d dBm", r.rssi[i]);
+        else
+            snprintf(level, sizeof(level), "   no lvl");
+        char slot[12];
+
+        /* The slot the edge landed in: how long the receiver had been in RX. */
+        if (r.slot[i] == 0xFFu)
+            snprintf(slot, sizeof(slot), "slot  --");
+        else
+            snprintf(slot, sizeof(slot), "slot %3u", r.slot[i]);
+        cli_out(cli, "  grid %2u  %s  %7ld Hz  %s  lna G%u  %s\r\n",
+                r.grid[i], slot, (long)IPC_AFC_STEPS_TO_HZ(r.afc[i]), level,
+                r.gain[i], ((r.crc_ok >> i) & 1u) ? "ok" : "CRC FAIL");
+    }
+    /* The sampler's own record, so a column of "no lvl" names its cause. */
+    cli_out(cli, "  levels: %u tried, %u late, %u failed, worst lag %u us\r\n",
+            r.rssi_taken, r.rssi_late, r.rssi_err, r.lag_max_us);
+    if (r.total > r.n)
+        cli_out(cli, "  ... %lu older samples have been overwritten\r\n",
+                (unsigned long)(r.total - r.n));
+    return 0;
+}
+
+/* The hub half of the event deadline, in CM4's two terms. ROADMAP item 2
+ * radio_devices_docs/open_hub/arch/ipc.md */
+static int cmd_device_latency(cli_data_t *cli) {
+    ipc_evt_latency_t l;
+    int rc = rfm_request(IPC_REQ_GET_EVT_LAT, 0, NULL, 0);
+
+    if (rc < 0 || rfm_reply.len < sizeof(l)) {
+        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        return 0;
+    }
+    memcpy(&l, rfm_reply.payload, sizeof(l));
+
+    cli_out(cli, "\r\nuplink events %lu sent, %lu timed, %lu unanswered\r\n",
+            (unsigned long)l.sent, (unsigned long)l.replied,
+            (unsigned long)l.lost);
+    /* Not zero means a reply outlived its waiter, which the dispatch must not do. */
+    if (l.stale != 0u)
+        cli_out(cli, "*** %lu event reply(s) nobody was waiting for\r\n",
+                (unsigned long)l.stale);
+    if (l.replied == 0u) {
+        cli_out(cli, "no reply has ever been timed - nothing below is a"
+                     " measurement yet\r\n");
+        return 0;
+    }
+
+    /* Named for what it spans: it carries CM4's poll granularity too. */
+    cli_out(cli, "frame end to event sent: last %lu us, max %lu\r\n",
+            (unsigned long)l.arrival_last_us, (unsigned long)l.arrival_max_us);
+    if (l.arrival_bad != 0u)
+        cli_out(cli, "*** %lu arrival(s) timed off an edge that was not theirs\r\n",
+                (unsigned long)l.arrival_bad);
+    /* CM7 cannot answer before it has handled, so the round trip is a ceiling. */
+    cli_out(cli, "event sent to reply: last %lu us, min %lu, max %lu, mean %lu\r\n",
+            (unsigned long)l.rtt_last_us, (unsigned long)l.rtt_min_us,
+            (unsigned long)l.rtt_max_us,
+            (unsigned long)(l.rtt_sum_us / l.replied));
+    /* One number against one budget, and it is an upper bound on both terms. */
+    cli_out(cli, "hub half at worst %lu us of the %lu us the deadline leaves\r\n",
+            (unsigned long)(l.arrival_max_us + l.rtt_max_us),
+            (unsigned long)RADIO_HUB_HANDLE_SLACK_US);
+    return 0;
+}
+
+static int cmd_device_afc(cli_data_t *cli) {
+    ipc_afc_t a;
+    int64_t n, den, num, slope_milli, b_milli, mean;
+    int rc = rfm_request(IPC_REQ_GET_AFC, 0, NULL, 0);
+
+    if (rc < 0 || rfm_reply.len < sizeof(a)) {
+        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        return 0;
+    }
+    memcpy(&a, rfm_reply.payload, sizeof(a));
+
+    /* The count first: a correction of 0 Hz and no measurement print the same. */
+    cli_out(cli, "\r\nafc: %lu frames measured, %lu reads failed\r\n",
+            (unsigned long)a.n, (unsigned long)a.read_err);
+    if (a.n == 0u) {
+        cli_out(cli, "nothing measured yet - the value below would be invented\r\n");
+        return 0;
+    }
+    n    = (int64_t)a.n;
+    mean = a.sum_hz / n;
+    cli_out(cli, "correction: last %ld Hz on grid %u, min %ld, max %ld, mean %ld\r\n",
+            (long)a.last_hz, a.last_grid, (long)a.min_hz, (long)a.max_hz, (long)mean);
+
+    /* Samples from one channel carry no slope, and a printed one would be noise. */
+    den = n * a.sum_gg - a.sum_g * a.sum_g;
+    if (den == 0) {
+        cli_out(cli, "every sample on one channel - no slope against the grid\r\n");
+        return 0;
+    }
+    num         = n * a.sum_gh - a.sum_g * a.sum_hz;
+    slope_milli = num * 1000 / den;
+    b_milli     = (a.sum_hz * 1000 - slope_milli * a.sum_g) / n;
+    cli_out(cli, "on grid: slope %ld/1000 Hz per channel, at grid 0 %ld/1000 Hz\r\n",
+            (long)slope_milli, (long)b_milli);
+
+    /* A crossing is a division by the slope, so it needs one worth dividing by. */
+    if (slope_milli >= 1000 || slope_milli <= -1000)
+        cli_out(cli, "fit crosses zero at grid %ld/1000\r\n",
+                (long)(-b_milli * 1000 / slope_milli));
+    else
+        cli_out(cli, "slope under 1 Hz per channel - no crossing worth printing\r\n");
+    return 0;
+}
+
+static int cmd_device_syncstats(cli_data_t *cli) {
+    ipc_syncstats_t s;
+    int64_t n, var_d, var_l, cov, mean_l;
+    int rc = rfm_request(IPC_REQ_GET_SYNCSTATS, 0, NULL, 0);
+
+    if (rc < 0 || rfm_reply.len < sizeof(s)) {
+        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        return 0;
+    }
+    memcpy(&s, rfm_reply.payload, sizeof(s));
+
+    cli_out(cli, "\r\npaired edges %lu, unpaired %lu, beacons %lu\r\n",
+            (unsigned long)s.n, (unsigned long)s.unpaired,
+            (unsigned long)s.beacon_n);
+    if (s.beacon_n != 0u)
+        cli_out(cli, "beacon lead alone: min %lu us, max %lu, over every beacon\r\n",
+                (unsigned long)s.beacon_min_us, (unsigned long)s.beacon_max_us);
+
+    /* Two samples make a variance; one makes a number that looks like one. */
+    if (s.n < 2u) {
+        cli_out(cli, "fewer than two paired edges - no spread yet\r\n");
+        return 0;
+    }
+
+    n     = (int64_t)s.n;
+    var_d = ((int64_t)s.sumsq_d - s.sum_d * s.sum_d / n) / (n - 1);
+    var_l = ((int64_t)s.lead_sumsq -
+             (int64_t)s.lead_sum * (int64_t)s.lead_sum / n) / (n - 1);
+    cov   = (s.cov_sum - s.sum_d * (int64_t)s.lead_sum / n) / (n - 1);
+    mean_l = (int64_t)s.lead_sum / n;
+
+    cli_out(cli, "arrival: mean %ld us, sd %lu, n %lu\r\n",
+            (long)((int64_t)s.ref_us + s.sum_d / n),
+            (unsigned long)isqrt64((uint64_t)(var_d < 0 ? 0 : var_d)),
+            (unsigned long)s.n);
+    cli_out(cli, "beacon lead, same n: mean %ld us, sd %lu\r\n",
+            (long)mean_l,
+            (unsigned long)isqrt64((uint64_t)(var_l < 0 ? 0 : var_l)));
+
+    /* The regressor carries a trailing poll, so the slope is an upper bound.
+     * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+    if (var_l > 0)
+        cli_out(cli, "arrival on lead: slope %ld/1000, cov %ld\r\n",
+                (long)(cov * 1000 / var_l), (long)cov);
+    else
+        cli_out(cli, "arrival on lead: the lead did not vary, no slope\r\n");
+    return 0;
+}
+
+/* Where the sync word landed, and the ladder that says whether that is real.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static int cmd_device_synctime(cli_data_t *cli) {
+    ipc_synctime_t s;
+    int rc = rfm_request(IPC_REQ_GET_SYNCTIME, 0, NULL, 0);
+
+    if (rc < 0 || rfm_reply.len < sizeof(s)) {
+        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        return 0;
+    }
+    memcpy(&s, rfm_reply.payload, sizeof(s));
+
+    /* 0 >= 0 proves nothing: a ladder with no traffic has not run. */
+    cli_out(cli, "\r\nsync edges %lu, frames accepted %lu -> %s\r\n",
+            (unsigned long)s.edges, (unsigned long)s.frames,
+            (s.edges < s.frames)
+                ? "BROKEN: fewer edges than frames, DIO3 is not SyncAddressMatch"
+            : (s.frames == 0u)
+                ? "no evidence: no frame has arrived to compare against"
+                : "ok");
+    cli_out(cli, "RegDioMapping1 %02x read back, DIO3 asked %u\r\n",
+            (unsigned)s.dio_map1, (unsigned)s.dio3_asked);
+
+    if (s.lead_n != 0u)
+        cli_out(cli, "tx command to first bit: last %lu us, min %lu, max %lu"
+                     " over %lu frames\r\n",
+                (unsigned long)s.lead_last_us, (unsigned long)s.lead_min_us,
+                (unsigned long)s.lead_max_us, (unsigned long)s.lead_n);
+
+    if (s.edges == 0u) {
+        /* Never fired is not a working zero. */
+        cli_out(cli, "no edge has ever been taken - nothing below is a"
+                     " measurement yet\r\n");
+        return 0;
+    }
+
+    cli_out(cli, "offset in superframe: last %lu us, min %lu, max %lu\r\n",
+            (unsigned long)s.last_offset_us, (unsigned long)s.min_offset_us,
+            (unsigned long)s.max_offset_us);
+    cli_out(cli, "last at superframe %lu, %lu implausible\r\n",
+            (unsigned long)s.last_superframe, (unsigned long)s.implausible);
+    /* A moved offset and a moved clock are otherwise the same reading. */
+    cli_out(cli, "last raw %lu tk at %+ld ppm\r\n",
+            (unsigned long)s.last_offset_tk, (long)s.calib_ppm);
+    return 0;
+}
+
+/* The 119 bytes the last exchange's confirmations were taken over.
+ * radio_devices_docs/radio/pairing.md */
 static int cmd_device_transcript(cli_data_t *cli) {
     uint32_t dev_id = 0, sf = 0;
     const uint8_t *t = pairing_last_transcript(&dev_id, &sf);
@@ -1123,8 +1384,8 @@ static int cmd_device_transcript(cli_data_t *cli) {
 
     cli_out(cli, "\r\ntranscript of the last derive, device 0x%08lx\r\n",
             (unsigned long)dev_id);
-    /* The value that reached the transcript, not the live counter and not the
-     * last beacon's: those three coincided before pair_v3 and no longer do. */
+    /* The value that reached the transcript, and no other.
+     * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "superframe fed in: %lu\r\n", (unsigned long)sf);
 
     static const struct { const char *name; uint8_t off, len; } f[] = {
@@ -1149,15 +1410,13 @@ static int cmd_device_transcript(cli_data_t *cli) {
     return 0;
 }
 
+/* The hub's own long-term identity; devices hold the public half out of band. */
 static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
     uint8_t priv[32], pub[33];
     int rc;
 
-    /* Recovery, before generation is even offered. A key recovered from an
-     * older record format is *shown* and not written: the store's CRC covers
-     * the same bytes at either offset, so only a witness from outside the store
-     * can say whether the shim read it correctly. The device holds this hub's
-     * public key from provisioning, and that is the witness. */
+    /* Recovered keys are shown, never written: the store cannot witness itself.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (argc == 3 && strcmp(argv[2], "recover") == 0) {
         uint8_t lpriv[32], lpub[33];
 
@@ -1191,8 +1450,8 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
     if (argc == 3 && strcmp(argv[2], "gen") == 0) {
-        /* A key this build cannot read is not an absent key. Without this,
-         * a format bump silently licenses replacing the hub's identity. */
+        /* A key this build cannot read is not an absent key.
+         * radio_devices_docs/open_hub/arch/keystore.md */
         if (ks_legacy_pending()) {
             cli_out(cli, "\r\nError: a hub key of an older format is present"
                          " and has not been recovered.\r\n  'device hubkey"
@@ -1236,9 +1495,8 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
 
-    /* The public half is what a device is provisioned with, so it is printed
-       in full: a truncated value would be transferred and the binding would be
-       only as strong as the truncation. */
+    /* Printed in full: this value is provisioned, not compared.
+     * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "\r\nhub public key (compressed, provision this to devices):\r\n");
     for (int i = 0; i < 33; i++)
         cli_out(cli, "%02x", pub[i]);
@@ -1258,15 +1516,13 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     uint32_t value = 0;
     int rc;
 
-    /* A window without a flash write. Every reopen used to consume a keystore
-     * slot, and that store never erases. */
+    /* A window without a flash write, in a store that never erases. */
     if (strcmp(argv[1], "hop") == 0 && argc <= 3) {
         ipc_hop_at_t h;
         uint32_t sf = 0;
 
-        /* Decimal, because a superframe counter is quoted in decimal
-         * everywhere else here - "330000" read as hex answers about a
-         * different superframe and looks like a hop-sequence disagreement. */
+        /* Decimal, as a superframe counter is quoted everywhere else here.
+         * radio_devices_docs/open_hub/cli.md */
         if (argc == 3)
             sf = (uint32_t)strtoul(argv[2], NULL, 0);
         if (rfm_request(IPC_REQ_HOP_AT, 0, (const uint8_t *)&sf,
@@ -1276,8 +1532,8 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
             return 0;
         }
         memcpy(&h, rfm_reply.payload, sizeof(h));
-        /* The key is on the same line as the channel deliberately: a channel
-         * number without the key it came from is not comparable with anyone. */
+        /* The key on the channel's own line: otherwise it compares with nobody.
+         * radio_devices_docs/open_hub/cli.md */
         cli_out(cli, "superframe %lu -> hop %u, grid slot %u, %lu Hz\r\n"
                      "  key %02x%02x%02x%02x... (%s)\r\n",
                 (unsigned long)h.superframe, h.channel, h.grid_slot,
@@ -1343,6 +1599,33 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         }
         return 0;
     }
+    if (strcmp(argv[1], "synctime") == 0 && argc == 2)
+        return cmd_device_synctime(cli);
+    if (strcmp(argv[1], "syncstats") == 0 && argc == 2)
+        return cmd_device_syncstats(cli);
+    if (strcmp(argv[1], "afc") == 0 && argc == 2)
+        return cmd_device_afc(cli);
+    if (strcmp(argv[1], "afcraw") == 0 && argc == 2)
+        return cmd_device_afcraw(cli);
+    if (strcmp(argv[1], "latency") == 0 && argc == 2)
+        return cmd_device_latency(cli);
+    /* Separates an overdriven front end from a transmitter that is not clean. */
+    if (strcmp(argv[1], "lna") == 0 && argc == 3) {
+        uint8_t sel = (uint8_t)atoi(argv[2]);
+
+        if (sel > 6u) {
+            cli_out(cli, "\r\nUsage: device lna <0=AGC | 1..6, each 6 dB down>\r\n");
+            return 0;
+        }
+        if (rfm_request(IPC_REQ_SET_LNA, sel, NULL, 0) != IPC_ST_OK) {
+            cli_out(cli, "\r\nError: CM4 refused it\r\n");
+            return 0;
+        }
+        cli_out(cli, "\r\nLNA gain select %u%s\r\n", sel,
+                sel == 0u ? " (AGC)" : "");
+        return 0;
+    }
+
     if (strcmp(argv[1], "transcript") == 0 && argc == 2)
         return cmd_device_transcript(cli);
 
@@ -1358,9 +1641,8 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     if (strcmp(argv[1], "hubkey") == 0)
         return cmd_device_hubkey(cli, argc, argv);
 
-    /* Test scaffolding: a torn write is otherwise only reachable by removing
-       power mid-program, and "the scanner skips a bad record" is a claim worth
-       checking rather than reasoning about. Reset afterwards to rescan. */
+    /* Test scaffolding for a torn write. Reset afterwards to rescan.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (strcmp(argv[1], "torncounter") == 0 && argc == 2) {
         rc = rfm_request(IPC_REQ_KV_TORN, 0, NULL, 0);
         if (rc < 0)
@@ -1388,9 +1670,8 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     if (strcmp(argv[1], "remove") == 0 && argc == 3)
         return cmd_device_remove(cli, argv);
 
-    /* Forces the quiesce without a device, so the one thing an SDR can check -
-     * silence for exactly the announced number of superframes - is reachable
-     * from the console. */
+    /* Forces a quiesce without a device, so an SDR can check the silence.
+     * radio_devices_docs/open_hub/testing/sdr.md */
     if (strcmp(argv[1], "quiesce") == 0 && argc == 3) {
         if (parse_hex(argv[2], &value) || value == 0 || value > 255) {
             cli_out(cli, "\r\nError: quiesce expects 1..ff superframes\r\n");
@@ -1448,6 +1729,12 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         "quiesce <n>             - suspend the grid for n superframes (test)\r\n"
         "store                   - durable superframe counter\r\n"
         "torn / torncounter      - inject a bad record (test)\r\n"
+        "synctime                - where the sync word landed, as a range\r\n"
+        "syncstats               - the same edge as a spread, and its regressor\r\n"
+        "afc                     - carrier error per frame, and its slope on the grid\r\n"
+        "afcraw                  - the individual corrections, newest first\r\n"
+        "latency                 - the hub half of the event deadline\r\n"
+        "lna <0..6>              - pin the front-end gain; 0 hands it back to AGC\r\n"
         "dump <reg>              - read an RFM69 register\r\n");
     return 0;
 }

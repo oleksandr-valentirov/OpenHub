@@ -2,6 +2,13 @@
 
 #include "main.h"
 
+/**
+ * @file cli.h
+ * @brief The console task and its buffers, read as an instrument rather than a feature.
+ *
+ * radio_devices_docs/open_hub/cli.md
+ */
+
 #define CLI_CMD_BUF_LEN     128
 /* Holds a full `status` dump, so it is sized by task count, not by line length. */
 #define CLI_RX_BUF_LEN      1024
@@ -16,5 +23,17 @@ typedef struct cli_data {
     char response_buffer[CLI_RX_BUF_LEN];
 } cli_data_t;
 
+/**
+ * @brief Feeds one received character to the line editor and runs a complete line.
+ * @param cli  the console's state
+ * @param c    the character received
+ * @retval 1  a command ran and the response buffer holds its output
+ * @retval 0  the line is still being assembled
+ */
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c);
+
+/**
+ * @brief The console task, blocking on its queue rather than spinning.
+ * @param argument  unused, required by the CMSIS-RTOS signature
+ */
 void CLI_Task(void *argument);
