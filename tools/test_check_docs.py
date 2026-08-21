@@ -116,11 +116,18 @@ def main():
     # Not reachable through the CLI: a corpus allow file is not tracked.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import check_docs
+    src = check_docs.source_text()
+
+    # Read as source, this file's ghosts exist and every case passes vacuously.
+    if "RADIO_GHOST_TWO_US" in src:
+        fails.insert(0, "this corpus is read as source, so its ghost names "
+                        "exist and every case above passes vacuously")
+
     marker = "This file is excluded from the source scan"
     if os.path.exists(check_docs.ALLOW):
         if marker not in open(check_docs.ALLOW, encoding="utf-8").read():
             fails.append("docs_allow.txt lost the marker this check reads")
-        elif marker in check_docs.source_text():
+        elif marker in src:
             fails.append("the allow file is read as source, so every exemption "
                          "is evidence that its own symbol exists")
 

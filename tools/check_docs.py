@@ -77,8 +77,8 @@ def source_text():
             # rfm69_lib is this project's own driver, not a vendored tree.
             if any(s in f for s in ("third_party", "/Drivers/", "/Middlewares/")):
                 continue
-            # The exemption list must not be evidence that its own names exist.
-            if f.endswith("docs_allow.txt"):
+            # Both name symbols in order to say they must not exist.
+            if f.endswith(("docs_allow.txt", "test_check_docs.py")):
                 continue
             p = os.path.join(root, f)
             try:
