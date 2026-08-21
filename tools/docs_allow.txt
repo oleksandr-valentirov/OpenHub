@@ -1,0 +1,25 @@
+# Names the documentation may use that the code does not define.
+# Every line is a deliberate exemption with its reason, so a new stale name is
+# never absorbed by a growing list. tools/check_docs.py reads this.
+
+# Algebra, not identifiers: the slot-budget derivations in radio/tdma.md.
+t_air
+t_hub
+t_latch
+tx_seq
+# The clock tree's own name for the RNG source, from the reference manual.
+hsi48_ck
+# A term in the key-agreement formula, not a variable in either firmware.
+hub_ephemeral
+
+# Deliberately named as absent or as history. Each page says so where it names
+# them; the check would otherwise flag exactly the sentences that are correct.
+radio_init          # open_hub/testing/on-target.md lists it as naming nothing
+pairing_arm_invite  # likewise
+rfm_ms_counter      # likewise
+RFM_add_device_routine  # radio/joining.md and ADR-0009: the previous implementation
+RADIO_PAIR_EXCHANGE_US  # radio/pairing.md: the macro that used to sum four frames
+wire_v2             # a superseded vector set, discussed as history
+
+# Deleted, and both pages now say so; they name the path to say what is gone.
+CM7/Core/Src/cmox_low_level.c
