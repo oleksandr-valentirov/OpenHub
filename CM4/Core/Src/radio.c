@@ -1423,8 +1423,12 @@ static void rx_note_sync(uint8_t flags1) {
     sync_was_set = now;
 }
 
-/* Everything still to be keyed once the sync word has passed. */
-#define SYNC_RSSI_WINDOW_US  RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES)
+/* Keyed after the sync word, and lag is measured from that same edge.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+#define SYNC_RSSI_WINDOW_US  RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES)
+/* A span from the sync edge cannot be as long as the frame that contains it. */
+_Static_assert(SYNC_RSSI_WINDOW_US < RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES),
+               "the RSSI window is measured from the sync edge, not from frame start");
 
 /* Which slot an edge landed in, off its offset. 0xFF is outside the region.
  * radio_devices_docs/radio/tdma.md */
