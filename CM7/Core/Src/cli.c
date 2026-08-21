@@ -717,6 +717,10 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                     (unsigned long)dl.sent, (unsigned long)dl.opportunities,
                     dl.next_slot, (unsigned long)dl.seal_err,
                     (unsigned long)dl.tx_err, (unsigned long)dl.no_device);
+            /* Only ever 0, so it says nothing yet. ROADMAP item 36 */
+            if (dl.nonce_refused != 0u)
+                cli_out(cli, "downlink: %lu seal(s) refused, the nonce tuple was"
+                             " not new\r\n", (unsigned long)dl.nonce_refused);
             /* Sent is not delivered: no uplink field acknowledges a command. */
             cli_out(cli, "  cmds %lu sent, %lu acked, %lu lost, %lu replaced\r\n",
                     (unsigned long)dl.cmd_sent, (unsigned long)dl.cmd_acked,
@@ -1591,6 +1595,32 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
                 (unsigned long)dev_id);
         return 0;
     }
+    /* Reads the downlink nonce guard, sealing nothing. ROADMAP item 36 */
+    if (strcmp(argv[1], "dlnonce") == 0 && argc == 2) {
+        ipc_dl_nonce_probe_t pr;
+
+        if (rfm_request(IPC_REQ_DL_NONCE_PROBE, 0, NULL, 0) != IPC_ST_OK ||
+            rfm_reply.len < sizeof(pr)) {
+            cli_out(cli, "\r\ndlnonce: no reply\r\n");
+            return 0;
+        }
+        memcpy(&pr, rfm_reply.payload, sizeof(pr));
+        if (!pr.used) {
+            cli_out(cli, "\r\ndlnonce: nothing sealed yet, so nothing to read\r\n");
+            return 0;
+        }
+        cli_out(cli, "\r\ndlnonce: dev 0x%08lX last sealed at sf %lu\r\n",
+                (unsigned long)pr.dev_id, (unsigned long)pr.last_sf);
+        /* The expected column is the test; a bare verdict would agree with itself. */
+        cli_out(cli, "  same sf   %u (want 0)\r\n"
+                     "  next sf   %u (want 1)\r\n"
+                     "  prev sf   %u (want 0)\r\n  %s\r\n",
+                pr.verdict_same, pr.verdict_next, pr.verdict_prev,
+                (pr.verdict_same == 0u && pr.verdict_next == 1u &&
+                 pr.verdict_prev == 0u) ? "guard reads both ways"
+                                        : "GUARD IS WRONG");
+        return 0;
+    }
     if (strcmp(argv[1], "spiloop") == 0 && argc <= 3) {
         ipc_spi_loop_t r;
         uint32_t n = (argc == 3) ? (uint32_t)strtoul(argv[2], NULL, 0) : 200u;
@@ -1740,6 +1770,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         "add <id> <pubkey>       - enrol and open a pairing window\r\n"
         "hubkey recover|commit   - carry a hub key across a format change\r\n"
         "remove <id>             - forget a device\r\n"
+        "dlnonce                 - read the downlink nonce guard, sealing nothing\r\n"
         "list                    - enrolled devices and their slots\r\n"
         "hubkey [gen]            - the hub's long-term identity\r\n"
         "pair                    - pairing state machine\r\n"

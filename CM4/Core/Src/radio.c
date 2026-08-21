@@ -77,6 +77,8 @@ typedef struct dev_entry {
     uint8_t  dl_cmd_seq;        /**< names the command, so an ack can refer to it */
     uint8_t  dl_acked;          /**< the device echoed this seq back */
     uint8_t  dl_ack_arg;        /**< ... and what it said it applied, never what was asked */
+    uint32_t dl_nonce_sf;       /**< the superframe of the last downlink sealed for it */
+    uint8_t  dl_nonce_used;     /**< ... and whether there was one, since 0 is a real one */
     uint32_t cyc_last_sf;       /**< superframe of the last cycle that arrived */
     uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
     uint16_t cyc_n;
@@ -205,6 +207,7 @@ static uint32_t pi_frf;      /* RegFrf read back after the transmit */
 static uint8_t  pi_paylen;
 static uint32_t pi_last_sent_sf;
 static uint32_t dl_opportunities;
+static uint32_t dl_nonce_refused;
 static int16_t  up_rssi_peak_x2 = -32768, up_rssi_floor_x2 = 32767;
 static uint8_t  up_grid;            /* the channel the open window is tuned to */
 /* Summed per received frame, for a fit of the correction against the channel.
@@ -633,6 +636,14 @@ static void RFM_send_join_beacon(void) {
         join_tx_err++;
 }
 
+/* Only the superframe varies in a downlink's nonce, so it must be strictly newer.
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
+static uint8_t dl_nonce_is_new(const dev_entry_t *d, uint32_t sf) {
+    if (!d->dl_nonce_used)
+        return 1u;
+    return ((int32_t)(sf - d->dl_nonce_sf) > 0) ? 1u : 0u;
+}
+
 /* One filler for the poll reply and the arrival event: two would drift. */
 static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     memset(d, 0, sizeof(*d));
@@ -765,6 +776,30 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         t.calib_age_tk  = calib_age_tk();
         t.late_over     = late_over;
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));
+        return;
+    }
+    /* Reads the live guard at three superframes and seals nothing. */
+    case IPC_REQ_DL_NONCE_PROBE: {
+        ipc_dl_nonce_probe_t pr;
+        const dev_entry_t *d = NULL;
+        uint8_t i;
+
+        memset(&pr, 0, sizeof(pr));
+        for (i = 0; i < RADIO_MAX_DEVICES; i++) {
+            if (devices[i].used && devices[i].dl_nonce_used) {
+                d = &devices[i];
+                break;
+            }
+        }
+        if (d != NULL) {
+            pr.dev_id       = d->dev_id;
+            pr.last_sf      = d->dl_nonce_sf;
+            pr.used         = 1u;
+            pr.verdict_same = dl_nonce_is_new(d, d->dl_nonce_sf);
+            pr.verdict_next = dl_nonce_is_new(d, d->dl_nonce_sf + 1u);
+            pr.verdict_prev = dl_nonce_is_new(d, d->dl_nonce_sf - 1u);
+        }
+        (void)ipc_send_reply(req, IPC_ST_OK, &pr, (uint8_t)sizeof(pr));
         return;
     }
     /* The real PRF on a caller-supplied block, comparable against a host AES. */
@@ -1132,6 +1167,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.seal_err      = dl_seal_err;
         d.tx_err        = dl_tx_err;
         d.no_device     = dl_no_device;
+        d.nonce_refused = dl_nonce_refused;
         d.prf_err       = dl_prf_err;
         d.last_hz       = dl_last_hz;
         d.last_superframe = dl_last_sf;
@@ -1902,11 +1938,20 @@ static void downlink_service(void) {
     /* SUPERFRAME_US of nominal time, so seconds is a multiply, not a divide. */
     body.hub_time_s = frame_counter * (SUPERFRAME_US / 1000000u);
 
+    if (!dl_nonce_is_new(d, frame_counter)) {
+        dl_nonce_refused++;
+        return;
+    }
+
     memset(&f, 0, sizeof(f));
     f.type       = RADIO_FRAME_DOWNLINK;
     f.version    = RADIO_LINK_VERSION;
     f.slot       = d->slot;
     f.superframe = frame_counter;
+
+    /* Spent at the cipher, not at its success: a retry would be a second body. */
+    d->dl_nonce_sf   = frame_counter;
+    d->dl_nonce_used = 1;
 
     aead_nonce(nonce, f.superframe, d->dev_id, RADIO_DIR_DOWNLINK, f.slot);
     if (aead_seal(d->session_key, nonce, (const uint8_t *)&f, RADIO_DOWNLINK_AAD_LEN,

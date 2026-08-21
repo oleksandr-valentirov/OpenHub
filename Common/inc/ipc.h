@@ -33,6 +33,7 @@ enum {
     IPC_REQ_SET_DEVICE_PARAM,
     IPC_REQ_GET_TIMING,
     IPC_REQ_HOP_PRF,
+    IPC_REQ_DL_NONCE_PROBE,
     IPC_REQ_GET_PAIR_STATE,
     IPC_REQ_QUIESCE,         /**< test scaffolding: force a quiesce with no device */
     IPC_REQ_GET_STORE,
@@ -426,9 +427,26 @@ typedef struct ipc_downlink_state {
     uint32_t cmd_replaced;   /**< queued over one that had not flown yet */
     uint32_t cmd_acked;      /**< the device echoed the seq back */
     uint32_t cmd_lost;       /**< every repeat spent and no echo ever came */
+    uint32_t nonce_refused;  /**< seals refused because the tuple was not new */
 } __attribute__((packed)) ipc_downlink_state_t;
 _Static_assert(sizeof(ipc_downlink_state_t) <= IPC_PAYLOAD_MAX,
                "ipc_downlink_state_t too large");
+
+/**
+ * @brief Reply for IPC_REQ_DL_NONCE_PROBE: the guard's verdict, with nothing sealed.
+ *
+ * radio_devices_docs/radio/crypto/wire-crypto.md
+ */
+typedef struct ipc_dl_nonce_probe {
+    uint32_t dev_id;         /**< whom the last downlink was sealed for, 0 if none */
+    uint32_t last_sf;        /**< the superframe it was sealed at */
+    uint8_t  used;           /**< 0 means nothing has been sealed for it yet */
+    uint8_t  verdict_same;   /**< the guard's answer at last_sf: must be 0 */
+    uint8_t  verdict_next;   /**< ... and at last_sf + 1: must be 1 */
+    uint8_t  verdict_prev;   /**< ... and at last_sf - 1: must be 0 */
+} __attribute__((packed)) ipc_dl_nonce_probe_t;
+_Static_assert(sizeof(ipc_dl_nonce_probe_t) <= IPC_PAYLOAD_MAX,
+               "ipc_dl_nonce_probe_t too large");
 
 /* Reply payload for IPC_REQ_SPI_LOOP. */
 typedef struct ipc_spi_loop {
