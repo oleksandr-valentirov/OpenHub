@@ -69,12 +69,135 @@ instant the receiver comes up. Set it near the part's sensitivity; the hub uses
 -100 dBm, chosen against a measured -108 floor with bursts to -79.
 
 **`RegTestDagc` (0x6F), reset `0x00`.** The legacy mode. Datasheet 3.4.4 asks for
-`0x30` at every setting this part runs at. Also collapses the *rate* at which a
+`0x30` at every setting this part runs at.
+
+**`0x20` is not "the setting for a low modulation index".** It is the DAGC value
+that pairs with `AfcLowBetaOn` in `RegAfcCtrl` (0x0B), and selecting it while
+that bit is 0 sets half of a pair. Tried on the strength of the constant's name
+after the modulation index fell to 1: reception went from 8-10 sync matches in 21
+to **0 in 15**, and was reverted. The register comment already said `0x30` at
+every setting this part runs at, and the name `_LOWBETA` was read over it. Also collapses the *rate* at which a
 triggered RSSI measurement completes - by about 8000x - which is a second,
 independent way to see whether it took effect.
 
 **`RegRxBw` (0x19) `DccFreq`, bits 7:5, reset 0.** Sixteen times the recommended
 corner. `RFM69_DCC_DEFAULT` is `0x80` (DccFreq 4).
+
+### The bandwidth field of the same register, and how a rate change spent it
+
+`rfm69_rx_bandwidth_to_reg()` picks **the narrowest encodable setting that is at
+least what it is asked for**, so asking for the signal width gets a filter
+exactly as wide as the signal and not one hertz wider. At 25 kbps the hub asked
+for 100 kHz against a 75 kHz signal and carried 25 kHz of slack it never knew it
+had. Doubling to 50 kbps made the signal 100 kHz and spent all of it in one
+constant change, with nothing in the build disagreeing.
+
+The signature is specific and worth recognising: **sync word matches, payload
+fails CRC.** The preamble and the four sync bytes survive a filter that clips
+sidebands; thirty-one bytes of payload do not. `sync 10, crc err 9, frames 1`
+with `RegBitrate` and `RegFdev` reading back exactly correct is not a modem
+mismatch and not a level problem — it is the channel filter.
+
+Three things make it invisible until it fails:
+
+- **`AfcAutoOn` was 0 here for the whole of that period**, so nothing corrected an
+  off-centre carrier and `RegFei` read `0x0000` — the one measurement that would
+  have sized the margin was the one the configuration disabled. It is on now, and
+  the first thing it measured was 11230 Hz against a 12000 Hz allowance.
+- The required width is `2 * (fdev + BR/2) + 2 * carrier_error`, and the carrier
+  error term is usually absent from whatever assert guards it. Carson's rule
+  alone is the zero-margin case.
+- The device's value and the hub's are chosen independently. Here the WL55 side
+  held `0x0Bu` (117.3 kHz) behind a comment reading "nearest step above the hub's
+  100 kHz" — anchored to the hub's number at a bit rate that had since changed,
+  and invisible to any assert on the hub's constant.
+
+Encodable steps near this range, `FXOSC / (mant << (exp + 2))`: 83.3 (24,2),
+**100.0 (20,2)**, **125.0 (16,2)**, 166.7 (24,1), 200.0 (20,1) kHz. Each step up
+costs `10 log10` of the ratio in noise bandwidth — 100 → 125 kHz is ~0.97 dB.
+
+**Read `0x19` back off the part after changing it.** `0x8a` is (20,2); `0x82` is
+(16,2). The constant in the header is what was asked for, not what was encoded.
+
+### The carrier sits kilohertz low, and a burst-length bias will inflate it
+
+Measured off the air, not off the part. Two bursts in the same superframe on the
+same channel are controls for each other: the beacon at t=0 goes out immediately
+after the retune, the downlink at t=25 ms goes out on the same carrier with
+25 ms more settling. Mean instantaneous frequency over each burst, seven
+superframes on seven different channels:
+
+```
+burst              bytes   carrier      fdev   (fdev is 24963 off the part)
+hub beacon   ch24     14   -21817      18830
+hub downlink ch24     31    -7301      22916
+DEV uplink   ch24     31     -944      23230
+hub beacon   ch3      14   -23020      17424
+hub downlink ch3      31   -12464      22546
+DEV uplink   ch3      31    -1414      24104
+```
+
+**Only the matched-length rows may be compared.** The two 31-byte rows on each
+channel are one board against another through the same estimator: this part sits
+**7 to 12 kHz low** while the peer's SX126x is under 1.5 kHz. That is real and it
+is the reason AFC matters here.
+
+**The beacon rows look like a settling transient and cannot be read as one.** The
+beacon is both the shortest burst *and* the earliest, so burst length and
+settling time move together and no comparison of those two rows separates them.
+The `fdev` column shows the bias directly - 25% low at 14 bytes, 8% at 31 - so
+the extra 10 kHz at t=0 is at least partly the estimator. An apparent transient
+was written into this file on that comparison and had to be withdrawn.
+
+The peer's receiver was the witness that settled it: 8.65 kHz of filter slack and
+**zero missed beacons on all 28 channels**, which a genuinely 22 kHz-low carrier
+would not survive.
+
+**Confounding is not a property of bad measurements.** Both benches produced one
+in the same evening - a channel-versus-band list where the two were the same
+split, and a settling-versus-length pair where the two moved together. Both were
+plausible, both had controls, and neither control varied the thing that mattered.
+Ask what *else* changes when the variable does, before quoting the number.
+
+**Filter before you discriminate, or the number is quietly wrong.** The first
+version of this measurement mixed to baseband and skipped the low-pass, so the
+discriminator saw the whole 2.4 MHz capture. It returned a *plausible* carrier
+(+6276 Hz of settling, sd 1998, consistent in sign across seven pairs) and was
+out by more than a factor of two. What exposed it was asking the same code for
+the deviation, where the same defect produced **255 kHz for a 25 kHz signal** -
+absurd rather than merely wrong.
+
+So: put a quantity with a known answer through every estimator. The carrier had
+no such reference and absorbed the error silently; `RegFdev` read off the part
+gave the deviation one, and that is the only reason the carrier figure was
+caught. **An estimator with no control is a plausible-number generator.**
+
+Even filtered, this deviation estimator under-reports and under-reports short
+bursts worst - 18.8 kHz for a beacon whose register says 24 963. Use it to
+compare two bursts, never to state a deviation.
+
+Consequences that look like other faults:
+
+- **A receive window opened shortly before an expected frame receives on a
+  moving reference.** Sync matches on the eight bytes at the front and the
+  payload behind it fails CRC, which reads exactly like a bandwidth or
+  sensitivity problem and is neither. Widening `RegRxBw` buys margin against a
+  static offset and nothing at all against a drifting one.
+- **Low modulation index multiplies it.** At h = 2 the tones sit at ±fdev
+  against half that bit rate; at h = 1 the same absolute drift eats twice the
+  decision margin. The drift is the cause and h = 1 sets the threshold at which
+  it starts costing frames.
+- **A retune to the channel the part is already on restarts the transient.**
+  Tuning "explicitly rather than inheriting" is defensible for correctness and
+  expensive here, and the cost lands on whatever arrives next.
+
+**Measure it with the SDR, never with the part**: the transmitter reads its own
+`RegFrf` back correctly the whole time, because the register is right and the
+oscillator is not. This is the `sdr` skill's pairing in its purest form.
+
+Use the *mean* instantaneous frequency over the burst, not a spectrogram peak - a
+peak lands on whichever FSK tone the data favoured and measures the modulation as
+much as the carrier.
 
 ## SPI: 6.25 MHz corrupts FIFO reads, and it is not a speed limit
 
@@ -166,6 +289,37 @@ and the band looks flat and quiet.
   with no second chance at it.
 - The driver returns a **negative** half-dB value. `x2 / 2` is dBm; negating it
   again yields a positive "dBm" that looks plausible and is wrong.
+
+**The "it must be stale" reading has been proposed once and refuted.** Reading
+the code alone says `rfm69_get_rssi()` triggers nothing, so the value must belong
+to some earlier receive - and that argument was written into the roadmap before
+anyone checked what a stale sample would have *read*. The part shows -92 dBm at
+rest and the between-frames survey gives -86/-97; `rssi_up` came back at -25,
+which is what a device a metre away should produce. The receiver's startup gates
+its AGC and AFC phases behind RSSI crossing the threshold, so a restart parks
+until a signal arrives rather than sampling the noise it restarted into. **The
+line above already said this and was contradicted from first principles anyway.**
+
+## AFC: the one latch that is tied to its packet
+
+`RegAfcFei` bit 2 is `AfcAutoOn` and bit 3 `AfcAutoclearOn`. With both set the
+correction is measured at every receiver start-up and the previous one dropped
+first, so `RegAfcValue` read after `PayloadReady` belongs to the packet just
+received. That is the difference from RSSI and it is why the AFC read needs no
+trigger of its own.
+
+- **Read it before draining the FIFO.** `AutoRxRestartOn` re-arms the receiver
+  when the payload is read out, and the next start-up overwrites the value.
+- `RegAfcValue` is the correction *applied*; `RegFei` is what is left after it,
+  and reads near zero while AFC is on. Reading `RegFei` to measure the error with
+  AFC enabled returns the residual and looks like a clean carrier.
+- **`AfcDone` sets on noise.** It proves the block runs, which is worth knowing
+  once, and says nothing about any frame. A first non-zero value is evidence
+  about the instrument before it is evidence about the carrier.
+- Measured on this board: **11230 Hz** on the first sample, against a
+  `RADIO_CARRIER_ERR_HZ` of 12000 that had never been measured. About 13 ppm at
+  866 MHz, which is an ordinary crystal and not a fault in anyone's code.
+- The sign convention has **not** been verified against an outside witness.
 
 ## Telling a dead receiver from an empty band
 
