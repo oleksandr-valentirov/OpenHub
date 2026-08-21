@@ -782,6 +782,10 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             memcpy(&ud, rfm_reply.payload, sizeof(ud));
             cli_out(cli, "uplink level: peak %d dBm, floor %d dBm\r\n",
                     ud.up_rssi_peak, ud.up_rssi_floor);
+            /* No uplink bucket can hold it, and its denominator differs.
+             * radio_devices_docs/open_hub/cli.md */
+            cli_out(cli, "crc err %lu, every channel, since the last pairing"
+                         " window opened\r\n", (unsigned long)ud.crc_err);
         }
     }
     {
@@ -930,8 +934,9 @@ static int cmd_device_pair(cli_data_t *cli) {
         if (rfm_request(IPC_REQ_GET_RXDIAG, 0, NULL, 0) == IPC_ST_OK &&
             rfm_reply.len >= sizeof(d)) {
             memcpy(&d, rfm_reply.payload, sizeof(d));
-            /* Since this window opened, not since boot. */
-            cli_out(cli, "rx (this window): sync %lu, crc err %lu, frames %lu\r\n",
+            /* Since this window opened, and every channel. ROADMAP item 13 */
+            cli_out(cli, "rx since this window opened, every channel:"
+                         " sync %lu, crc err %lu, frames %lu\r\n",
                     (unsigned long)d.sync_match, (unsigned long)d.crc_err,
                     (unsigned long)d.frames);
             /* Each one is a window that would otherwise have ended there. */
