@@ -37,3 +37,12 @@ radio/tdma.md:RADIO_AIRTIME_US           # quoted defect, dated in the sentence
 # Deleted, and both pages name the path in order to say it is gone.
 open_hub/decisions/0011-mbedtls-on-cm7-only.md:CM7/Core/Src/cmox_low_level.c  # ADR record
 open_hub/security/crypto-architecture.md:CM7/Core/Src/cmox_low_level.c        # says it went
+
+# Contract pseudo-code and formula variables inside fences: what both firmwares
+# must compute, written in the units of the contract rather than in either
+# implementation's symbols.
+radio/tdma.md:superframe_start_us      # the contract in us; the code holds ticks
+open_hub/radio/timebase.md:rate_Hz     # variable in the calibration derivation
+open_hub/radio/timebase.md:true_ppm    # likewise
+# A udev device path in an untagged fence, not a symbol.
+open_hub/testing/on-target.md:STMicroelectronics_STLINK  # the console's by-id path

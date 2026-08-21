@@ -96,16 +96,21 @@ def doc_pages():
                     yield os.path.join(dirpath, n)
 
 
-def owned_names(text):
-    """Project names inside expressions and fenced blocks, not only alone in ticks.
+def owned_names(text, fenced):
+    """Names inside an expression or a fence, with the two read differently.
 
-    Live arithmetic gets written in code fences, which is the one place the first
-    version of this tool did not look.
+    A fence is code, so every snake_case name in it is a claim and the scan is
+    wide. Inline backticks are prose mentioning code, where `device_id(4)` is a
+    field width and not a call, so only project-owned prefixes are read there.
+    Live arithmetic goes in fences, which is where recall has to be paid for.
     """
     out = set()
     for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", text):
         n = m.group(0)
         if n.startswith(OWNED) and len(n) > 5:
+            out.add(n)
+        elif fenced and len(n) >= 6 and "_" in n and not n.isupper() \
+                and not n.startswith("_") and not n.startswith(FOREIGN):
             out.add(n)
     return out
 
@@ -133,9 +138,12 @@ def main():
                     and not n.startswith(FOREIGN):
                 names.add(n)
         # Backticked expressions and fenced blocks, project-owned names only.
-        for chunk in re.findall(r"`([^`\n]*)`", text) + \
-                re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
-            names |= owned_names(chunk)
+        for chunk in re.findall(r"`([^`\n]*)`", text):
+            names |= owned_names(chunk, False)
+        # A shell fence is commands, not this project's symbols.
+        for lang, chunk in re.findall(r"```([a-z]*)\n(.*?)```", text, re.S):
+            names |= owned_names(chunk, lang not in ("bash", "sh", "console",
+                                                     "text", "ini"))
 
         for n in sorted(names):
             if n in words:
