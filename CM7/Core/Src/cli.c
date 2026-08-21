@@ -1692,10 +1692,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
             cli_out(cli, "\r\nError: quiesce expects 1..ff superframes\r\n");
             return 0;
         }
-        {
-            uint8_t n = (uint8_t)value;
-            rc = rfm_request(IPC_REQ_QUIESCE, 0, &n, 1);
-        }
+        rc = rfm_request(IPC_REQ_QUIESCE, (uint8_t)value, NULL, 0);
         if (rc < 0)
             cli_out(cli, "\r\nError: CM4 did not answer\r\n");
         else if (rc != IPC_ST_OK)

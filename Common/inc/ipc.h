@@ -15,7 +15,7 @@
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
 /* 3 widened the payload, which is exactly what the half-flash gate is for.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      3u
+#define IPC_VERSION      4u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  32u
@@ -504,7 +504,8 @@ typedef struct ipc_msg {
     uint8_t  type;
     uint8_t  status;                  /**< replies only */
     uint8_t  len;
-    uint8_t  reserved[3];
+    uint8_t  arg;                     /**< requests only, and never inside the payload */
+    uint8_t  reserved[2];
     uint8_t  payload[IPC_PAYLOAD_MAX];
 } __attribute__((aligned(4))) ipc_msg_t;
 
@@ -543,13 +544,17 @@ int ipc_ready(void);
 /**
  * @brief Pushes one request, CM7 to CM4.
  * @param type     the IPC_REQ_* being asked for
+ * @param arg      the one-byte selector, in its own field so no handler can miscount
  * @param payload  the body, or NULL
  * @param len      its length, at most IPC_PAYLOAD_MAX
  * @param seq_out  receives the sequence number a reply must echo
  * @retval  0  queued
  * @retval !=0 the ring was full; nothing is retried
+ *
+ * radio_devices_docs/open_hub/arch/ipc.md
  */
-int ipc_send_request(uint8_t type, const void *payload, uint8_t len, uint16_t *seq_out);
+int ipc_send_request(uint8_t type, uint8_t arg, const void *payload, uint8_t len,
+                     uint16_t *seq_out);
 
 /**
  * @brief Takes the reply matching one sequence number, on CM7, without blocking.

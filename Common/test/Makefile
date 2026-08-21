@@ -16,6 +16,9 @@ VECTORS = vectors/hop_v1.h vectors/wire_v3.h vectors/pair_v2.h vectors/link_v5.h
 test_hop: test_hop.c ../src/hop.c ../inc/hop.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_hop.c ../src/hop.c
 
+test_ipc: test_ipc.c ../inc/ipc.h
+	$(CC) $(CFLAGS) -o $@ test_ipc.c
+
 test_link: test_link.c ../inc/radio_protocol.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_link.c
 
@@ -23,10 +26,11 @@ test_slots: test_slots.c ../inc/radio_slots.h ../inc/radio_protocol.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_slots.c
 
 .PHONY: check clean
-check: test_hop test_slots test_link
+check: test_hop test_slots test_link test_ipc
 	./test_hop
 	./test_slots
 	./test_link
+	./test_ipc
 
 clean:
-	rm -f test_hop test_slots test_link
+	rm -f test_hop test_slots test_link test_ipc

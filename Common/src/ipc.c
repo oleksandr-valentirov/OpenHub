@@ -62,11 +62,12 @@ static void ipc_ring_doorbell(uint32_t sem) {
 }
 
 static void msg_fill(ipc_msg_t *m, uint16_t seq, uint8_t type, uint8_t status,
-                     const void *payload, uint8_t len) {
+                     uint8_t arg, const void *payload, uint8_t len) {
     memset(m, 0, sizeof(*m));
     m->seq = seq;
     m->type = type;
     m->status = status;
+    m->arg = arg;
     m->len = (len > IPC_PAYLOAD_MAX) ? IPC_PAYLOAD_MAX : len;
     if (payload != NULL && m->len > 0u)
         memcpy(m->payload, payload, m->len);
@@ -83,7 +84,8 @@ int ipc_ready(void) {
     return (shared_ipc.magic == IPC_MAGIC) && (shared_ipc.version == IPC_VERSION);
 }
 
-int ipc_send_request(uint8_t type, const void *payload, uint8_t len, uint16_t *seq_out) {
+int ipc_send_request(uint8_t type, uint8_t arg, const void *payload, uint8_t len,
+                     uint16_t *seq_out) {
     ipc_msg_t m;
     uint16_t seq;
 
@@ -91,7 +93,7 @@ int ipc_send_request(uint8_t type, const void *payload, uint8_t len, uint16_t *s
         return 1;
 
     seq = alloc_seq();
-    msg_fill(&m, seq, type, 0, payload, len);
+    msg_fill(&m, seq, type, 0, arg, payload, len);
     if (!ring_push(&shared_ipc.req, &m))
         return 1;
 
@@ -125,7 +127,7 @@ int ipc_poll_request(ipc_msg_t *out) {
 int ipc_send_reply(const ipc_msg_t *req, uint8_t status, const void *payload, uint8_t len) {
     ipc_msg_t m;
 
-    msg_fill(&m, req->seq, req->type, status, payload, len);
+    msg_fill(&m, req->seq, req->type, status, 0, payload, len);
     if (!ring_push(&shared_ipc.rsp, &m))
         return 1;
 
@@ -143,7 +145,7 @@ int ipc_send_event(uint8_t type, const void *payload, uint8_t len, uint16_t *seq
         return 1;
 
     seq = alloc_seq();
-    msg_fill(&m, seq, type, 0, payload, len);
+    msg_fill(&m, seq, type, 0, 0, payload, len);
     if (!ring_push(&shared_ipc.evt, &m))
         return 1;
 
@@ -182,7 +184,7 @@ int ipc_poll_event(ipc_msg_t *out) {
 int ipc_send_event_reply(const ipc_msg_t *evt, uint8_t status, const void *payload, uint8_t len) {
     ipc_msg_t m;
 
-    msg_fill(&m, evt->seq, evt->type, status, payload, len);
+    msg_fill(&m, evt->seq, evt->type, status, 0, payload, len);
     if (!ring_push(&shared_ipc.evt_rsp, &m))
         return 1;
 

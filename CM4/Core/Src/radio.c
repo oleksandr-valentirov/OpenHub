@@ -728,18 +728,18 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
     switch (req->type) {
     case IPC_REQ_READ_REG:
-        if (rfm69_read_reg(&radio, req->payload[0], &reply) != RFM69_OK)
+        if (rfm69_read_reg(&radio, req->arg, &reply) != RFM69_OK)
             status = IPC_ST_RADIO_ERR;
         len = 1;
         break;
     case IPC_REQ_ADD_DEVICE: {
         uint32_t dev_id;
 
-        if (req->len < 1u + sizeof(dev_id)) {
+        if (req->len < sizeof(dev_id)) {
             status = IPC_ST_BAD_ARG;
             break;
         }
-        memcpy(&dev_id, &req->payload[1], sizeof(dev_id));
+        memcpy(&dev_id, req->payload, sizeof(dev_id));
         reply = RFM_open_pairing(dev_id);
         len = 1;
         break;
@@ -771,11 +771,11 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_HOP_PRF: {
         uint8_t in[16], out[16];
 
-        if (req->len < 1u + sizeof(in)) {
+        if (req->len < sizeof(in)) {
             status = IPC_ST_BAD_ARG;
             break;
         }
-        memcpy(in, &req->payload[1], sizeof(in));
+        memcpy(in, req->payload, sizeof(in));
         memset(out, 0, sizeof(out));
         hop_prf_aes(NULL, in, out);
         (void)ipc_send_reply(req, IPC_ST_OK, out, (uint8_t)sizeof(out));
@@ -812,11 +812,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     /* Test scaffolding: a quiesce is otherwise reachable only by a real device.
      * radio_devices_docs/open_hub/testing/sdr.md */
     case IPC_REQ_QUIESCE:
-        if (req->len < 1u) {
-            status = IPC_ST_BAD_ARG;
-            break;
-        }
-        reply = begin_quiesce(req->payload[0]);
+        reply = begin_quiesce(req->arg);
         len = 1;
         break;
     case IPC_REQ_GET_STORE: {
@@ -840,22 +836,18 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_INSTALL_DEVICE: {
         ipc_device_keys_t k;
 
-        if (req->len < 1u + sizeof(k)) {
+        if (req->len < sizeof(k)) {
             status = IPC_ST_BAD_ARG;
             break;
         }
-        memcpy(&k, &req->payload[1], sizeof(k));
+        memcpy(&k, req->payload, sizeof(k));
         if (install_device(&k) != 0)
             status = IPC_ST_BAD_ARG;
         len = 0;
         break;
     }
     case IPC_REQ_SET_REPORT_RATE:
-        if (req->len < 2u) {
-            status = IPC_ST_BAD_ARG;
-            break;
-        }
-        report_every_grant = (req->payload[1] == 0u) ? 1u : req->payload[1];
+        report_every_grant = (req->arg == 0u) ? 1u : req->arg;
         reply = report_every_grant;
         len = 1;
         break;
@@ -903,8 +895,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
     /* The one knob that separates an overdriven front end from a dirty transmitter. */
     case IPC_REQ_SET_LNA: {
-        /* Passed as the arg byte, which lands in payload[0]; there is no struct. */
-        if (req->len < 1u || rfm69_set_lna_gain(&radio, req->payload[0]) != RFM69_OK)
+        if (rfm69_set_lna_gain(&radio, req->arg) != RFM69_OK)
             status = IPC_ST_BAD_ARG;
         len = 0;
         break;
@@ -1010,7 +1001,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         uint32_t n = 0, i, pass;
 
         memset(&r, 0, sizeof(r));
-        if (req->len >= 4) memcpy(&n, req->payload, 4);
+        if (req->len >= 4u) memcpy(&n, req->payload, 4);
         if (n == 0u || n > 2000u) n = 200u;
 
         /* Alternating high-bit bytes, so bit 7 shows in both directions. */
@@ -1078,7 +1069,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         uint8_t idx = 0;
         uint32_t sf = frame_counter;
 
-        if (req->len >= 5u) memcpy(&sf, &req->payload[1], 4);
+        if (req->len >= 4u) memcpy(&sf, req->payload, 4);
         memset(&h, 0, sizeof(h));
         h.superframe  = sf;
         h.placeholder = net_hop_key_set ? 0u : 1u;
@@ -1099,10 +1090,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_SET_PAIR_INIT: {
         ipc_pair_init_t p;
 
-        /* payload[1]: hub_ipc_call puts its arg byte at payload[0].
-         * radio_devices_docs/open_hub/arch/ipc.md */
-        if (req->len < 1u + sizeof(p)) { status = IPC_ST_BAD_ARG; break; }
-        memcpy(&p, &req->payload[1], sizeof(p));
+        if (req->len < sizeof(p)) { status = IPC_ST_BAD_ARG; break; }
+        memcpy(&p, req->payload, sizeof(p));
         if (p.len == 0u || p.len > sizeof(pi_frame) || p.superframe == 0u) {
             status = IPC_ST_BAD_ARG;
             break;
@@ -1202,13 +1191,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         uint32_t want;
         uint32_t i;
 
-        /* payload[0]: the arg byte, unlike SET_PAIR_INIT above.
-         * radio_devices_docs/open_hub/arch/ipc.md */
-        if (req->len < 1u) {
-            status = IPC_ST_BAD_ARG;
-            break;
-        }
-        want = req->payload[0];
+        want = req->arg;
         for (i = 0; i < RADIO_MAX_DEVICES; i++) {
             if (!devices[i].used)
                 continue;
@@ -1226,12 +1209,11 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         ipc_device_cmd_t c;
         uint32_t i;
 
-        /* The arg byte occupies payload[0]; the struct starts after it. */
-        if (req->len < 1u + sizeof(c)) {
+        if (req->len < sizeof(c)) {
             status = IPC_ST_BAD_ARG;
             break;
         }
-        memcpy(&c, &req->payload[1], sizeof(c));
+        memcpy(&c, req->payload, sizeof(c));
         status = IPC_ST_BAD_ARG;
         for (i = 0; i < RADIO_MAX_DEVICES; i++) {
             if (!devices[i].used || devices[i].dev_id != c.dev_id)
