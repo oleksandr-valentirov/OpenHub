@@ -79,17 +79,26 @@ assert shows is **one change**: 50 kbps, deviation left at 25 kHz, 194 slots of
 9400 µs, stride 65, **exactly 64 devices**, the 1400 µs guard untouched, largest
 gap 778 ms and 210 750 µs left for the hub.
 
-**Blocked on two things, not one.**
+**Blocked on one thing.** *Item 12* is what the first frames at the new rate
+found: 21 sent, 10 reached sync, 10 failed CRC, none accepted. The geometry is not
+what is wrong.
 
-*Item 12* is what the first frames at the new rate found: 21 sent, 10 reached
-sync, 10 failed CRC, none accepted. The geometry is not what is wrong.
+**The second blocker never existed, and this file carried it for a day.** It read:
+the device's replay floor is the superframe alone, so two of every three k = 3
+frames are refused. The sentence came from the device session's own roadmap, was
+believed here without being checked, and was wrong at both ends.
 
-*The device's replay floor*, confirmed 2026-08-22 and its item 21. The hub's is
-the tuple `(superframe, slot)` and the device's is the superframe alone, so the
-second and third frames of every superframe evaluate to zero age and are
-**refused as replays — two of every three.** It is refused after the tag
-verifies, so it presents as a replay counter climbing on a healthy link. Until
-that lands, a k = 3 PER run measures the floor and not the radio.
+Checked on 2026-08-22 against `HEAD` in both trees rather than against either
+working tree. A k = 3 frame is transmitted by the device and received *here*, and
+this side's floor is the tuple — `age < 0 || (age == 0 && f.slot <= rx_floor_slot)`
+in `CM4/Core/Src/radio.c` — so three slots rising inside one superframe are three
+strictly greater tuples and all three are accepted. The device's floor guards what
+the *device* receives, which is downlinks, and `dl_served` allows one of those per
+superframe. **There is no k = 3 anywhere near it.**
+
+A blocker is a claim about code and decays exactly like a measurement. Checking
+someone else's costs one `git grep` against `HEAD`; publishing your own unchecked
+costs the other side however long they believe it.
 
 What is left is the part no assert can do: **neither firmware has transmitted a
 single frame at 50 kbps that the other one could read.** Sensitivity is ~3 dB worse plus about a dB for the
@@ -727,47 +736,22 @@ longer says it.
 
 `radio/phy.md` § duty cycle.
 
-### 34. `RADIO_REPORT_FLAG_RESUMED` is on the wire and means nothing yet — `contract`
+### 36. The downlink nonce guard has never refused anything — `debt`
 
-The bit is defined, `0x04`, and both firmwares compile it. **Neither sets it.**
-The device session declined to set it rather than invent a meaning: it has two
-different self-imposed waits — a `tx_gate` refusal and a `reserve_covers` refusal
-— and picking one silently would have made the bit mean whatever it guessed.
+`dl_nonce_is_new()` is the per-device floor that makes the downlink's nonce
+uniqueness explicit instead of a side effect of `dl_served`'s scheduling. No path
+reaches it today — that was traced before it was written — so it is a guard for
+the day the scheduling variable is removed as the optimisation it resembles.
 
-The reader defines it, and the reader is the hub. Proposed, and awaiting the
-device session's agreement: **the first transmission after a silence the device
-imposed on itself**, whichever wait caused it. What the hub infers is the same
-either way — that the silence was the device's own choice and is therefore not
-evidence about the link. A reboot is not this; `uptime_s` carries that, and a
-device that rebooted *and* served a reservation should say both.
+**A counter that has only ever read 0 is indistinguishable from one that cannot
+read anything else.** `device dlnonce` is the control shipped with it rather than
+after it: it asks the live predicate for its verdict at the last sealed
+superframe, one past it and one before, prints the expected value beside each,
+and seals nothing. The three must read 0/1/0.
 
-**It cannot answer item 29 and must never be wired as though it could.** One
-retrospective report carries it; if that report is lost the hub never learns.
-Evidence when present, never evidence of absence.
+Unread until a boot. It joins item 35's four lines.
 
-`radio/tdma.md`, once agreed.
-
----
-
-### 35. Five IPC commands changed behaviour and none has run on a board — `debt`
-
-Closing item 24 moved the arg out of the payload, which changed what five request
-handlers read. Three of them had never worked: `device quiesce <n>` always ran
-four superframes, `device spiloop <n>` always ran 200 iterations, and
-`report rate <n>` was refused every time. The other two are the pair item 24
-already named.
-
-**The whole evidence is arithmetic.** Each was traced by computing what the
-handler read from what the caller sent, and the two silent ones were silent
-because a defensive default turned a wrong value into a plausible one. Nothing
-has been exercised on hardware.
-
-One boot settles it and it is four lines: `device quiesce 2` against a `timing`
-read, `device spiloop 50` against its own printed count, `report rate 4` for a
-status other than a refusal, and `rfm dump 10` for `0x24`. Cheap enough to ride
-along with the item 30 experiment rather than justify its own reset.
-
-`open_hub/arch/ipc.md`.
+`radio/crypto/wire-crypto.md`.
 
 ---
 

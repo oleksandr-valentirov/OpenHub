@@ -222,7 +222,7 @@ typedef struct radio_uplink_report {
  */
 #define RADIO_REPORT_FLAG_RSSI_STALE    0x01   /**< rssi_down is a last value, not a sentinel */
 #define RADIO_REPORT_FLAG_SUPPLY_STALE  0x02   /**< supply_mv was never measured, so do not read it */
-#define RADIO_REPORT_FLAG_RESUMED       0x04   /**< the first report after a counter wait */
+#define RADIO_REPORT_FLAG_RESUMED       0x04   /**< first report after a self-imposed silence */
 
 /**
  * @brief Device -> hub, sealed, in its own slot and carrying no dev_id.
