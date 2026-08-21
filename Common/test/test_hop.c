@@ -1,3 +1,9 @@
+/**
+ * @file test_hop.c
+ * @brief The hop sequence against published vectors, on a host where it can fail.
+ *
+ * radio_devices_docs/open_hub/testing/host-tests.md
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,8 +21,7 @@ static uint8_t ch(hop_ctx_t *c, uint32_t sf) {
 #define CHECK(c, ...) do { if(!(c)){ printf("FAIL %s:%d  ",__FILE__,__LINE__); \
     printf(__VA_ARGS__); printf("\n"); fails++; } } while(0)
 
-/* Stand-in for the hardware AES block: any decent avalanche will do, since the
- * property under test is the shuffle, not the cipher. */
+/* A stand-in for the AES block: the property under test is the shuffle. */
 static int test_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
     uint64_t h = 0xcbf29ce484222325ULL ^ (uint64_t)(uintptr_t)ctx;
     for (int i = 0; i < 16; i++) { h ^= in[i]; h *= 0x100000001b3ULL; }
@@ -26,14 +31,8 @@ static int test_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
 
 #define N 29
 
-/* Replays the pinned AES blocks instead of computing them, so this checks the
- * *shuffle* against an outside answer without needing AES on the host.
- *
- * The split is the point. A pinned deck says the sequence is wrong; it cannot
- * say whether the PRF or the Fisher-Yates is wrong. The primitive is pinned on
- * the silicon against FIPS-197 C.1 and the real hop key; the shuffle is pinned
- * here. Together they localise, which the device side asked for and was right
- * to. */
+/* Replays the pinned AES blocks, so this pins the shuffle and not the PRF.
+ * radio_devices_docs/open_hub/testing/host-tests.md */
 static int replay_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
     const uint8_t *s0 = HV_STREAM0, *s1 = HV_STREAM1;
     uint32_t cycle = ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) |
@@ -48,10 +47,8 @@ static int replay_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
     return 0;
 }
 
-/* The deck the shared vectors pin, byte for byte. Nothing else in this file
- * would notice a shuffle that changed: every other test here checks a property,
- * and a wrong shuffle still produces a uniform permutation with correct
- * occupancy, spread and the stateless-jump behaviour. */
+/* The deck the shared vectors pin, byte for byte, which no property test sees.
+ * radio_devices_docs/open_hub/testing/host-tests.md */
 static void test_pinned_deck(void) {
     hop_ctx_t c;
 
@@ -62,10 +59,8 @@ static void test_pinned_deck(void) {
     for (uint32_t i = 0; i < HOP_VEC_COUNT; i++)
         CHECK(ch(&c, HOP_VEC_COUNT + i) == HV_DECK1[i], "cycle 1 slot %u", i);
 
-    /* Cycle 0's counter block is all zeroes and identical under either endian
-     * convention, so a check that only ever looked at cycle 0 would pass for the
-     * hub's first 56 seconds and fail for ever afterwards. Cycle 1 is the one
-     * that can see it, which is why both are pinned. */
+    /* Cycle 0 is identical under either endian convention; cycle 1 is not.
+     * radio_devices_docs/radio/hopping.md */
     CHECK(memcmp(HV_STREAM0, HV_STREAM1, 32) != 0,
           "the two cycles must not produce the same stream");
 }
@@ -119,12 +114,8 @@ static void test_not_linear(void) {
     }
     for (int i = 0; i + 2 < 600; i++)
         if (seq[i+2] == (uint8_t)((2 * seq[i+1] + N - seq[i]) % N)) extrapolated++;
-    /* Not zero, and asserting zero was a coin flip: Fisher-Yates guarantees no
-     * repeat *within* a cycle and says nothing across one, so the last channel
-     * of a deck equals the first of the next with probability 1/N. Over 600 hops
-     * that is ~0.7 expected, so the old `== 0` passed about half the time and
-     * would eventually have failed looking like a regression. Measured over 400
-     * cycles: 0.107-0.134%, against PRF-mod-N's 3%. */
+    /* Not zero: repeats are guaranteed absent within a cycle, not across one.
+     * radio_devices_docs/open_hub/testing/host-tests.md */
     CHECK(repeats * 100 < 600, "%d/599 hops stayed on the same channel", repeats);
     CHECK(adjacent < 600 / 5, "%d/599 hops landed within 200 kHz", adjacent);
     CHECK(extrapolated < 600 / 8, "%d/598 hops guessable by extrapolation", extrapolated);
@@ -140,16 +131,8 @@ static void test_bad_args(void) {
     CHECK(hop_init(NULL, test_prf, NULL, N) != 0, "null ctx must be rejected");
 }
 
-/* Asserts the cost, not the answer.
- *
- * A shuffle that rebuilt the deck on every lookup is *correct* - same channel,
- * same permutation, same everything an output check can see - and costs 56 AES
- * blocks a minute on a core that is running a slot grid to microsecond
- * tolerances. Only a cost instrument sees it. This project already learned that
- * from a flash write that returned the right answer while erasing a page every
- * time; the device side pointed out that a pure function has the same exposure.
- *
- * Two blocks per cycle, because the deck needs 32 bytes of stream. */
+/* Asserts the cost, not the answer: two blocks per cycle.
+ * radio_devices_docs/open_hub/testing/host-tests.md */
 static unsigned prf_calls;
 
 static int counting_prf(void *ctx, const uint8_t in[16], uint8_t out[16]) {
@@ -173,16 +156,14 @@ static void test_prf_call_cost(void) {
         (void)ch(&c, HOP_VEC_COUNT + i);
     CHECK(prf_calls == 2, "cycle 1 took %u PRF calls, not 2", prf_calls);
 
-    /* Re-reading a superframe inside the cached cycle must cost nothing. A
-     * device that wakes, reads the beacon and asks twice is the normal case. */
+    /* Re-reading inside the cached cycle must cost nothing. */
     prf_calls = 0;
     for (int k = 0; k < 5; k++)
         (void)ch(&c, HOP_VEC_COUNT + 3u);
     CHECK(prf_calls == 0, "a repeat lookup inside the cached cycle cost %u calls",
           prf_calls);
 
-    /* Going back to a cycle that has been evicted must rebuild - the cache is
-     * one deck, and claiming otherwise would be a different bug. */
+    /* An evicted cycle must rebuild: the cache is one deck. */
     prf_calls = 0;
     (void)ch(&c, 0);
     CHECK(prf_calls == 2, "returning to cycle 0 took %u calls, not 2", prf_calls);
@@ -191,10 +172,8 @@ static void test_prf_call_cost(void) {
 static void test_pinned_samples(void) {
     hop_ctx_t c;
 
-    /* Far-apart superframes, including the counter's last value: the sequence is
-     * indexed rather than stepped, so a node that slept through a wrap must land
-     * where the hub does. Only the first two cycles are replayable, so this uses
-     * the property that matters here - that a jump is answered at all. */
+    /* Far-apart superframes, the counter's last value included.
+     * radio_devices_docs/radio/hopping.md */
     CHECK(hop_init(&c, replay_prf, NULL, HOP_VEC_COUNT) == 0, "init");
     for (unsigned i = 0; i < sizeof(HV_SAMPLE_CH); i++) {
         uint32_t sf = HV_SAMPLE_SF[i];
