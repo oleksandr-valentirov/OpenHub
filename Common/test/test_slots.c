@@ -92,7 +92,7 @@ int main(void) {
           <= RADIO_AIR_BUDGET_US);
     CHECK(RADIO_AIR_BUDGET_US == SUPERFRAME_US / 100u);
 
-    /* Half rate was forced at 25 kbps by 1.47%; at 50 kbps this is 0.74%.
+    /* 25 kbps forced half rate; at 50 kbps the three are 16.0 ms, 0.800%.
      * radio_devices_docs/radio/phy.md */
     CHECK(BEACON_AIR + JOIN_AIR + DOWNLINK_AIR <= RADIO_AIR_BUDGET_US);
 
