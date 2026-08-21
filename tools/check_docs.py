@@ -69,7 +69,9 @@ def source_text():
         roots.append("../wl55_device")
     blob = []
     for root in roots:
+        # --others: a new module is a definition before anyone stages it.
         files = subprocess.run(["git", "-C", root, "ls-files",
+                                "--cached", "--others", "--exclude-standard",
                                 "*.c", "*.h", "*.py", "*.sh", "*.txt", "*.ld",
                                 "CMakeLists.txt"],
                                capture_output=True, text=True).stdout.split()
