@@ -8,8 +8,11 @@ and my data security to their centralized servers.
 
 <h2>Documentation</h2>
 <p>
-Design reasoning lives in <a href="docs/README.md">docs/</a> &mdash; the dual-core split,<br>
-the radio PHY and hop sequence, the security model, and the decision records behind them.
+Design reasoning lives in a separate repository,
+<a href="../radio_devices_docs/README.md">radio_devices_docs</a>, shared with the
+sensor-node project &mdash; the dual-core split, the radio PHY and hop sequence,<br>
+the security model, and the decision records behind them. The air interface is
+specified there once, for both firmwares.
 </p>
 
 <h2>LWIP</h2>
