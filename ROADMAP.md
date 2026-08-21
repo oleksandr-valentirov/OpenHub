@@ -134,13 +134,12 @@ the frame arrives; two thirds of them do not.
 ### 3. The application payload has room and no application — `blocking`
 
 The wire change landed: both sealed bodies are 16 bytes, frames are 39, and
-`app_len` with `app[5]` uplink and `app[6]` downlink sit inside the air budget
-the slot already paid for. `link_v4` pins both directions and both firmwares
+`app_len` with `app[4]` uplink and `app[6]` downlink sit inside the air budget
+the slot already paid for. `link_v5` pins both directions and both firmwares
 compile the same digest.
 
 **Nothing writes into it.** `app_len` is 0 on every frame, so "exchanging
-messages" is still telemetry plus a command byte. The uplink loses one of the
-five bytes to `ack_arg` in item 32's hunk, so this is `app[4]` once that lands. This is an application question
+messages" is still telemetry plus a command byte. This is an application question
 now rather than a wire one, and the last blocking item that does not depend on
 the radio.
 
@@ -631,37 +630,25 @@ contradiction in item 31, since both readings subtract the same pre-sync term.
 
 `verification` skill § know which artifact each assert pins.
 
-### 22. The `uptime_s` comment is wrong, and it talked the hub out of a working field — `contract`
+### 22. `uptime_s` is trusted on arithmetic and unconfirmed on a board — `contract`
 
-**The entry said the field wraps at 4294.967 s. It does not.** The device session
-moved the fold out of `timebase.c` — where it needed no HAL and had simply never
-been reachable from a host test — and pinned it across the crossing: 4294 before,
-**4296 after**, 11496 two hours past. It accumulates seconds into its own counter
-and takes an unsigned difference, so the microsecond wrap passes through.
-
-**Non-vacuous by a mutation that is the whole point.** Replace the unsigned
-difference with the plausible defensive form,
-`(now > mark) ? now - mark : 0`, and every pre-wrap case still passes and the
-value then **freezes at 4294 for ever**. That is the version someone writes to be
-careful, and it is exactly the behaviour the comment describes — so the comment
-was probably written against an implementation that did it.
+**The comment is corrected and the field is believed.** It said the field wraps
+at 4294.967 s; it does not. The device session moved the fold out of `timebase.c`
+and pinned it across the crossing — 4294 before, **4296 after**, 11496 two hours
+past — and the correction is in `Common/inc/radio_protocol.h` as of the `link_v5`
+commit.
 
 **Neither side's field data ever reached the test.** The hub's largest
 observation is 1496 s and the device's is 4255 s, against a 4295 s threshold —
-short by forty seconds. Both sides argued the question from code for a week.
-**The on-target confirmation is still owed**: a host test proves the arithmetic,
-not the board, so the first device that stays up past 4295 s settles it for real.
+short by forty seconds. A host test proves the arithmetic, not the board, so the
+first device that stays up past 4295 s settles it. Until then this is a claim
+about code that both sides read and neither has watched.
 
-What this unblocks: `devices` prints `never` for a device that has not reported,
-covering *gone*, *deaf*, and *serving a nonce reservation* (item 29) with one
-word. `uptime_s` splits them — small means rebooted and says when, large means it
-never rebooted — and the comment is what stopped the hub using it.
-
-The correction lands in `Common/inc/radio_protocol.h`, which is this tree and a
-contract file; the device session is sending the hunk rather than committing it.
-
-Second appearance of a raw wrap on the wire, and that one was real: the data
-beacon once carried raw TIM2 as `clock`.
+What it unblocks, and what is therefore also unbuilt: `devices` prints `never`
+for a device that has not reported, covering *gone*, *deaf*, and *serving a nonce
+reservation* (item 29) with one word. `uptime_s` splits them — small means
+rebooted and says when, large means it never rebooted — and nothing on this side
+reads the field that way yet.
 
 `radio/known-issues.md`.
 
@@ -759,35 +746,6 @@ prediction attached.
 
 Raised by the device session. Device items 9 and 12.
 
-### 32. The agreed `radio_protocol.h` hunk is authored on this side and unwritten — `contract`
-
-Six changes to the one file both firmwares compile, agreed with the device
-session over 2026-08-21/22 and deliberately not written at night. **One diff, one
-`RADIO_LINK_VERSION` bump**, and the Doxygen for the touched fields in the same
-commit — comment churn stacked on a semantic change is the worst review surface
-this file can have.
-
-- `ack_arg` becomes generic.
-- `RADIO_REPORT_FLAG_SUPPLY_STALE` **`0x02`**, `RADIO_REPORT_FLAG_RESUMED`
-  **`0x04`**, beside the existing `RSSI_STALE 0x01`.
-- the `uptime_s` comment, which is item 22 — it does not wrap.
-- `app[5]` becomes `app[4]`, which is item 3's byte.
-- one `RADIO_LINK_VERSION` bump for all of it.
-
-**Masks, never bit positions.** The first exchange carried "bit 2" for one flag
-and `0x02` for another, which is the same ambiguity that produced
-`PAIR_FRAME_LEN == 45` against 49 — both sides internally consistent about
-different geometry. Agreed convention now: the wire is described in masks.
-
-`SUPPLY_STALE` is not a courtesy to the device. `supply_mv` reaches
-`CM7/Core/Src/cli.c` and prints as a number, so a rail that was never measured
-and a rail that reads 0 mV print identically — the field disarms the operator
-reading it. **The print must render `—` on the flag in the same commit**, or the
-bit is decorative on arrival. The device sets it unconditionally until its ADC
-path exists.
-
-`radio/known-issues.md`, `radio/tdma.md`.
-
 ### 33. Half rate is no longer forced by duty cycle — `debt` `contract`
 
 `RADIO_DOWNLINK_EVERY` is 2 because beacon + downlink + join beacon every
@@ -805,6 +763,22 @@ Listed so the next reader does not re-derive the old refusal from a page that no
 longer says it.
 
 `radio/phy.md` § duty cycle.
+
+### 34. Two dead types sit in the header both firmwares compile — `debt` `contract`
+
+`protocol_header_t` and `protocol_pairing_t` open `Common/inc/radio_protocol.h`
+and nothing in either tree names them. They predate the frame types below and
+describe a header layout no frame on the air uses.
+
+Left alone rather than deleted, because a contract file is not somewhere to
+remove a type unilaterally: the device build compiles this header and a name it
+does not use today is still a name it may reference. **Agree the deletion with
+the device session, then take both out in one commit.**
+
+Found during the Doxygen pass, which is the point worth keeping: the pass asked
+what every type is for and these two had no answer.
+
+`radio/tdma.md`.
 
 ## Design agreed but unbuilt
 
@@ -847,5 +821,10 @@ not assuming.
 - **Warning before the next hub reset**, so node B is parked and instrumented
   when it happens. Park-and-wait recovery is built on their side; an unannounced
   reset spends the one honest test of it on nobody watching.
+- **`link_v4` is superseded by `link_v5`** and their build includes the generated
+  header directly. The sizes did not move, so nothing on their side fails to
+  compile — only the version byte differs, and `aead_selftest` catches it at
+  runtime here because a compile-time assert was added for exactly that. They
+  need the new header before they build against the v5 wire.
 
 `open_hub/testing/sdr.md`.
