@@ -479,20 +479,6 @@ which is where reasoning belongs.
 
 `radio/phy.md`, the `rfm69` skill § the carrier is still moving.
 
-### 13. `rx_crc_err` prints under a heading that scopes it wrongly — `defect`
-
-The counter is global and is incremented from the uplink path and the join path
-alike. It prints as `rx (this window)` inside `device pair`, so it reads as a
-pairing-window statistic and is nothing of the kind. `devices` prints every
-uplink refusal bucket and not this one, so nine corrupt frames appeared as a
-difference with nothing named as its cause — and were reported to the device
-session as being in no bucket at all.
-
-Fourth instance of the class in one day across both benches. Fix the heading, and
-print it where the uplink counters are.
-
-`open_hub/cli.md`, and the `verification` skill § a counter's heading.
-
 ### 14. `rssi_up` is read from an untriggered latch, and nobody knows what it holds — `defect`
 
 `handle_uplink_frame()` takes the level with `rfm69_get_rssi()`, which reads
@@ -691,29 +677,6 @@ asks for it.
 
 `radio_devices_docs/radio/phy.md`.
 
-### 24. `hub_ipc_call` packs the arg and the payload into one buffer — `defect`
-
-`buf[0] = arg` and the caller's payload from `buf[1]`, so a handler has to know
-which shape a request was sent as. It is visible neither at the call site nor in
-the handler.
-
-Two handlers got it wrong in opposite directions in one evening.
-`IPC_REQ_SET_DEVICE_PARAM` passed a struct and read from offset 0, so every
-device lookup failed. `IPC_REQ_SET_LNA` passed a scalar as the arg and read
-`payload[1]`, so every call was refused. Same interface, both offsets, hours
-apart — **one convention that must be remembered rather than seen**, not two
-slips. The device session's framing, and it is the better one.
-
-`IPC_REQ_GET_DEVICE_INFO` carries a comment reading "payload[0]: the arg byte,
-unlike SET_PAIR_INIT above", which is the convention documenting itself one call
-site at a time.
-
-Make the wrong offset unrepresentable: carry the arg in its own field of
-`ipc_msg_t` instead of in the payload, so a handler can neither read past it nor
-short of it. Every new request type is another chance to get it wrong.
-
-`Common/src/ipc.c`, `CM7/Core/Src/hubipc.c`.
-
 ### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
 
 Neither `BEACON_BOUNDARY_LAG_US` nor `UPLINK_AIM_US` appears anywhere in
@@ -783,6 +746,28 @@ retrospective report carries it; if that report is lost the hub never learns.
 Evidence when present, never evidence of absence.
 
 `radio/tdma.md`, once agreed.
+
+---
+
+### 35. Five IPC commands changed behaviour and none has run on a board — `debt`
+
+Closing item 24 moved the arg out of the payload, which changed what five request
+handlers read. Three of them had never worked: `device quiesce <n>` always ran
+four superframes, `device spiloop <n>` always ran 200 iterations, and
+`report rate <n>` was refused every time. The other two are the pair item 24
+already named.
+
+**The whole evidence is arithmetic.** Each was traced by computing what the
+handler read from what the caller sent, and the two silent ones were silent
+because a defensive default turned a wrong value into a plausible one. Nothing
+has been exercised on hardware.
+
+One boot settles it and it is four lines: `device quiesce 2` against a `timing`
+read, `device spiloop 50` against its own printed count, `report rate 4` for a
+status other than a refusal, and `rfm dump 10` for `0x24`. Cheap enough to ride
+along with the item 30 experiment rather than justify its own reset.
+
+`open_hub/arch/ipc.md`.
 
 ---
 
