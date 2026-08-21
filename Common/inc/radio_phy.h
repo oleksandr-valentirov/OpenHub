@@ -47,15 +47,13 @@
 
 /* --- CONFIGURED: framing ---------------------------------------------- */
 
-/* Framing registers, both parts: radio_devices_docs/radio/phy.md */
-#define RADIO_PREAMBLE_BYTES    4u
-#define RADIO_SYNC_BYTES        4u
+/* Framing registers; the byte counts are in radio_slots.h with the air time.
+ * radio_devices_docs/radio/phy.md */
 #define RADIO_SYNC_WORD         { 0x68u, 0x65u, 0x6Cu, 0x6Cu }   /* "hell" */
 #define RADIO_SYNC_TOLERANCE    0u         /* bit errors allowed in the sync word */
 
 /* Variable length: a leading length byte, no filtering, no DC-free coding.
  * radio_devices_docs/radio/phy.md */
-#define RADIO_LENGTH_BYTES      1u
 #define RADIO_DCFREE_NONE       1
 #define RADIO_ADDR_FILTER_NONE  1
 
@@ -63,9 +61,8 @@
  * radio_devices_docs/radio/phy.md */
 #define RADIO_MAX_PAYLOAD_B     (66u - RADIO_LENGTH_BYTES)
 
-/* CRC-16-CCITT, two bytes, final value inverted - the device selects
- * CRC_2_BYTE_INV. radio_devices_docs/radio/phy.md */
-#define RADIO_CRC_BYTES         2u
+/* CRC-16-CCITT inverted; the device selects CRC_2_BYTE_INV.
+ * radio_devices_docs/radio/phy.md */
 #define RADIO_CRC_POLY          0x1021u    /* dev regs 0x06BE/0x06BF */
 #define RADIO_CRC_SEED          0x1D0Fu    /* dev regs 0x06BC/0x06BD */
 #define RADIO_CRC_INVERTED      1
@@ -76,21 +73,6 @@
  * radio_devices_docs/radio/phy.md */
 #define RADIO_HUB_TX_DBM        13
 #define RADIO_DEV_TX_DBM        14
-
-/* --- DERIVED: air time ------------------------------------------------ */
-
-/* Everything the transmitter keys for, not just the payload. */
-#define RADIO_PHY_OVERHEAD_B    (RADIO_PREAMBLE_BYTES + RADIO_SYNC_BYTES + \
-                                 RADIO_LENGTH_BYTES + RADIO_CRC_BYTES)
-#define RADIO_FRAME_AIR_US(payload_b) \
-    (((uint32_t)(payload_b) + RADIO_PHY_OVERHEAD_B) * RADIO_US_PER_BYTE)
-
-/* Air still to come when SyncAddressMatch fires, moving a stamp to frame end.
- * radio_devices_docs/radio/phy.md */
-#define RADIO_PRE_SYNC_AIR_US   ((RADIO_PREAMBLE_BYTES + RADIO_SYNC_BYTES) * \
-                                 RADIO_US_PER_BYTE)
-#define RADIO_POST_SYNC_AIR_US(payload_b) \
-    (RADIO_FRAME_AIR_US(payload_b) - RADIO_PRE_SYNC_AIR_US)
 
 /* --- CONTRACT: when each side may transmit and must listen ------------- */
 
@@ -143,20 +125,16 @@ _Static_assert(RADIO_RX_BW_HUB_HZ > RADIO_RX_BW_MIN_HZ,
  * radio_devices_docs/radio/phy.md */
 _Static_assert(2u * RADIO_DEVIATION_HZ >= RADIO_BITRATE_BPS, "modulation index below 1");
 
-/* radio_slots.h's literal against the fields it is the sum of. */
-_Static_assert(RADIO_FRAME_OVERHEAD_B == RADIO_PHY_OVERHEAD_B,
-               "the slot grid was sized for a different frame overhead");
-
 /* The two headers must agree about air time, or one describes another radio. */
-_Static_assert(RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES) <= RADIO_SLOT_US,
+_Static_assert(RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES) <= RADIO_SLOT_US,
                "an uplink frame does not fit its slot");
 
-/* The halves must sum to the frame, or the stamp moves to the wrong place.
+/* The names say this and the arithmetic must agree with them.
  * radio_devices_docs/radio/phy.md */
-_Static_assert(RADIO_PRE_SYNC_AIR_US + RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES)
-               == RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES),
-               "the sync edge does not split the frame's air time");
-_Static_assert(RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES) == 6720u,
+_Static_assert(RADIO_AIR_START_TO_SYNC_US + RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES)
+               == RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES),
+               "start->sync plus sync->end is not start->end");
+_Static_assert(RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES) == 6720u,
                "post-sync air moved; every event-latency figure shifts with it");
 _Static_assert(RADIO_UPLINK_RX_CLOSE_US > RADIO_UPLINK_RX_OPEN_US,
                "the uplink receive window is empty");
@@ -167,5 +145,5 @@ _Static_assert(RADIO_DOWNLINK_RX_CLOSE_US > RADIO_DOWNLINK_RX_OPEN_US,
                "the downlink receive window is empty");
 _Static_assert(RADIO_DOWNLINK_RX_CLOSE_US <= RADIO_UPLINK_RX_OPEN_US,
                "the downlink region overruns the first uplink slot");
-_Static_assert(RADIO_FRAME_AIR_US(RADIO_DOWNLINK_BYTES) < RADIO_DOWNLINK_LEN_US,
+_Static_assert(RADIO_AIR_START_TO_END_US(RADIO_DOWNLINK_BYTES) < RADIO_DOWNLINK_LEN_US,
                "a downlink frame does not fit its region");

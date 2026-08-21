@@ -18,9 +18,9 @@ static int fails;
 } while (0)
 
 /* What the hub may transmit in one superframe, in microseconds of air time. */
-#define BEACON_AIR   RADIO_AIRTIME_US(sizeof(radio_data_beacon_t))
-#define JOIN_AIR     RADIO_AIRTIME_US(sizeof(radio_join_beacon_t))
-#define DOWNLINK_AIR RADIO_AIRTIME_US(sizeof(radio_downlink_t))
+#define BEACON_AIR   RADIO_AIR_START_TO_END_US(sizeof(radio_data_beacon_t))
+#define JOIN_AIR     RADIO_AIR_START_TO_END_US(sizeof(radio_join_beacon_t))
+#define DOWNLINK_AIR RADIO_AIR_START_TO_END_US(sizeof(radio_downlink_t))
 
 int main(void) {
     /* The join channel from the grid arithmetic, against the read-back RegFrf. */
@@ -30,8 +30,7 @@ int main(void) {
     CHECK(RADIO_HOP_TO_GRID(RADIO_JOIN_SLOT - 1u) == RADIO_JOIN_SLOT - 1u);
     CHECK(RADIO_HOP_TO_GRID(RADIO_JOIN_SLOT) == RADIO_JOIN_SLOT + 1u);
     CHECK(RADIO_HOP_TO_GRID(RADIO_HOP_COUNT - 1u) == RADIO_GRID_COUNT - 1u);
-    /* Air time from the PHY fields against the slot geometry's own literal. */
-    CHECK(RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES) == RADIO_AIRTIME_US(RADIO_UPLINK_BYTES));
+    /* Two names for one quantity; folded, so there is nothing left to compare. */
 
     /* A padded struct would put the hub's compiler in the protocol. */
     CHECK(sizeof(radio_data_beacon_t) == 14);
@@ -103,7 +102,7 @@ int main(void) {
 
     /* 22.4 ms at 25 kbps broke the budget; 11.2 ms fits it.
      * radio_devices_docs/radio/tdma.md */
-    CHECK(RADIO_AIRTIME_US(RADIO_PAIR_RSP_BYTES) <= RADIO_AIR_BUDGET_US);
+    CHECK(RADIO_AIR_START_TO_END_US(RADIO_PAIR_RSP_BYTES) <= RADIO_AIR_BUDGET_US);
 
     /* Three denominators, all three asserted.
      * radio_devices_docs/open_hub/testing/host-tests.md */
@@ -121,13 +120,13 @@ int main(void) {
           RADIO_PAIR_CLEAR_FRAMES * SUPERFRAME_US / 4u);
 
     /* The steady-state frame gets no exception: its slot, with guard intact. */
-    CHECK(RADIO_AIRTIME_US(RADIO_UPLINK_BYTES) <= RADIO_UPLINK_AIR_US);
-    CHECK(RADIO_AIRTIME_US(RADIO_UPLINK_BYTES) + RADIO_SLOT_GUARD_US
+    CHECK(RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES) <= RADIO_UPLINK_AIR_US);
+    CHECK(RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES) + RADIO_SLOT_GUARD_US
           <= RADIO_SLOT_US);
 
     /* At the granted default, not at the geometry, which allows more.
      * radio_devices_docs/open_hub/testing/host-tests.md */
-    CHECK(RADIO_AIRTIME_US(RADIO_UPLINK_BYTES)
+    CHECK(RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES)
           <= RADIO_REPORT_EVERY_DEFAULT * RADIO_AIR_BUDGET_US);
     /* One frame is comfortable; the k=3 pair above is where it stops being.
      * radio_devices_docs/open_hub/testing/host-tests.md */

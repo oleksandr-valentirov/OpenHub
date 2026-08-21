@@ -509,7 +509,7 @@ static rfm69_status_t transmit(uint8_t total_len) {
     if (st == RFM69_OK) {
         /* An upper bound: it carries ramp-down and the PacketSent poll too. */
         uint32_t span = timebase_ticks_to_us(rfm_micros() - t0);
-        uint32_t air  = RADIO_AIRTIME_US(total_len - 1u);
+        uint32_t air  = RADIO_AIR_START_TO_END_US(total_len - 1u);
 
         lead_last_us = (span > air) ? (span - air) : 0u;
         if (lead_last_us < lead_min_us) lead_min_us = lead_last_us;
@@ -688,12 +688,12 @@ static void uplink_notify(const dev_entry_t *e) {
         evt_lost++;
     /* It fires with 42 bytes still on air, which the budget already charges.
      * ROADMAP item 2 */
-    if (since_sync < RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES)) {
+    if (since_sync < RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES)) {
         /* Sooner than the air allows: the edge belonged to another frame. */
         evt_arrival_bad++;
     } else {
         evt_arrival_last_us = since_sync -
-                              RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES);
+                              RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES);
         if (evt_arrival_last_us > evt_arrival_max_us)
             evt_arrival_max_us = evt_arrival_last_us;
     }
@@ -1425,9 +1425,9 @@ static void rx_note_sync(uint8_t flags1) {
 
 /* Keyed after the sync word, and lag is measured from that same edge.
  * radio_devices_docs/open_hub/radio/configuration.md */
-#define SYNC_RSSI_WINDOW_US  RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES)
+#define SYNC_RSSI_WINDOW_US  RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES)
 /* A span from the sync edge cannot be as long as the frame that contains it. */
-_Static_assert(SYNC_RSSI_WINDOW_US < RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES),
+_Static_assert(SYNC_RSSI_WINDOW_US < RADIO_AIR_START_TO_END_US(RADIO_UPLINK_BYTES),
                "the RSSI window is measured from the sync edge, not from frame start");
 
 /* Which slot an edge landed in, off its offset. 0xFF is outside the region.

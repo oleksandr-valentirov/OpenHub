@@ -10,10 +10,23 @@
 #define RADIO_BITRATE_BPS       50000u
 #define RADIO_US_PER_BYTE       (8u * 1000000u / RADIO_BITRATE_BPS)   /* 160 */
 
-/* preamble 4 + sync 4 + length 1 + CRC 2, which the duty cycle counts too. */
-#define RADIO_FRAME_OVERHEAD_B  11u
-#define RADIO_AIRTIME_US(payload_b) \
+/* Keyed for but never payload; the duty cycle counts these too.
+ * radio_devices_docs/radio/phy.md */
+#define RADIO_PREAMBLE_BYTES    4u
+#define RADIO_SYNC_BYTES        4u
+#define RADIO_LENGTH_BYTES      1u
+#define RADIO_CRC_BYTES         2u
+#define RADIO_FRAME_OVERHEAD_B  (RADIO_PREAMBLE_BYTES + RADIO_SYNC_BYTES + \
+                                 RADIO_LENGTH_BYTES + RADIO_CRC_BYTES)
+
+/* Intervals, named at both ends, because the origin is what call sites got wrong.
+ * radio_devices_docs/radio/phy.md */
+#define RADIO_AIR_START_TO_END_US(payload_b) \
     (((uint32_t)(payload_b) + RADIO_FRAME_OVERHEAD_B) * RADIO_US_PER_BYTE)
+#define RADIO_AIR_START_TO_SYNC_US \
+    ((RADIO_PREAMBLE_BYTES + RADIO_SYNC_BYTES) * RADIO_US_PER_BYTE)
+#define RADIO_AIR_SYNC_TO_END_US(payload_b) \
+    (RADIO_AIR_START_TO_END_US(payload_b) - RADIO_AIR_START_TO_SYNC_US)
 
 /* Contract constant, not a hint: a device must clamp its estimate to TOL_PCT.
  * radio_devices_docs/radio/tdma.md */
@@ -36,7 +49,7 @@
 /* A sealed uplink frame at its ceiling: 7 B header, 16 B body, 16 B GCM tag.
  * radio_devices_docs/radio/tdma.md */
 #define RADIO_UPLINK_PAYLOAD_B  39u
-#define RADIO_UPLINK_AIR_US     RADIO_AIRTIME_US(RADIO_UPLINK_PAYLOAD_B)  /* 8000 */
+#define RADIO_UPLINK_AIR_US     RADIO_AIR_START_TO_END_US(RADIO_UPLINK_PAYLOAD_B)  /* 8000 */
 
 /* Guard is uncertainty on both sides of the frame, and never lead time.
  * radio_devices_docs/radio/tdma.md */
@@ -147,10 +160,10 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
 
 /* Split by transmitter: a budget belongs to a radio, not to a conversation.
  * radio_devices_docs/radio/tdma.md */
-#define RADIO_PAIR_HUB_AIR_US   (RADIO_AIRTIME_US(RADIO_PAIR_RSP_BYTES) + \
-                                 RADIO_AIRTIME_US(RADIO_PAIR_ACCEPT_BYTES))
-#define RADIO_PAIR_DEV_AIR_US   (RADIO_AIRTIME_US(RADIO_PAIR_REQ_BYTES) + \
-                                 RADIO_AIRTIME_US(RADIO_PAIR_CONF_BYTES))
+#define RADIO_PAIR_HUB_AIR_US   (RADIO_AIR_START_TO_END_US(RADIO_PAIR_RSP_BYTES) + \
+                                 RADIO_AIR_START_TO_END_US(RADIO_PAIR_ACCEPT_BYTES))
+#define RADIO_PAIR_DEV_AIR_US   (RADIO_AIR_START_TO_END_US(RADIO_PAIR_REQ_BYTES) + \
+                                 RADIO_AIR_START_TO_END_US(RADIO_PAIR_CONF_BYTES))
 
 /* The superframes the hub is actually parked on the join channel.
  * radio_devices_docs/radio/tdma.md */
