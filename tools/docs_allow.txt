@@ -1,25 +1,39 @@
-# Names the documentation may use that the code does not define.
-# Every line is a deliberate exemption with its reason, so a new stale name is
-# never absorbed by a growing list. tools/check_docs.py reads this.
+# Names and paths the documentation may use that the code does not define.
+#
+# One exemption per line, `page:name  # reason`, and every field is required.
+# The page scope matters: the same string was a correct historical quotation on
+# one page and a stale claim in live arithmetic on another, in one tree on one
+# day, and a name-keyed list silences both together. The reason is required
+# rather than conventional, because the failure mode of any allow list is a line
+# added without one.
+#
+# This file is excluded from the source scan. It used to be read as evidence, so
+# every exemption proved its own symbol existed - the check's own setup
+# destroying the condition it was written to test.
 
-# Algebra, not identifiers: the slot-budget derivations in radio/tdma.md.
-t_air
-t_hub
-t_latch
-tx_seq
-# The clock tree's own name for the RNG source, from the reference manual.
-hsi48_ck
+# Algebra in the slot-budget derivations, not identifiers.
+radio/tdma.md:t_air         # symbol in the deadline derivation
+radio/tdma.md:t_hub         # likewise
+radio/tdma.md:t_latch       # likewise
+radio/tdma.md:tx_seq        # likewise
+
+# The reference manual's name for the RNG clock source, not a project symbol.
+open_hub/arch/build-and-generation.md:hsi48_ck  # RCC clock-tree name
+
 # A term in the key-agreement formula, not a variable in either firmware.
-hub_ephemeral
+radio/crypto/key-lifecycle.md:hub_ephemeral  # ECDH operand in the derivation
 
-# Deliberately named as absent or as history. Each page says so where it names
-# them; the check would otherwise flag exactly the sentences that are correct.
-radio_init          # open_hub/testing/on-target.md lists it as naming nothing
-pairing_arm_invite  # likewise
-rfm_ms_counter      # likewise
-RFM_add_device_routine  # radio/joining.md and ADR-0009: the previous implementation
-RADIO_PAIR_EXCHANGE_US  # radio/pairing.md: the macro that used to sum four frames
-wire_v2             # a superseded vector set, discussed as history
+# Pages that name a symbol in order to say it names nothing, or to describe what
+# was replaced. Rewriting these to please the checker would falsify the record.
+open_hub/testing/on-target.md:radio_init          # listed as naming nothing
+open_hub/testing/on-target.md:pairing_arm_invite  # listed as naming nothing
+open_hub/testing/on-target.md:rfm_ms_counter      # listed as naming nothing
+radio/joining.md:RFM_add_device_routine  # the previous implementation, described
+radio/decisions/0009-fixed-join-channel.md:RFM_add_device_routine  # as decided then
+radio/pairing.md:RADIO_PAIR_EXCHANGE_US  # the macro that used to sum four frames
+radio/crypto/wire-crypto.md:wire_v2      # a superseded vector set, as history
+radio/tdma.md:RADIO_AIRTIME_US           # quoted defect, dated in the sentence
 
-# Deleted, and both pages now say so; they name the path to say what is gone.
-CM7/Core/Src/cmox_low_level.c
+# Deleted, and both pages name the path in order to say it is gone.
+open_hub/decisions/0011-mbedtls-on-cm7-only.md:CM7/Core/Src/cmox_low_level.c  # ADR record
+open_hub/security/crypto-architecture.md:CM7/Core/Src/cmox_low_level.c        # says it went

@@ -20,6 +20,9 @@ DOCS = "../radio_devices_docs"
 # Pages naming this side's symbols. wl55_device/ is the other session's half.
 SCOPES = ("radio", "open_hub")
 ALLOW = "tools/docs_allow.txt"
+# Inside an expression or a fence, only these read as claims about this tree.
+OWNED = ("RADIO_", "IPC_", "KV_", "RFM_", "rfm69_", "radio_", "pairing_",
+         "kv_", "ks_", "aead_", "hop_", "store_", "timebase_", "cli_")
 # Symbols owned by somebody else's build; naming them is not a claim about this tree.
 FOREIGN = ("mbedtls_", "altcp_", "lwip", "sys_arch", "HAL_", "os", "xQueue", "pd",
            "ExternalProject_", "VP_", "FREERTOS_", "tcp_", "netif_", "MX_")
@@ -32,14 +35,29 @@ PATH = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*/[A-Za-z0-9_.-]*"
 
 
 def load_allow():
-    seen = {}
+    """Exemptions are page:name and each must carry its reason.
+
+    A bare name silences a symbol everywhere, and the same string can be a correct
+    quotation on one page and a stale claim on another. A reason nobody is forced
+    to write is a convention rather than a check.
+    """
+    seen, bad = {}, []
     if not os.path.exists(ALLOW):
-        return seen
-    for line in open(ALLOW, encoding="utf-8"):
-        line = line.split("#", 1)[0].strip()
-        if line:
-            seen[line] = True
-    return seen
+        return seen, bad
+    for n, line in enumerate(open(ALLOW, encoding="utf-8"), 1):
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        entry, _, reason = raw.partition("#")
+        entry = entry.strip()
+        if not reason.strip():
+            bad.append("%s:%d  %s -- no reason given" % (ALLOW, n, entry))
+            continue
+        if ":" not in entry:
+            bad.append("%s:%d  %s -- not page:name" % (ALLOW, n, entry))
+            continue
+        seen[entry] = True
+    return seen, bad
 
 
 def source_text():
@@ -58,6 +76,9 @@ def source_text():
             # rfm69_lib is this project's own driver, not a vendored tree.
             if any(s in f for s in ("third_party", "/Drivers/", "/Middlewares/")):
                 continue
+            # The exemption list must not be evidence that its own names exist.
+            if f.endswith("docs_allow.txt"):
+                continue
             p = os.path.join(root, f)
             try:
                 blob.append(open(p, encoding="utf-8", errors="replace").read())
@@ -75,11 +96,25 @@ def doc_pages():
                     yield os.path.join(dirpath, n)
 
 
+def owned_names(text):
+    """Project names inside expressions and fenced blocks, not only alone in ticks.
+
+    Live arithmetic gets written in code fences, which is the one place the first
+    version of this tool did not look.
+    """
+    out = set()
+    for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", text):
+        n = m.group(0)
+        if n.startswith(OWNED) and len(n) > 5:
+            out.add(n)
+    return out
+
+
 def main():
     if not os.path.isdir(DOCS):
         sys.stderr.write("no %s; nothing to check\n" % DOCS)
         return 0
-    allow = load_allow()
+    allow, bad_allow = load_allow()
     src = source_text()
     words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", src))
 
@@ -88,27 +123,35 @@ def main():
         pages += 1
         text = open(page, encoding="utf-8", errors="replace").read()
         rel = os.path.relpath(page, DOCS)
+
+        names = set()
         for m in MACRO.finditer(text):
-            name = m.group(1)
-            if name not in words and name not in allow:
-                missing_ident.append("%s: %s" % (rel, name))
+            names.add(m.group(1))
         for m in IDENT.finditer(text):
-            name = m.group(1)
-            if len(name) < 4 or "_" not in name:
+            n = m.group(1)
+            if len(n) >= 4 and "_" in n and not n.isupper() \
+                    and not n.startswith(FOREIGN):
+                names.add(n)
+        # Backticked expressions and fenced blocks, project-owned names only.
+        for chunk in re.findall(r"`([^`\n]*)`", text) + \
+                re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
+            names |= owned_names(chunk)
+
+        for n in sorted(names):
+            if n in words:
                 continue
-            if name.isupper() or name.startswith(FOREIGN):
+            if "%s:%s" % (rel, n) in allow:
                 continue
-            if name not in words and name not in allow:
-                missing_ident.append("%s: %s()" % (rel, name))
+            missing_ident.append("%s: %s" % (rel, n))
+
         for m in PATH.finditer(text):
             p = m.group(1)
-            if p.endswith(".md") or p in allow:
+            if p.endswith(".md") or "%s:%s" % (rel, p) in allow:
                 continue
             if p.startswith("../"):
                 continue
-            found = any(os.path.exists(os.path.join(r, p))
-                        for r in (".", "..", "../wl55_device"))
-            if not found:
+            if not any(os.path.exists(os.path.join(r, p))
+                       for r in (".", "..", "../wl55_device")):
                 missing_path.append("%s: %s" % (rel, p))
 
     missing_ident = sorted(set(missing_ident))
@@ -116,11 +159,12 @@ def main():
     print("scope: %d pages under %s" % (pages, "/, ".join(SCOPES) + "/"))
     print()
     for title, items in (("named in the docs, absent from the code", missing_ident),
-                         ("file paths in the docs that do not resolve", missing_path)):
+                         ("file paths in the docs that do not resolve", missing_path),
+                         ("exemptions that are not page:name with a reason", bad_allow)):
         print("== %s: %d ==" % (title, len(items)))
         for i in items:
             print("   " + i)
-    return 1 if (missing_ident or missing_path) else 0
+    return 1 if (missing_ident or missing_path or bad_allow) else 0
 
 
 if __name__ == "__main__":
