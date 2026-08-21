@@ -41,9 +41,8 @@ def main():
     secret = bytes.fromhex(v["ecdh_shared_x_only"])
     salt = bytes.fromhex(v["hkdf_salt_hubid_devid_be"])
 
-    # Confirm the tool before trusting it with anything new: wire_v3 pins what
-    # HKDF must produce from these inputs, so a wrong implementation here fails
-    # loudly rather than generating plausible garbage downstream.
+    # Confirm the tool before trusting it with anything new.
+    # radio_devices_docs/open_hub/arch/build-and-generation.md
     for info, want in ((b"openhub/v1/session", v["key_session_gen0"]),
                        (b"openhub/v1/hop", v["key_hop_gen0"])):
         got = hkdf_sha256(secret, salt, info, 16).hex()
@@ -63,15 +62,8 @@ def main():
 
     fingerprint = hashlib.sha256(dev_pub_c).digest()
 
-    # Four named byte strings, not "the frames": no PHY framing, no field a
-    # confirmation would have to cover part of itself.
-    #
-    # hub_id first, matching the HKDF salt. The first draft had dev_id first,
-    # which put the same two fields in opposite orders five lines apart in one
-    # exchange - not wrong, but the next person to write this from memory gets
-    # it wrong and the failure is a confirmation mismatch with no diagnosable
-    # cause. The salt is pinned in wire_v3 and immutable, so the transcript is
-    # the one that moves.
+    # Four named byte strings, hub_id first to match the HKDF salt.
+    # radio_devices_docs/radio/pairing.md
     transcript = (hub_id.to_bytes(4, "big")
                   + dev_id.to_bytes(4, "big")
                   + dev_pub_c
@@ -88,11 +80,8 @@ def main():
     print()
     print(f"pair_transcript_len        = {len(transcript)}")
     print(f"pair_transcript            = {transcript.hex()}")
-    # Emitted as a diagnostic, not as a protocol value. The confirmations are
-    # HMAC over the transcript directly, never over its digest - but the phrase
-    # "transcript hash" was loose enough in the prose to admit both readings,
-    # and if two implementations disagree this tells a wrong construction apart
-    # from a wrong byte order instead of leaving both sides staring at 16 bytes.
+    # A diagnostic, not a protocol value: the HMAC is over the transcript itself.
+    # radio_devices_docs/radio/pairing.md
     print(f"pair_transcript_sha256     = {hashlib.sha256(transcript).hexdigest()}")
     print()
     print(f"pair_confirm_key_hub       = {k_hub.hex()}")

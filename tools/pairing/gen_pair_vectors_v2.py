@@ -42,10 +42,8 @@ HUB_EPH_PRIVATE = 0x4b3a291807f6e5d4c3b2a1907e6d5c4b3a2918070605040302010f0e0d0c
 def main():
     v = load("Common/test/vectors/wire_v3.txt")
 
-    # Nothing below is trustworthy unless the curve and the KDF reproduce the
-    # numbers wire_v3 already pins. A wrong implementation would otherwise emit
-    # plausible vectors, and plausible wrong bytes in a vector file are worse
-    # than none - the next reader treats them as settled.
+    # Nothing below is trustworthy unless wire_v3's numbers reproduce first.
+    # radio_devices_docs/open_hub/arch/build-and-generation.md
     for who in ("hub", "dev"):
         d = int(v[f"{who}_private"], 16)
         if p256.compress(p256.mul(d, p256.G)).hex() != v[f"{who}_public_compressed"]:
@@ -67,8 +65,7 @@ def main():
     hub_eph_pt = p256.mul(HUB_EPH_PRIVATE, p256.G)
     hub_eph_c = p256.compress(hub_eph_pt)
 
-    # Hub before device, in every concatenation. Z1 authenticates the hub - only
-    # the holder of hub_static's private key can compute it. Z2 is freshness.
+    # Hub before device in every concatenation: Z1 authenticates, Z2 is fresh.
     z1 = p256.ecdh_x(hub_static_d, p256.decompress(dev_static_c))
     z2 = p256.ecdh_x(HUB_EPH_PRIVATE, p256.decompress(dev_static_c))
     assert z1 == p256.ecdh_x(dev_static_d, p256.decompress(hub_static_c))

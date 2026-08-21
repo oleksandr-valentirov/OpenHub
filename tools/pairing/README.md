@@ -71,5 +71,5 @@ cover, both confirmation keys and both confirmation values.
 **Not covered:** `PAIR_ACCEPT`, which carries the slot assignment sealed under
 the session key. Its nonce is undecided — it is a frame that exists outside the
 superframe schedule, and the nonce construction in
-[wire-crypto.md](../../docs/security/wire-crypto.md#nonce-construction) assumes
+[wire-crypto.md](../../../radio_devices_docs/radio/crypto/wire-crypto.md#nonce-construction) assumes
 a superframe and a slot. That is deliberately left open rather than guessed at.

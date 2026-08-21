@@ -12,7 +12,7 @@ would change the contract under a build that has already agreed to it. Changing
 any parameter means emitting wire_v(N+1); this script refuses to overwrite an
 existing set with different content.
 
-See docs/security/wire-crypto.md.
+See radio_devices_docs/radio/crypto/wire-crypto.md.
 """
 
 import argparse
@@ -43,12 +43,8 @@ INFO_ROTATE  = b"openhub/v1/rotate"
 SUPERFRAME = 123456
 DIRECTION  = 0x01          # uplink
 SLOT       = 7
-# A second case whose length is deliberately not a multiple of four. The device
-# side found HAL_CRYP_Decrypt leaving the unused bytes of a partial final word
-# unmasked: every length not divisible by four failed its tag check while the
-# ciphertext was byte-perfect, which over the air reads as a radio fault. The
-# 24-byte case above is block-aligned and cannot catch it. Real frames are not
-# conveniently sized.
+# A length deliberately not a multiple of four, which the case above cannot be.
+# radio_devices_docs/open_hub/security/self-tests.md
 SLOT_ODD   = 9
 ODD_LEN    = 23
 
@@ -66,10 +62,8 @@ def hkdf(salt, ikm, info, length):
 
 # P-256 field prime, for the rejection vector below.
 P256_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
-# x = 1 has no square root on this curve, so it is a valid field element that is
-# not the x-coordinate of any point. A perturbed valid key is NOT a substitute:
-# about half of all field elements are valid x-coordinates, so flipping a bit
-# lands back on the curve half the time and tests nothing.
+# x = 1 has no square root here, and a perturbed valid key is no substitute.
+# radio_devices_docs/open_hub/security/self-tests.md
 REJECT_X = 1
 
 
@@ -107,15 +101,7 @@ def build_header(frame_type, version, net_id, dev_id):
 
 
 # The digest covers the pinned values, in a canonical form, and nothing else.
-#
-# It used to hash the emitted text, which made every comment load-bearing: a
-# reworded paragraph moved the digest of a set whose values could not have
-# changed, and anyone holding the old constant saw "the vectors changed" about
-# something that had not. A stale constant fails a build; a redundant diff only
-# wastes a minute, so the false alarm was in the worse direction.
-#
-# Comment rows (no value) and blank rows (no label) are excluded, and the rest
-# is sorted by key, so neither prose nor layout can move it. A value can.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
 def value_digest(rows):
     body = "".join(f"{k}={v}\n" for k, v in sorted((k, v) for k, v in rows if k and v))
     return hashlib.sha256(body.encode()).hexdigest()[:16]
@@ -135,9 +121,8 @@ def main():
     hub = ec.derive_private_key(D_HUB, CURVE)
     dev = ec.derive_private_key(D_DEV, CURVE)
 
-    # Both directions must agree; the shared secret is the X coordinate ONLY,
-    # 32 bytes big-endian, as SEC1 ECDH defines it. Not the full point, not a
-    # hash of it - this is the single most common interop break.
+    # The shared secret is the X coordinate only, 32 bytes big-endian.
+    # radio_devices_docs/radio/crypto/wire-crypto.md
     z_hub = hub.exchange(ec.ECDH(), dev.public_key())
     z_dev = dev.exchange(ec.ECDH(), hub.public_key())
     assert z_hub == z_dev, "ECDH disagreed"
@@ -248,8 +233,8 @@ def main():
     with open(stem + ".txt", "w") as f:
         f.write(text)
 
-    # The same bytes as C, emitted rather than transcribed: a vector copied by
-    # hand is a vector that can disagree with the one the device parses.
+    # The same bytes as C, emitted rather than transcribed.
+    # radio_devices_docs/open_hub/arch/build-and-generation.md
     def carr(name, data):
         body = ", ".join(f"0x{b:02x}" for b in data)
         wrapped, line = [], "    "
@@ -269,8 +254,7 @@ def main():
          f'#define WIRE_VECTORS_DIGEST  "{digest}"',
          ""]
     h.append(carr("V_HUB_PRIV", D_HUB.to_bytes(32, "big")))
-    # Already a published row; it was simply never emitted as C, so the far
-    # side could not run the two-term ECDH against the pinned contract.
+    # A published row that was never emitted as C, so nothing consumed it.
     h.append(carr("V_DEV_PRIV", D_DEV.to_bytes(32, "big")))
     h.append(carr("V_DEV_PUB", pub_uncompressed(dev)))
     h.append(carr("V_ECDH_X", z))

@@ -23,24 +23,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 HOP_KEY = bytes.fromhex("0b9d2943fe2fa389beae0257367d9008")   # wire_v3 key_hop_gen0
 COUNT = 28                                                    # 29 grid slots less the join channel
 
-# FIPS-197 appendix C.1.
-#
-# Read the provenance carefully before trusting this as an anchor, because the
-# obvious reading is wrong. Both sides' generators call the same OpenSSL through
-# `cryptography`, and neither side transcribed these bytes from the standard -
-# one produced them and the other copied them from a message. So the host assert
-# below is one implementation agreeing with itself, and it catches a *changed*
-# library rather than a wrong one.
-#
-# What actually anchors it is the silicon: the hub checks this block through
-# CRYP on the H755 and the device through the AES peripheral on the WL55, and
-# neither of those is OpenSSL. That is a software-against-hardware cross-check,
-# which is real independence. Two ST parts are not, quite - different
-# peripherals, probably different IP, but one vendor - so the strength comes
-# from the software/hardware split and not from there being two boards.
-#
-# The honest form of the rule: a transcribed constant is an anchor only if the
-# transcription came from outside. Ours came from each other.
+# FIPS-197 appendix C.1. What anchors it is the silicon, not this transcription.
+# radio_devices_docs/open_hub/security/self-tests.md
 FIPS_KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 FIPS_IN  = bytes.fromhex("00112233445566778899aabbccddeeff")
 FIPS_OUT = bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a")
@@ -49,16 +33,7 @@ SAMPLES = [0, 1, 27, 28, 29, 55, 56, 1000, 100000, 4294967295]
 
 
 # The digest covers the pinned values, in a canonical form, and nothing else.
-#
-# It used to hash the emitted text, which made every comment load-bearing: a
-# reworded paragraph moved the digest of a set whose values could not have
-# changed, and anyone holding the old constant saw "the vectors changed" about
-# something that had not. That is a false alarm in the worse direction - a stale
-# constant fails a build, a redundant diff only wastes a minute. Raised by the
-# device side, whose digest had the identical defect.
-#
-# Sorted by key, so reordering the emitted rows does not move it either. What
-# moves it is a value.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
 def value_digest(rows):
     body = "".join(f"{k}={v}\n" for k, v in sorted(rows))
     return hashlib.sha256(body.encode()).hexdigest()[:16]
@@ -92,8 +67,7 @@ def deck(cycle, big_endian=True):
 
 
 def main():
-    # A regression guard, not an anchor - see the note by FIPS_OUT. It catches
-    # the library changing under us; it cannot catch it having been wrong.
+    # A regression guard, not an anchor: see the note by FIPS_OUT.
     if aes(FIPS_KEY, FIPS_IN) != FIPS_OUT:
         sys.exit("host AES does not reproduce FIPS-197 C.1")
 

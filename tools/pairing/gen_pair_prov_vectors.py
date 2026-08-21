@@ -45,16 +45,14 @@ import sys
 sys.path.insert(0, "tools/pairing")
 import p256
 
-# pair_v2's, unchanged. Copied deliberately rather than imported: if the v2
-# generator's constants ever move, this set must fail to agree with the
-# published pair_v2 values rather than quietly follow them.
+# pair_v2's, copied rather than imported so a change fails instead of following.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
 HUB_EPH_PRIVATE = 0x4b3a291807f6e5d4c3b2a1907e6d5c4b3a2918070605040302010f0e0d0c0b0a
 DEV_NONCE       = bytes.fromhex("a1b2c3d4e5f60718")
 HUB_ID, DEV_ID  = 0x33442211, 0x0000002A
 
-# No zero byte in any of the three, and no two of them a byte-permutation of
-# another: a byte-order slip must not be able to turn one source into another
-# and land looking like a provenance bug, or the other way round.
+# No zero byte, and no two a byte-permutation of another.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
 PROV_REQ_SUPERFRAME    = 0x5c3d2e17
 PROV_BEACON_SUPERFRAME = 0x5c3d2e11   # earlier: the beacon precedes the request
 PROV_LIVE_SUPERFRAME   = 0x5c3d2e19   # later: the derive lands after the grid moved
@@ -164,8 +162,7 @@ def main():
 
     z1 = p256.ecdh_x(hub_d, p256.decompress(dev_c))
     z2 = p256.ecdh_x(HUB_EPH_PRIVATE, p256.decompress(dev_c))
-    # Both halves from the device's side too. A generator that only ever ran
-    # the hub's half would agree with a hub that had it wrong.
+    # Both halves: a one-sided generator agrees with a one-sided error.
     assert z1 == p256.ecdh_x(dev_d, p256.decompress(hub_c))
     assert z2 == p256.ecdh_x(dev_d, eph_pt)
     if z1.hex() != v["pair_z1"]:
@@ -177,22 +174,19 @@ def main():
     live  = derive(z, hub_c, eph_c, dev_c, PROV_LIVE_SUPERFRAME)
     salt, t, c_hub, c_dev, k_ses = right
 
-    # The set is worthless if the three collide, and the assertion is not
-    # rhetorical: it is the whole property being published.
+    # The set is worthless if the three collide; this is the property itself.
     if len({c_hub, beac[2], live[2]}) != 3:
         sys.exit("two sources produce the same confirmation - the set proves nothing")
 
-    # Only the superframe changed, so pair_v2's confirmation must have moved.
-    # If it has not, this file is re-publishing pair_v2 under a new name and
-    # the superframe is reaching neither transcript.
+    # Only the superframe changed, so the confirmation must have moved.
+    # radio_devices_docs/open_hub/security/self-tests.md
     if c_hub.hex() == v["pair_confirm_hub"]:
         sys.exit("confirmation unchanged from pair_v2 - the superframe is not bound")
     if t.hex() == v["pair_transcript"]:
         sys.exit("transcript unchanged from pair_v2 - the superframe is not bound")
 
-    # The transcript must differ from pair_v2's in exactly the four bytes at
-    # offset 8 and nowhere else. This is what makes "only the superframe
-    # varies" a checked claim rather than a sentence in a docstring.
+    # Exactly four bytes at offset 8 and nowhere else.
+    # radio_devices_docs/open_hub/arch/build-and-generation.md
     v2t = bytes.fromhex(v["pair_transcript"])
     diff = [i for i in range(119) if v2t[i] != t[i]]
     if diff != [8, 9, 10, 11]:
