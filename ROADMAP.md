@@ -6,6 +6,10 @@ never built. **Nothing here is reasoning** — every item names the page in
 item needs a paragraph to justify it, that paragraph belongs on its page and the
 line here shrinks to a pointer.
 
+**Cite a tag or a commit message, never a bare SHA.** A rewrite orphans a hash
+silently and neither the writer nor the reader is told; `e2e5ed0` sat in item 1
+for a day pointing into history reachable only from `pre-squash-2026-08-21`.
+
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
 behind on its page; the entry here just goes.
@@ -70,16 +74,22 @@ gap between a device's transmit opportunities, and **three per superframe are th
 minimum**: two bottom out at exactly 1000 ms, which fails for any positive air
 time.
 
-Landed in `e2e5ed0`: 50 kbps, deviation left at 25 kHz, 194 slots of 9400 µs,
-stride 65, **exactly 64 devices**, the 1400 µs guard untouched, largest gap
-778 ms and 210 750 µs left for the hub. Agreed with the device session, whose
-half is on `b52ff1f`. Both things that broke are fixed — the replay guard is now
-the tuple `(superframe, slot)` and the device index is `slot % 65` — and a static
-assert caught a bad edit of the frame size before it reached a build.
+Landed as the pair `054c17f` + `95d6625`, which the shared header's air-time
+assert shows is **one change**: 50 kbps, deviation left at 25 kHz, 194 slots of
+9400 µs, stride 65, **exactly 64 devices**, the 1400 µs guard untouched, largest
+gap 778 ms and 210 750 µs left for the hub.
 
-**Blocked on item 12**, which is what the first frames at the new rate found:
-21 sent, 10 reached sync, 10 failed CRC, none accepted. The geometry is not what
-is wrong.
+**Blocked on two things, not one.**
+
+*Item 12* is what the first frames at the new rate found: 21 sent, 10 reached
+sync, 10 failed CRC, none accepted. The geometry is not what is wrong.
+
+*The device's replay floor*, confirmed 2026-08-22 and its item 21. The hub's is
+the tuple `(superframe, slot)` and the device's is the superframe alone, so the
+second and third frames of every superframe evaluate to zero age and are
+**refused as replays — two of every three.** It is refused after the tag
+verifies, so it presents as a replay counter climbing on a healthy link. Until
+that lands, a k = 3 PER run measures the floor and not the radio.
 
 What is left is the part no assert can do: **neither firmware has transmitted a
 single frame at 50 kbps that the other one could read.** Sensitivity is ~3 dB worse plus about a dB for the
@@ -129,7 +139,8 @@ the slot already paid for. `link_v4` pins both directions and both firmwares
 compile the same digest.
 
 **Nothing writes into it.** `app_len` is 0 on every frame, so "exchanging
-messages" is still telemetry plus a command byte. This is an application question
+messages" is still telemetry plus a command byte. The uplink loses one of the
+five bytes to `ack_arg` in item 32's hunk, so this is `app[4]` once that lands. This is an application question
 now rather than a wire one, and the last blocking item that does not depend on
 the radio.
 
@@ -747,6 +758,53 @@ compared with one taken after is out by a preamble and a sync word. Item 21's
 prediction attached.
 
 Raised by the device session. Device items 9 and 12.
+
+### 32. The agreed `radio_protocol.h` hunk is authored on this side and unwritten — `contract`
+
+Six changes to the one file both firmwares compile, agreed with the device
+session over 2026-08-21/22 and deliberately not written at night. **One diff, one
+`RADIO_LINK_VERSION` bump**, and the Doxygen for the touched fields in the same
+commit — comment churn stacked on a semantic change is the worst review surface
+this file can have.
+
+- `ack_arg` becomes generic.
+- `RADIO_REPORT_FLAG_SUPPLY_STALE` **`0x02`**, `RADIO_REPORT_FLAG_RESUMED`
+  **`0x04`**, beside the existing `RSSI_STALE 0x01`.
+- the `uptime_s` comment, which is item 22 — it does not wrap.
+- `app[5]` becomes `app[4]`, which is item 3's byte.
+- one `RADIO_LINK_VERSION` bump for all of it.
+
+**Masks, never bit positions.** The first exchange carried "bit 2" for one flag
+and `0x02` for another, which is the same ambiguity that produced
+`PAIR_FRAME_LEN == 45` against 49 — both sides internally consistent about
+different geometry. Agreed convention now: the wire is described in masks.
+
+`SUPPLY_STALE` is not a courtesy to the device. `supply_mv` reaches
+`CM7/Core/Src/cli.c` and prints as a number, so a rail that was never measured
+and a rail that reads 0 mV print identically — the field disarms the operator
+reading it. **The print must render `—` on the flag in the same commit**, or the
+bit is decorative on arrival. The device sets it unconditionally until its ADC
+path exists.
+
+`radio/known-issues.md`, `radio/tdma.md`.
+
+### 33. Half rate is no longer forced by duty cycle — `debt` `contract`
+
+`RADIO_DOWNLINK_EVERY` is 2 because beacon + downlink + join beacon every
+superframe came to over 1% at 25 kbps. At 50 kbps the three are **16.0 ms,
+0.800%**, and fit. The constraint that chose the value no longer binds.
+
+**Nothing is wrong today** — the value stands and the assert that pins it passes.
+What changed is that it is now a choice rather than a requirement, so a proposal
+to raise the downlink rate has to be refused or accepted on its own merits and no
+longer by pointing at the budget. The binding negative moved to the device: k = 3
+uplinks every superframe is over 1%, which is why a device reports on a granted
+cadence.
+
+Listed so the next reader does not re-derive the old refusal from a page that no
+longer says it.
+
+`radio/phy.md` § duty cycle.
 
 ## Design agreed but unbuilt
 
