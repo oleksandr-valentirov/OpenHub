@@ -1,11 +1,16 @@
+/**
+ * @file rng.c
+ * @brief Guarded access to RNG_DR, the only code permitted to touch it.
+ *
+ * radio_devices_docs/open_hub/security/entropy.md
+ */
 #include <string.h>
 
 #include "rng.h"
 #include "hsem_table.h"
 #include "stm32h7xx_hal.h"
 
-/* Bounded rather than timed: this runs before the scheduler on CM7 and with no
- * scheduler at all on CM4, so HAL_GetTick is not dependable in either place. */
+/* Bounded rather than timed: HAL_GetTick is not dependable on either core. */
 #define RNG_SPIN_LIMIT      100000u
 /* Drawn and thrown away after a restart, while the conditioning settles. */
 #define RNG_DISCARD_WORDS   8u
@@ -52,11 +57,8 @@ static rng_status_t rng_wait_ready(void) {
     }
 }
 
-/* ST's documented recovery for an RNG without CONDRST: clear the latched flag,
- * then stop and start the generator so the seed is drawn again. The words right
- * after a restart are the ones that trip the entropy checks, so they are drawn
- * and dropped without being judged - refusing them here is how the first
- * attempt at this left SEIS latched forever. */
+/* ST's documented recovery for an RNG without CONDRST.
+ * radio_devices_docs/open_hub/security/entropy.md */
 static void rng_restart_locked(void) {
     rng_clear_flags();
     RNG->CR &= ~RNG_CR_RNGEN;
@@ -70,17 +72,13 @@ static void rng_restart_locked(void) {
     rng_clear_flags();
 }
 
-/* A word is trustworthy only if no seed error latched between clearing the flag
- * and reading the register, so the flag is cleared immediately before the draw
- * and tested immediately after it. Measured on this part, SEIS latches on its
- * own within about a second of idling, which is why it is cleared per draw
- * rather than once at startup. */
+/* SEIS is cleared immediately before the draw and tested immediately after.
+ * radio_devices_docs/open_hub/security/entropy.md */
 static rng_status_t rng_draw_locked(uint32_t *out) {
     rng_status_t st;
     uint32_t sr;
 
-    /* Whatever is already buffered was produced before the flag was cleared, so
-     * it cannot be vouched for by the check below and is dropped. */
+    /* Buffered before the flag was cleared, so the check below cannot vouch. */
     for (uint32_t i = 0; i < RNG_FIFO_WORDS; i++) {
         if ((RNG->SR & RNG_SR_DRDY) == 0u)
             break;
@@ -109,8 +107,7 @@ rng_status_t rng_init(void) {
     if (!rng_lock())
         return RNG_ERR_TIMEOUT;
 
-    /* SEIS comes up latched out of reset on this part even when SECS has
-     * already cleared itself, and HAL_RNG_Init never touches SR. */
+    /* SEIS comes up latched out of reset, and HAL_RNG_Init never touches SR. */
     for (uint32_t attempt = 0; attempt < RNG_SEED_RETRIES; attempt++) {
         uint32_t w;
 
@@ -144,14 +141,8 @@ rng_status_t rng_word(uint32_t *out) {
     return st;
 }
 
-/* On failure the destination is zeroed, not left as it stands.
- *
- * A partial fill is the dangerous outcome: a caller that misses the return
- * value gets a buffer that is part fresh entropy and part whatever was there
- * before, and nothing downstream can tell. For a long-term private key that is
- * unrecoverable and silent. Zeroing makes a missed check produce an obviously
- * broken value instead of a plausible one - the same reason a refusal has to be
- * acted on rather than merely returned. */
+/* On failure the destination is zeroed, never left partly filled.
+ * radio_devices_docs/open_hub/security/entropy.md */
 rng_status_t rng_bytes(void *dst, size_t len) {
     uint8_t *p = (uint8_t *)dst;
     size_t remaining = len;

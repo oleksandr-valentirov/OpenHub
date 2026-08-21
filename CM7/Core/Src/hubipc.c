@@ -1,3 +1,9 @@
+/**
+ * @file hubipc.c
+ * @brief CM7's half of the mailbox, serialised across the whole transaction.
+ *
+ * radio_devices_docs/open_hub/arch/ipc.md
+ */
 #include <string.h>
 
 #include "cmsis_os.h"

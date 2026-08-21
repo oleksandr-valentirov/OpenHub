@@ -4,22 +4,29 @@
 
 #include "ipc.h"
 
-/* Serialises CM7's half of the mailbox.
+/**
+ * @file hubipc.h
+ * @brief CM7's half of the mailbox, serialised across the whole transaction.
  *
- * The rings are single-producer by construction and CM7 now has two tasks that
- * want to talk to CM4 - the console and the pairing service. Two producers on
- * one ring is not the whole hazard: ipc_poll_reply *drains* the reply ring and
- * discards anything that does not match its sequence number, so a second poller
- * eats the first one's answer and both time out. The mutex therefore covers the
- * entire transaction, not just the send.
- *
- * The reply goes into a caller-owned buffer rather than a shared static. With a
- * static, the lock is released before the caller reads it, so the value can be
- * overwritten between the two - which is safe only for as long as there is
- * exactly one caller, and adding the second is what this file is for. */
+ * radio_devices_docs/open_hub/arch/ipc.md
+ */
+
+/** @brief Creates the mutex every CM7 caller is serialised by. */
 void hub_ipc_init(void);
 
-/* 0 on success, -1 when nothing answered in time, otherwise CM4's IPC status.
- * `arg` travels as payload byte 0, so every request has one shape on the wire. */
+/**
+ * @brief Sends one request and waits for the reply carrying its sequence number.
+ * @param type     the IPC_REQ_* being asked for
+ * @param arg      travels as payload byte 0 when @p payload is NULL
+ * @param payload  the request body, or NULL
+ * @param len      its length, at most IPC_PAYLOAD_MAX
+ * @param reply    receives CM4's answer
+ * @retval  0  the reply arrived and CM4 reported success
+ * @retval -1  no reply inside the timeout
+ * @return otherwise CM4's own IPC status
+ *
+ * Holds the mutex across send and wait, not just the send: two pollers drain
+ * each other's replies. radio_devices_docs/open_hub/arch/ipc.md
+ */
 int hub_ipc_call(uint8_t type, uint8_t arg, const void *payload, uint8_t len,
                  ipc_msg_t *reply);

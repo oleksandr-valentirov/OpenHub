@@ -1,9 +1,10 @@
 #pragma once
 
-/* The cross-core mailbox lives in SRAM4 at the .shared_mem origin. Both cores
- * define the object and both linkers put it first in that section, so the
- * address agrees without either side hardcoding 0x38000000. (NOLOAD) on the
- * section keeps either core's startup from wiping what the other wrote.
+/**
+ * @file shared_memory.h
+ * @brief Places the cross-core mailbox in SRAM4, at whatever origin the linker gives it.
  *
- * The message types themselves live in ipc.h. */
+ * Neither core carries 0x38000000 as a literal, so the region moves in one place
+ * per core. radio_devices_docs/open_hub/arch/ipc.md
+ */
 #define SHARED_MEM __attribute__((section(".shared_mem"), used, aligned(4)))

@@ -1,16 +1,19 @@
+/**
+ * @file ipc.c
+ * @brief The ring mechanics both cores compile, with one writer per index.
+ *
+ * radio_devices_docs/open_hub/arch/ipc.md
+ */
 #include <string.h>
 
 #include "ipc.h"
 #include "hsem_table.h"
 #include "stm32h7xx_hal.h"
 
-/* Both cores define the object; both linker scripts put .shared_mem at the
- * RAM_D3 origin, so the address is the linker's business, not a literal. */
+/* Both cores define it; both linkers put .shared_mem at the RAM_D3 origin. */
 SHARED_MEM ipc_shared_t shared_ipc;
 
-/* One counter per core, because each core compiles its own copy of this file.
- * CM7 numbers requests with it and CM4 numbers events, and neither ever reads
- * the other's - a reply always echoes rather than allocating. */
+/* One counter per core; a reply always echoes rather than allocating. */
 static uint16_t next_seq = 1;
 static uint32_t stale_replies = 0;
 static uint32_t stale_event_replies = 0;
@@ -52,8 +55,7 @@ static int ring_pop(ipc_ring_t *r, ipc_msg_t *m) {
     return 1;
 }
 
-/* HSEM here is a doorbell, not a lock: take and release immediately so the far
- * core sees the flag. The data is already safe without it. */
+/* A doorbell, not a lock: the data is already safe without it. */
 static void ipc_ring_doorbell(uint32_t sem) {
     HAL_HSEM_FastTake(sem);
     HAL_HSEM_Release(sem, 0);
@@ -108,8 +110,7 @@ int ipc_poll_reply(uint16_t seq, ipc_msg_t *out) {
             *out = m;
             return 1;
         }
-        /* Anything else answers a request that already timed out. Dropping it
-         * here is the whole reason the sequence number exists. */
+        /* Anything else answers a request that already timed out. */
         stale_replies++;
     }
     return 0;
@@ -132,10 +133,8 @@ int ipc_send_reply(const ipc_msg_t *req, uint8_t status, const void *payload, ui
     return 0;
 }
 
-/* The mirror of ipc_send_request. The doorbell is the M4->M7 one the reply path
- * already uses: both wake CM7, and CM7 drains every ring it owns when it wakes,
- * so a shared doorbell costs nothing and a second semaphore would only be one
- * more thing to get out of step. */
+/* The mirror of ipc_send_request, sharing the M4->M7 doorbell.
+ * radio_devices_docs/open_hub/arch/ipc.md */
 int ipc_send_event(uint8_t type, const void *payload, uint8_t len, uint16_t *seq_out) {
     ipc_msg_t m;
     uint16_t seq;
@@ -166,6 +165,12 @@ int ipc_poll_event_reply(uint16_t seq, ipc_msg_t *out) {
         stale_event_replies++;
     }
     return 0;
+}
+
+/* No sequence filter, so the caller owns the dispatch and nothing is dropped
+ * on its behalf. radio_devices_docs/open_hub/arch/ipc.md */
+int ipc_poll_any_event_reply(ipc_msg_t *out) {
+    return ring_pop(&shared_ipc.evt_rsp, out);
 }
 
 int ipc_poll_event(ipc_msg_t *out) {

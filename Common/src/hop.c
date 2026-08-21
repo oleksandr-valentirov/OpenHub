@@ -1,3 +1,9 @@
+/**
+ * @file hop.c
+ * @brief The hop sequence: a deck per cycle, indexed by the counter rather than stepped.
+ *
+ * radio_devices_docs/radio/hopping.md
+ */
 #include <string.h>
 
 #include "hop.h"
@@ -12,24 +18,20 @@ int hop_init(hop_ctx_t *ctx, hop_prf_t prf, void *prf_ctx, uint8_t count) {
     return 0;
 }
 
-/* Fisher-Yates over the channel list, seeded by the PRF of the cycle number.
- * Two blocks give 32 bytes, enough randomness for up to 64 channels. */
+/* Fisher-Yates seeded by the PRF of the cycle number; two blocks, 32 bytes. */
 static int build_deck(hop_ctx_t *ctx, uint32_t cycle) {
     uint8_t block[16];
     uint8_t stream[32];
     uint8_t i;
 
-    /* Dropped before rebuilding, so a deck half-built by a failing PRF can never
-     * be served as though it were cached. */
+    /* Dropped before rebuilding: a half-built deck must not be served. */
     ctx->valid = 0;
 
     memset(block, 0, sizeof(block));
     memset(stream, 0, sizeof(stream));
 
-    /* Big-endian: this is a crypto input, and the rule is that anything fed into
-     * the crypto layer is big-endian regardless of how it sits on the wire.
-     * Cycle 0 is identical either way, which is exactly why a first-contact test
-     * inside the first cycle would pass and everything after it would not. */
+    /* Big-endian, as every crypto input is; cycle 0 is identical either way.
+     * radio_devices_docs/radio/hopping.md */
     block[0] = (uint8_t)(cycle >> 24);
     block[1] = (uint8_t)(cycle >> 16);
     block[2] = (uint8_t)(cycle >> 8);
@@ -44,8 +46,7 @@ static int build_deck(hop_ctx_t *ctx, uint32_t cycle) {
         ctx->deck[i] = i;
 
     for (i = (uint8_t)(ctx->count - 1); i > 0; i--) {
-        /* Rejection-free enough here: the modulo bias over a 0..255 draw for
-         * i+1 <= 64 is under 0.4%, and the deck stays a permutation regardless. */
+        /* Modulo bias under 0.4% here, and the deck stays a permutation. */
         uint8_t j = (uint8_t)(stream[i & 31] % (i + 1));
         uint8_t t = ctx->deck[i];
         ctx->deck[i] = ctx->deck[j];
