@@ -9,6 +9,7 @@ import argparse
 import numpy as np
 
 import iqfile
+import phy
 
 
 def main():
@@ -16,7 +17,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
     ap.add_argument("-n", "--fft", type=int, default=2048)
-    ap.add_argument("-w", "--bandwidth", type=float, default=60e3)
+    ap.add_argument("-w", "--bandwidth", type=float, default=phy.demod_cutoff(),
+                    help="complex low-pass cutoff, default from the PHY headers")
     ap.add_argument("--rows", type=int, default=28, help="height of the ASCII plot")
     a = ap.parse_args()
 

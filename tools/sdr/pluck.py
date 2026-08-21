@@ -43,15 +43,14 @@ def main():
     x = raw[i0:i1].astype(np.float32) - 127.5
     x = (x[0::2] + 1j * x[1::2]).astype(np.complex64)
 
-    # Bring the wanted channel to DC *before* the anti-alias filter. Putting it
-    # anywhere else and then low-passing around DC deletes it - which looks
-    # exactly like a transmitter that never keyed.
+    # The wanted channel to DC before the anti-alias filter, never after.
+    # radio_devices_docs/open_hub/testing/sdr.md
     n = np.arange(len(x), dtype=np.float64)
     shift = a.freq - centre
     x *= np.exp(-2j * np.pi * shift * n / rate).astype(np.complex64)
 
-    # Filter, then downsample. The other order destroys the kernel; that mistake
-    # has already cost this project one false negative, see README.
+    # Filter, then downsample: the other order destroys the kernel.
+    # radio_devices_docs/open_hub/testing/sdr.md
     if a.decimate > 1:
         x = iqfile.lowpass(x, rate, rate / (2.0 * a.decimate) * 0.8, taps=257)
         x = x[::a.decimate]

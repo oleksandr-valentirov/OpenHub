@@ -12,26 +12,21 @@ import numpy as np
 import frames
 import gfsk
 import iqfile
+import phy
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", help="raw u8 IQ capture from capture.py")
-    # 0x0500 is 25 kbps, which is what the link runs at. This defaulted to
-    # 0x0D05 - 9.6 kbps - left over from the PHY profile the project moved off
-    # weeks ago, so the documented invocation demodulated every capture at the
-    # wrong rate and found nothing. A stale default in a diagnostic tool is
-    # worse than no default: it produces a confident negative.
-    ap.add_argument("-b", "--bitrate", type=float, default=32e6 / 0x0500)
-    ap.add_argument("-w", "--bandwidth", type=float, default=60e3,
+    # Read from Common/inc, so the PHY moves these and nobody has to remember.
+    # radio_devices_docs/open_hub/testing/sdr.md
+    ap.add_argument("-b", "--bitrate", type=float, default=phy.bitrate())
+    ap.add_argument("-w", "--bandwidth", type=float, default=phy.demod_cutoff(),
                     help="demod low-pass cutoff in Hz")
     ap.add_argument("--sync", default="hell", help="sync word, ASCII or 0x-prefixed hex")
-    # The hub sets DcFree = 00 in RegPacketConfig1 and has done since Manchester
-    # was dropped for doubling air time. This defaulted to "manchester", so the
-    # documented invocation decoded every frame through a coding the transmitter
-    # does not use - the same stale-default fault as the bitrate above, and with
-    # the same symptom: a confident negative from a tool nobody suspects.
+    # DcFree is 00 on the hub; this default moves with the PHY too.
+    # radio_devices_docs/open_hub/testing/sdr.md
     ap.add_argument("--coding", choices=["none", "manchester", "whitening"],
                     default="none")
     ap.add_argument("--keys", default=None,
@@ -56,9 +51,8 @@ def main():
 
     x, rate = iqfile.load(a.path)
 
-    # A hopping transmitter is never on the capture centre, so without this the
-    # low-pass below keeps whatever happens to sit at 866.5 MHz and discards the
-    # frame that was actually asked for.
+    # A hopping transmitter is never on the capture centre.
+    # radio_devices_docs/open_hub/testing/sdr.md
     if a.tune is not None:
         meta = iqfile.read_meta(a.path)
         if meta["signal"] is None:

@@ -30,9 +30,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
-    # Wideband by default. A lowpass around the capture centre only sees one
-    # channel, and the hub hops across 28 of them - measured on a real capture,
-    # the narrow path reported 0.011 % against a true 0.418 %, and passed.
+    # Wideband by default: the hub hops across 28 channels.
+    # radio_devices_docs/open_hub/testing/sdr.md
     ap.add_argument("--narrow", type=float, metavar="HZ", default=None,
                     help="single-channel mode: lowpass at HZ instead of scanning "
                          "the whole capture. Only correct for a transmitter that "

@@ -86,8 +86,8 @@ def find_bursts(x, rate, rel_threshold=0.25, min_len_us=200, floor_mult=3.0,
         else:
             merged.append(span)
 
-    # Length is judged after merging: a frame that arrived in pieces is one
-    # burst of its true length, not six that each fail the minimum.
+    # Length is judged after merging, never before.
+    # radio_devices_docs/open_hub/testing/sdr.md
     min_len = int(rate * min_len_us / 1e6)
     return [(s, e) for s, e in merged if e - s >= min_len]
 
@@ -131,8 +131,7 @@ def find_bursts_wideband(x, rate, nfft=2048, snr_db=15.0, bridge_ms=5.0, min_ms=
     if start is not None:
         bursts.append((start, len(active)))
 
-    # An FSK burst dips below threshold whenever its energy sits in the other
-    # tone, so one transmission arrives as a run of fragments.
+    # An FSK burst dips below threshold whenever its energy is in the other tone.
     bridge = max(1, int(round(bridge_ms * 1e-3 / slot_s)))
     merged = []
     for b in bursts:

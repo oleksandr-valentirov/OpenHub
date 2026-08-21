@@ -80,8 +80,8 @@ def parse(payload, keys=None):
         sk = keys.get("session")
         if sk is None:
             return line + "  [sealed - no session key given]"
-        # dev_id is not on the wire: the hub assigned the slot, so it owns the
-        # map. A bench decoder has to be told which device holds the slot.
+        # dev_id is not on the wire, so a bench decoder must be told the map.
+        # radio_devices_docs/open_hub/testing/sdr.md
         dev = keys.get("dev_id", 0)
         pt = _gcm_open(sk, nonce(sf, dev, DIR_UPLINK, slot),
                        payload[:UPLINK_AAD_LEN], ct, tag)

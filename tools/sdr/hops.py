@@ -47,9 +47,8 @@ def air_time_envelope(x, rate, s_slot, e_slot, slot_s, f_rel, bw=60e3, guard=12)
     seg = seg * np.exp(-2j * np.pi * f_rel * t).astype(np.complex64)
     env = np.abs(iqfile.lowpass(seg, rate, bw)).astype(np.float32)
 
-    # The floor comes from the padding, which is off the burst by construction.
-    # Taking it from the whole segment would measure the signal, since most of
-    # the segment is signal - which reads the burst as longer than it is.
+    # The floor comes from the padding, never from the segment.
+    # radio_devices_docs/open_hub/testing/sdr.md
     edge = np.concatenate((env[:pad // 2], env[-pad // 2:]))
     floor = float(np.median(edge))
     peak = float(np.percentile(env, 98))
@@ -95,9 +94,8 @@ def main():
 
     P, freqs = spectrogram(x, rate, a.nfft)
     dB = 10 * np.log10(P + 1e-12)
-    # The noise floor is not flat across a 2.4 MHz capture, so each bin is
-    # judged against its own median. A burst that is strong for its corner of
-    # the band would otherwise be missed while another one saturates.
+    # Per-bin medians: the noise floor is not flat across 2.4 MHz.
+    # radio_devices_docs/open_hub/testing/sdr.md
     floor = np.median(dB, axis=0)
     excess = dB - floor
     rowpeak = excess.max(axis=1)
@@ -115,10 +113,8 @@ def main():
     if start is not None:
         bursts.append((start, len(active)))
 
-    # An FSK burst dips below threshold whenever its energy sits in the other
-    # tone, so one transmission arrives as a run of fragments. Bridge gaps that
-    # are far shorter than a real inter-burst interval, then drop what is left
-    # too short to be a frame.
+    # An FSK burst arrives as fragments; bridge, then drop what is too short.
+    # radio_devices_docs/open_hub/testing/sdr.md
     bridge = max(1, int(round(a.bridge_ms * 1e-3 / slot_s)))
     merged = []
     for b in bursts:
@@ -162,11 +158,8 @@ def main():
     span = len(x) / rate
     print(f"\nall bursts:   {100*total/span:.3f} %   {len(set(seen))} distinct channel(s)")
 
-    # The total above counts every burst in the band, including other people's
-    # transmitters - a bench beacon in another repository inflated it here by
-    # two thirds. Selecting on air time separates our frames from theirs when
-    # the frame length is known, so the attributable figure is computed rather
-    # than eyeballed off the table.
+    # The total counts every burst in the band, ours and everyone else's.
+    # radio_devices_docs/open_hub/testing/sdr.md
     if a.expect_ms is not None or a.channel is not None:
         mine, why = bursts, []
         if a.expect_ms is not None:
@@ -188,10 +181,8 @@ def main():
                   f"{1e3*quant/len(mine):.2f} ms quantised "
                   f"({100*(quant-ours)/ours:+.0f} %)")
 
-        # A selection is only trustworthy if what it selected looks like one
-        # transmitter. Consistent gaps say so; scattered ones mean the filter
-        # let somebody else in, which is how air time alone mis-attributed a
-        # fixed-channel node.
+        # A selection is trustworthy only if its cadence looks like one radio.
+        # radio_devices_docs/open_hub/testing/sdr.md
         if len(mine) > 2:
             gaps = sorted((mine[i + 1][0] - mine[i][0]) * slot_s * 1e3
                           for i in range(len(mine) - 1))
@@ -200,9 +191,8 @@ def main():
             if spread < 0.05 * modal:
                 print(f"  cadence {gaps[0]:.1f}-{gaps[-1]:.1f} ms (consistent)")
             else:
-                # A gap that is a near-exact integer multiple of the modal gap is
-                # a burst the filter threw away, not one it let in. The two call
-                # for opposite corrections, so they must not read the same.
+                # A multiple of the modal gap is a burst thrown away, not let in.
+                # radio_devices_docs/open_hub/testing/sdr.md
                 holes = [g for g in gaps
                          if abs(g / modal - round(g / modal)) < 0.02 and g > 1.5 * modal]
                 if len(holes) == len(gaps) - gaps.count(modal) or holes:
