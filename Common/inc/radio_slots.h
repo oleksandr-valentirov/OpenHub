@@ -43,9 +43,10 @@
 #define RADIO_SLOT_GUARD_US     1400u
 #define RADIO_SLOT_US           (RADIO_UPLINK_AIR_US + RADIO_SLOT_GUARD_US)  /* 9400 */
 
-/* Regions, as offsets from the superframe boundary. */
+/* Regions from the superframe boundary. A LEN is the region, not the frame's
+ * air time. radio_devices_docs/radio/tdma.md */
 #define RADIO_BEACON_OFFSET_US  0u
-#define RADIO_BEACON_LEN_US     25000u          /* 8.0 ms on air, rest is retune margin */
+#define RADIO_BEACON_LEN_US     25000u
 
 /* One hub-to-device frame, at most every second superframe.
  * radio_devices_docs/radio/tdma.md */

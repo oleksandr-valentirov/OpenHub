@@ -16,8 +16,12 @@ extern CRYP_HandleTypeDef hcryp;
 
 #define CRYP_TIMEOUT_MS  50u
 
-/* PAIR_ACCEPT's 19-byte grant, rounded up to a whole 32-bit word. */
+/* Bounds every sealed body; the assert names them, so no arithmetic here rots. */
 #define AEAD_MAX_LEN  32u
+_Static_assert(sizeof(radio_pair_grant_t)    <= AEAD_MAX_LEN &&
+               sizeof(radio_uplink_report_t) <= AEAD_MAX_LEN &&
+               sizeof(radio_downlink_cmd_t)  <= AEAD_MAX_LEN,
+               "a sealed body is larger than the CRYP path's buffers");
 
 static void be32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
