@@ -1,6 +1,9 @@
-/* Microsecond timebase for the radio. TIM2 free-runs at 1 MHz over its full
- * 32 bits, so the counter wraps every ~71.6 minutes and every comparison below
- * is written to survive that wrap. */
+/**
+ * @file timebase.c
+ * @brief TIM2 free-runs at 1 MHz over 32 bits, wrapping every ~71.6 minutes.
+ *
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
 #include "main.h"
 #include "timebase.h"
 
@@ -9,8 +12,7 @@ extern TIM_HandleTypeDef htim2;
 static uint32_t delay_end_us = 0;
 static volatile uint8_t delay_flag = 1;
 
-/* Ticks per nominal microsecond, Q24. Nominal until the first LSE window lands,
- * so an unmeasured board still runs - just on the uncorrected period. */
+/* Ticks per nominal microsecond, Q24, and nominal until the first LSE window. */
 static volatile uint32_t scale_q24 = 1u << 24;
 
 void timebase_set_scale(uint32_t q24) {
@@ -25,6 +27,10 @@ uint32_t timebase_us_to_ticks(uint32_t us) {
     return (uint32_t)(((uint64_t)us * scale_q24) >> 24);
 }
 
+uint32_t timebase_ticks_to_us(uint32_t ticks) {
+    return (uint32_t)(((uint64_t)ticks << 24) / scale_q24);
+}
+
 uint32_t rfm_micros(void) {
     return __HAL_TIM_GET_COUNTER(&htim2);
 }
@@ -33,8 +39,7 @@ uint32_t get_rfm_counter(void) {
     return rfm_micros() / 1000u;
 }
 
-/* Signed difference, so a deadline that straddles the wrap still compares right.
- * The old version tested HAL_GetTick() for equality and hung on a missed tick. */
+/* Signed difference, so a deadline straddling the wrap still compares right. */
 uint8_t timebase_elapsed(uint32_t deadline_us) {
     return (int32_t)(rfm_micros() - deadline_us) >= 0;
 }

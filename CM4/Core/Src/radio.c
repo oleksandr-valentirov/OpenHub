@@ -1,3 +1,9 @@
+/**
+ * @file radio.c
+ * @brief CM4's radio: the superframe grid, every frame on it, and the pairing window.
+ *
+ * radio_devices_docs/open_hub/radio/superloop.md
+ */
 #include <string.h>
 
 #include "radio.h"
@@ -18,36 +24,30 @@
 #include "aead.h"
 #include "main.h"
 
-/* The PHY is radio_phy.h now. It used to be defined here, where the device side
- * could not see it and had to write its own copy of every number - which is the
- * arrangement that let PAIR_FRAME_LEN be 45 on one side and 49 on the other with
- * an assert passing on each. 25 kbps GFSK, 25 kHz deviation, 100 kHz RxBw;
- * hopping stays inside 865-868 MHz, the sub-band that allows 1% duty cycle. */
+/* The PHY numbers live in radio_phy.h, where both firmwares compile the same ones.
+ * radio_devices_docs/radio/phy.md */
 
-/* RADIO_PROTO_VERSION now comes from radio_protocol.h. It was defined here,
- * where the device side could not see it, and the device had chosen 1 for the
- * pairing frames while the beacons went out as 2. */
-/* A joining device parks on the fixed channel, so the window only has to be
- * short enough to bound the extra airtime and long enough for a human. */
+/* A joining device parks on the fixed channel, so the window bounds airtime only.
+ * radio_devices_docs/radio/joining.md */
 #define PAIRING_WINDOW_MS       RADIO_PAIR_WINDOW_MS
 #define JOIN_BEACON_EVERY       2u
 
 #define BROADCAST_ADDR          255
 
 #define MODE_TIMEOUT_US         10000u
-/* A measurement is 2^(smoothing+1) bit periods - microseconds at 25 kbps. This
- * bounds an SPI fault, not the part; it must stay far below the slot guard. */
+/* 2^(smoothing+1) bit periods. Bounds an SPI fault, not the part. */
 #define RSSI_TIMEOUT_US         500u
 #define TX_TIMEOUT_US           200000u
 
-/* Slots are assigned from 0 upward and the store holds at most KS_MAX_DEVICES,
- * so a slot at or above this can never be handed out. Indexing the table by
- * slot is what lets an uplink frame carry a slot instead of a device id. */
-#define RADIO_MAX_DEVICES  64u
+/* Device indices, counted from 0; the cap is the grid's, not this file's.
+ * radio_devices_docs/radio/tdma.md */
+#define RADIO_MAX_DEVICES  RADIO_DEVICE_MAX
 
-/* One exchange at a time, and these bound how long a half-finished one may
- * hold the machine. CM7 needs ~330 ms of curve work; a device needs ~205 ms
- * plus a round trip. Both sit well inside the quiesce they run in. */
+/* RegDioMapping1 DIO3 field, packet mode: SyncAddress. Unconfirmed on this part. */
+#define RFM69_DIO3_SYNC_ADDRESS  2u
+
+/* How long a half-finished exchange may hold the machine.
+ * radio_devices_docs/radio/pairing.md */
 #define EX_CM7_TIMEOUT_US   2000000u
 #define EX_DEV_TIMEOUT_US   3000000u
 
@@ -55,23 +55,31 @@ typedef struct dev_entry {
     uint8_t  used;
     uint8_t  slot;
     uint8_t  report_every;
-    uint8_t  flags;             /* RADIO_REPORT_FLAG_* from the last report */
+    uint8_t  flags;             /**< RADIO_REPORT_FLAG_* from the last report */
     uint32_t dev_id;
     uint32_t key_gen;
     uint8_t  session_key[AEAD_KEY_BYTES];
     uint32_t last_superframe;
-    /* Highest superframe accepted from this device, and the only thing that
-     * makes an uplink unreplayable. Scoped to key_gen: a re-pair changes the
-     * session key, so a frame from an older generation cannot verify anyway
-     * and the floor starts again at zero. */
-    uint32_t rx_floor;
+    uint32_t rx_floor;          /**< highest accepted, scoped to key_gen; the replay guard */
+    uint8_t  rx_floor_slot;     /**< ... and which of its three slots, so k=3 is orderable */
     uint32_t frames_ok;
     uint32_t frames_bad;
     uint32_t frames_replay;
     uint32_t uptime_s;
     uint16_t supply_mv;
-    int8_t   rssi_up;           /* measured here, on the device's last frame */
-    int8_t   rssi_down;         /* as the device heard the hub's last beacon */
+    int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
+    uint32_t arrival_us;        /**< into the superframe the report claimed */
+    int8_t   rssi_down;         /**< as the device heard the hub's last beacon */
+    uint8_t  dl_cmd;            /**< RADIO_CMD_*, queued for this device */
+    uint8_t  dl_report_every;
+    uint16_t dl_arg;
+    uint8_t  dl_repeats;        /**< downlinks left to carry it; 0 means idle */
+    uint8_t  dl_cmd_seq;        /**< names the command, so an ack can refer to it */
+    uint8_t  dl_acked;          /**< the device echoed this seq back */
+    uint32_t cyc_last_sf;       /**< superframe of the last cycle that arrived */
+    uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
+    uint16_t cyc_n;
+    uint32_t cyc_sum;           /**< ... against the mean, which also carries loss */
 } dev_entry_t;
 
 static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in);
@@ -102,21 +110,25 @@ static uint32_t late_last_us = 0;
 static uint32_t late_max_us = 0;
 static uint32_t late_min_us = 0xFFFFFFFFu;
 static uint32_t late_over = 0;   /* beacons past RADIO_BEACON_LATE_LIMIT_US */
+
+/* Command instant to first bit on air: FIFO write, PLL lock and PA ramp.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static uint32_t lead_last_us, lead_min_us = 0xFFFFFFFFu, lead_max_us, lead_n;
+/* The beacon alone; lead_* above mixes in downlinks and join beacons. */
+static uint32_t bl_last_us, bl_min_us = 0xFFFFFFFFu, bl_max_us, bl_n, bl_sf;
 static uint32_t pairing_deadline_us = 0;
 static uint8_t  pairing_open = 0;
 static uint32_t pairing_dev_id = 0;
 
-/* Offsets into the superframe, in real ticks. Recomputed at each boundary from
- * the same calibration the period uses, so the grid does not drift apart
- * internally when the measured scale moves. */
+/* Superframe offsets in real ticks, recomputed at each boundary from one scale.
+ * radio_devices_docs/open_hub/radio/timebase.md */
 static uint32_t join_offset_tk = 0;
 
 static radio_pair_state_t pair_state = RADIO_PAIR_IDLE;
 static uint8_t  quiesce_len = 0;         /* superframes announced */
 static uint32_t quiesce_resume_at = 0;   /* the counter value promised on air */
 static uint8_t  quiesce_pending = 0;     /* announce at the next boundary */
-/* Starts one full gap in the past so the first quiesce is not refused. Signed
- * differences everywhere below, so this survives the counter wrap. */
+/* One full gap in the past, so the first quiesce is not refused. */
 static uint32_t quiesce_last_end = (uint32_t)(0u - RADIO_QUIESCE_MIN_GAP);
 static uint32_t quiesce_refused = 0;
 static uint32_t pair_reqs_seen = 0;
@@ -128,26 +140,36 @@ static uint32_t data_beacons = 0;
 static uint32_t announce_beacons = 0;
 static uint32_t silent_frames = 0;
 static uint32_t unreserved_frames = 0;   /* boundaries passed with nothing sent */
-/* The beacon path can fail at four points and every one of them used to return
- * silently. data_beacons counts attempts, so it stays equal to the superframes
- * elapsed and the accounting invariant holds - but a radio failing every
- * transmit would otherwise report identically to a working one. */
+/* data_beacons counts attempts, which is what keeps the accounting exact.
+ * radio_devices_docs/open_hub/arch/ipc.md */
 static uint32_t beacon_err = 0;
 static uint32_t quiesce_lost = 0;        /* a valid PAIR_REQ that won no clear air */
 
-/* Join-region sub-state, so a 100 ms receive window does not block the loop and
- * delay the next superframe boundary - the beacon's own jitter is the thing
- * this whole grid is measured against. */
+/* Join-region sub-state, so a 100 ms window never blocks the loop.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static uint8_t  join_phase = 0;
 static uint8_t  join_beacon_pending = 0;
 static uint32_t join_rx_deadline = 0;
 static uint32_t join_served_frame = 0xFFFFFFFFu;
 static uint8_t  rx_buffer[RFM69_FIFO_SIZE];
 
-/* Indexed by slot, so an uplink frame's slot byte is the whole lookup and a
- * frame naming an unassigned slot is refused before any crypto runs. */
+/* Indexed by slot, so an uplink frame's slot byte is the whole lookup. */
 static dev_entry_t devices[RADIO_MAX_DEVICES];
 static uint8_t  device_count;
+static uint32_t up_evt_sent, up_evt_drop;   /* ROADMAP item 2 */
+/* The hub half of the event deadline, both terms on this core's clock.
+ * ROADMAP item 2, radio_devices_docs/open_hub/arch/ipc.md */
+static uint16_t evt_seq;            /* the event still waiting for its reply */
+static uint8_t  evt_waiting;
+static uint32_t evt_sent_tk;        /* when it was handed to the ring */
+static uint32_t evt_replied, evt_lost, evt_stale, evt_arrival_bad;
+static ipc_msg_t ex_reply;          /* the exchange's answer, held for one pass */
+static uint8_t   ex_reply_new;
+static uint32_t evt_arrival_last_us, evt_arrival_max_us;
+static uint32_t evt_rtt_last_us, evt_rtt_min_us, evt_rtt_max_us;
+static uint64_t evt_rtt_sum_us;
+/* Sent, acked, lost: an echo names the command, so silence is countable. */
+static uint32_t dl_cmd_sent, dl_cmd_replaced, dl_cmd_acked, dl_cmd_lost;
 static uint8_t  net_hop_key_set;
 static uint8_t  report_every_grant = RADIO_REPORT_EVERY_DEFAULT;
 static int      aead_selftest_rc = 1;   /* until it has actually run */
@@ -167,15 +189,13 @@ static uint32_t ex_tx_err, ex_seal_err;
 static uint32_t up_frames, up_ok, up_bad_slot, up_bad_frame, up_bad_tag;
 static uint32_t up_replay;   /* authenticated, but not newer than the floor */
 static uint32_t up_windows, up_sync;
-/* The downlink is one frame per opportunity, round-robined, so this is where
- * the rotation is. Held across superframes: restarting at slot 0 each time
- * would serve the first device every opportunity and the rest never. */
+/* The downlink rotation, held across superframes.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static uint8_t  dl_next_slot;
 static uint32_t dl_sent, dl_seal_err, dl_tx_err, dl_no_device, dl_served;
 static uint32_t dl_prf_err, dl_last_hz, dl_last_sf;
 
-/* pair_v3's invitation, built and MACed by CM7. Opaque here: CM4 keys the bytes
- * at the superframe it was told and forms no opinion about them. */
+/* pair_v3's invitation. Opaque here: CM4 keys the bytes it was given. ADR-0021 */
 static uint8_t  pi_frame[RADIO_PAIR_INIT_MAX];
 static uint8_t  pi_len;
 static uint32_t pi_superframe;      /* 0 when nothing is queued */
@@ -185,51 +205,88 @@ static uint8_t  pi_paylen;
 static uint32_t pi_last_sent_sf;
 static uint32_t dl_opportunities;
 static int16_t  up_rssi_peak_x2 = -32768, up_rssi_floor_x2 = 32767;
+static uint8_t  up_grid;            /* the channel the open window is tuned to */
+/* Summed per received frame, for a fit of the correction against the channel.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static uint32_t afc_n, afc_read_err;
+static int32_t  afc_last_hz, afc_min_hz, afc_max_hz;
+static uint8_t  afc_last_grid;
+static int64_t  afc_sum_hz, afc_sum_g, afc_sum_gg, afc_sum_gh;
+static uint8_t  afc_ring_grid[IPC_AFC_RING];
+static uint8_t  afc_ring_slot[IPC_AFC_RING];
+static uint8_t  afc_ring_gain[IPC_AFC_RING];
+static int8_t   afc_ring_rssi[IPC_AFC_RING];
+static int16_t  afc_ring_afc[IPC_AFC_RING];
+static uint16_t afc_ring_crc_ok;    /* bit i: ring entry i passed its CRC */
+static uint16_t afc_ring_in_frame;  /* bit i: entry i's level was taken during it */
+static uint8_t  afc_ring_head;      /* where the next sample goes */
+/* One frame's level, taken at its sync match and waiting for its PayloadReady.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static int8_t   sync_rssi_dbm;
+static uint8_t  sync_slot;          /* which slot the edge landed in, 0xFF if none */
+static uint8_t  sync_rssi_have;     /* 0 once consumed, so no frame borrows another's */
+static uint16_t sync_rssi_lag_us;   /* from the DIO3 edge to the sample */
+static uint16_t sync_rssi_lag_max_us;
+static uint32_t sync_rssi_taken, sync_rssi_late, sync_rssi_err;
 static uint32_t rx_crc_err;
+static uint32_t rx_flushes;         /* receivers restarted after an undrainable FIFO */
 static uint32_t rx_sync_match, rx_frames;
+
+/* SyncAddressMatch as a hardware edge; rx_sync_match counts, this one times. */
+static volatile uint32_t sync_edges;
+static volatile uint32_t sync_edge_tk;
+/* The boundary the stamp is measured against, captured in the same interrupt. */
+static volatile uint32_t sync_edge_base;
+static volatile uint8_t  sync_edge_new;
+static uint32_t sync_last_offset_us;
+/* The raw delta and the scale that converted it.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static uint32_t sync_last_offset_tk;
+static int32_t  sync_last_ppm;
+static uint32_t sync_min_offset_us = 0xFFFFFFFFu;
+static uint32_t sync_max_offset_us;
+/* Sums, so a spread is reported rather than a range: a range grows with n.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static uint32_t sync_ref_us;        /* deviations are from the first sample */
+static uint8_t  sync_ref_set;
+static uint32_t sync_stat_n;
+static int64_t  sync_sum_d;
+static uint64_t sync_sumsq_d;
+static uint64_t sync_lead_sum, sync_lead_sumsq;
+static int64_t  sync_cov_sum;       /* arrival against the beacon that preceded it */
+static uint32_t sync_unpaired;      /* edges with no beacon of their own superframe */
+static uint32_t sync_last_superframe;
+static uint32_t sync_implausible;
+static uint8_t  sync_dio_map1;      /* read back off the part */
 static uint8_t  sync_was_set;
 static uint8_t  rx_last_len, rx_last_type;
-static int8_t   rx_last_rssi;
-/* What the refused frame actually carried. Naming the field that mismatched
- * still leaves two implementations each certain they wrote the same number. */
+static int8_t   rx_last_rssi;       /* off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
+/* What the refused frame actually carried, not which field mismatched. */
 static uint16_t reqs_drop_net;
 static uint32_t reqs_drop_hub, reqs_drop_dev;
 static uint8_t  reqs_drop_head[16];
 static uint8_t  reqs_drop_key[8];
 static uint32_t rx_last_superframe;
-/* dbm_x2 from the driver is negated raw, so a STRONGER signal is a LARGER
- * (less negative) number. Written the other way round first, which made the
- * peak read weaker than the floor - nonsense on its face, and the only reason
- * it was caught in the first reading rather than in a conclusion. */
+/* A stronger signal is a larger (less negative) number.
+ * radio_devices_docs/open_hub/radio/configuration.md */
 static int16_t  rx_rssi_peak_x2 = -32768;   /* strongest sample seen */
 static int16_t  rx_rssi_floor_x2 = 32767;   /* weakest */
-/* Peak and floor mean nothing without it: both read 0 when the window never
- * opened and when every measurement failed, and those are different faults. */
+/* Peak and floor read 0 for two different faults; this separates them. */
 static uint32_t rx_rssi_samples;
 static uint8_t  beacon_err_last, reqs_drop_last;
 
-/* The uplink region is one long receive on the channel the beacon just went
- * out on. The slot grid exists to keep devices from colliding with each other;
- * the hub has one receiver and no reason to retune 96 times. */
+/* The uplink region is one long receive: the grid separates devices, not the hub.
+ * radio_devices_docs/radio/tdma.md */
 static uint8_t  uplink_rx_open;
 
 extern CRYP_HandleTypeDef hcryp;
 static hop_ctx_t hop;
 
-/* The network hop key. Zero-valued until CM7 installs the real one - except
- * that "zero" here is not zeros: see hop_key_placeholder(). */
+/* The network hop key, a placeholder until CM7 installs the real one. */
 static uint8_t  net_hop_key[RADIO_HOP_KEY_BYTES];
 
-/* One AES-128 block through CRYP, with everything it needs stated.
- *
- * Inheriting is how two correct functions produce one wrong answer, and this
- * function has proved it twice. It shares the accelerator with the frame
- * cipher, which sets a per-device key and a byte data width on every frame it
- * touches. Inheriting the key would hop according to whichever device last
- * transmitted; inheriting DataWidthUnit truncated the block to four bytes and
- * produced a perfectly valid permutation that no device could follow.
- *
- * So: algorithm, key, key size, data width and header size, every time. */
+/* One AES-128 block through CRYP, inheriting nothing from the frame cipher.
+ * radio_devices_docs/radio/hopping.md */
 static int aes_ecb_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     CRYP_ConfigTypeDef cfg;
     uint32_t key_words[4];
@@ -243,80 +300,48 @@ static int aes_ecb_block(const uint8_t key[16], const uint8_t in[16], uint8_t ou
     cfg.Algorithm     = CRYP_AES_ECB;
     cfg.KeySize       = CRYP_KEYSIZE_128B;
     cfg.pKey          = key_words;
-    /* 8-bit, not the 32-bit the .ioc configures: with a 32-bit datatype the
-     * accelerator takes the buffer word-wise, so every group of four bytes is
-     * reversed on this little-endian core. Measured, not reasoned. */
+    /* 8-bit, not the 32-bit the .ioc configures.
+     * radio_devices_docs/radio/hopping.md */
     cfg.DataType      = CRYP_DATATYPE_8B;
     cfg.DataWidthUnit = CRYP_DATAWIDTHUNIT_BYTE;
     cfg.HeaderSize    = 0;
     if (HAL_CRYP_SetConfig(&hcryp, &cfg) != HAL_OK)
         return -1;
-    /* 16 because the width unit above says bytes. A count in the other unit is
-     * not an error the HAL reports - one direction truncates and the other
-     * over-reads, and only truncation changes the answer. */
+    /* 16 because the width unit above says bytes; the HAL reports neither error. */
     if (HAL_CRYP_Encrypt(&hcryp, (uint32_t *)(void *)in, 16,
                          (uint32_t *)(void *)out, 50) != HAL_OK)
         return -1;
     return 0;
 }
 
-/* Runs once per full hop cycle - about a minute - so the cost is irrelevant,
- * but the accelerator is here and idle.
- *
- * A PRF failure must propagate: Fisher-Yates over an uninitialised buffer still
- * produces a perfectly valid permutation, so a silent failure looks exactly
- * like a working hop sequence that no device can follow. */
+/* Once per hop cycle. A PRF failure must propagate, never fall back.
+ * radio_devices_docs/radio/hopping.md */
 static int hop_prf_aes(void *ctx, const uint8_t in[16], uint8_t out[16]) {
     (void)ctx;
     return aes_ecb_block(net_hop_key, in, out);
 }
 
-/* The hop key before any device has paired. It is NOT secret and is not a
- * stand-in for the network key - it exists only so that two hubs in this state
- * do not follow the *same* sequence.
- *
- * Zeros would do that: the all-zero key is not random, so two unpaired hubs
- * sharing a bench would land on the identical channel every superframe and
- * interfere deterministically, which is the one collision nobody would think to
- * diagnose. Derived from hub_id instead, which is already unique per hub and
- * already public. Raised by the device side.
- *
- * Beaconing on a per-hub sequence beats not beaconing at all: the SDR bench
- * this project is verified with has nothing to capture from a silent hub. */
+/* The hop key before any device has paired. Not secret, and not zeros.
+ * radio_devices_docs/radio/hopping.md */
 static void hop_key_placeholder(void) {
     for (unsigned i = 0; i < RADIO_HOP_KEY_BYTES; i++)
         net_hop_key[i] = (uint8_t)((hub_id >> (8u * (i & 3u))) ^ (0x5Au + i));
 }
 
-/* The PRF against a host-computed AES block, at boot, after the frame cipher
- * has had CRYP - which is the adversarial ordering, not the convenient one.
- *
- * This existed only as a console command, so the defect it catches needed a
- * human to type something. No check on the *sequence* can see it: a truncated
- * block still shuffles to a uniform permutation with correct occupancy and
- * spread. The key and the input are both non-zero so a byte-order or width
- * error cannot hide in a block of zeroes. */
+/* The PRF against a host-computed block, at boot, after the frame cipher had CRYP.
+ * radio_devices_docs/radio/hopping.md */
 static int hop_prf_selftest(void) {
     uint8_t out[16];
 
-    /* FIPS-197 C.1 first, and *this* is the check that anchors it.
-     *
-     * Both sides' vector generators call the same OpenSSL, and neither side
-     * transcribed these bytes from the standard - one produced them, the other
-     * copied them from a message. So the host-side assert is one implementation
-     * agreeing with itself. CRYP is not OpenSSL, so running the block here is a
-     * software-against-hardware cross-check and is where the independence
-     * actually comes from. Do not delete this on the grounds that the vector
-     * file already checks it. */
+    /* FIPS-197 C.1 on CRYP: the hardware arm the host vector cannot supply.
+     * radio_devices_docs/radio/hopping.md */
     if (aes_ecb_block(HV_FIPS_KEY, HV_FIPS_IN, out) != 0)
         return -1;
     if (memcmp(out, HV_FIPS_OUT, sizeof(out)) != 0)
         return -2;
 
-    /* Then the real hop key against the cycle-1 counter block. Cycle 1 and not
-     * cycle 0: cycle 0's block is all zeroes and identical under either endian
-     * convention, so a check built on it passes for the hub's first 56 seconds
-     * and fails for ever afterwards. */
+    /* Cycle 1, not cycle 0: cycle 0 is identical under either endian convention.
+     * radio_devices_docs/radio/hopping.md */
     if (aes_ecb_block(HV_HOP_KEY, HV_PRF_IN, out) != 0)
         return -3;
     return (memcmp(out, HV_PRF_OUT, sizeof(out)) == 0) ? 0 : -4;
@@ -326,8 +351,7 @@ static uint32_t slot_hz(uint32_t slot) {
     return RADIO_SLOT_HZ(slot);
 }
 
-/* hop.c yields 0..RADIO_HOP_COUNT-1; the reserved join slot is skipped so the
- * hopping set and the join channel are disjoint by construction. */
+/* Skips the reserved join slot, so the two sets are disjoint by construction. */
 static uint32_t hop_slot_to_grid(uint8_t hop_index) {
     return RADIO_HOP_TO_GRID(hop_index);
 }
@@ -380,35 +404,28 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     if (rfm69_set_bitrate(&radio, RADIO_BITRATE_BPS) != RFM69_OK) return 1;
     if (rfm69_set_deviation_hz(&radio, RADIO_DEVIATION_HZ) != RFM69_OK) return 1;
     if (rfm69_set_rx_bandwidth_hz(&radio, RADIO_RX_BANDWIDTH_HZ) != RFM69_OK) return 1;
-    /* Two receive-front-end registers this init never named, so both sat at
-     * their reset values for the whole of the radio's life. Measured floor is
-     * -108 dBm with bursts to -79, so a threshold below the floor is a level
-     * condition that is permanently true. */
+    /* Named explicitly; the reset values put the threshold below the noise floor.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_rssi_threshold_dbm(&radio, -100) != RFM69_OK) return 1;
     if (rfm69_set_dagc(&radio, 0) != RFM69_OK) return 1;
+    /* Measured on the preamble at every receiver start-up; RegAfcValue is the read.
+     * radio_devices_docs/open_hub/radio/configuration.md */
+    if (rfm69_set_afc(&radio, 1) != RFM69_OK) return 1;
+    /* DIO3 = SyncAddressMatch, then RegDioMapping1 read back off the part. */
+    if (rfm69_set_dio(&radio, 3, RFM69_DIO3_SYNC_ADDRESS) != RFM69_OK) return 1;
+    if (rfm69_read_reg(&radio, RFM69_RegDioMapping1, &sync_dio_map1) != RFM69_OK)
+        return 1;
     if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) return 1;
     if (rfm69_set_modulation(&radio, RFM69_SHAPING_BT_0_5) != RFM69_OK) return 1;
     if (rfm69_set_preamble_bytes(&radio, 4) != RFM69_OK) return 1;
     if (rfm69_set_sync(&radio, sync_val, sizeof(sync_val), 0) != RFM69_OK) return 1;
 
-    /* Whitening, not Manchester: the old setting doubled the time on air for
-     * the same DC balance, which is most of why the hub sat at 3.5% duty. */
-    /* No whitening: the SX1231 and the device's SX126x use different LFSR
-     * conventions, so matching them is a silent-failure risk for no gain -
-     * unlike Manchester it costs no air time either way, and the payload is
-     * AEAD ciphertext that is already DC balanced. */
+    /* Neither Manchester nor whitening.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_packet_format(&radio, 1, RFM69_DCFREE_NONE, 1,
                                 RFM69_FILTER_NONE) != RFM69_OK) return 1;
-    /* CrcAutoClearOff. The CRC is still computed and still reported; what
-     * changes is that a frame failing it is *delivered* instead of dropped
-     * before PayloadReady. Without this the hub cannot tell an empty band from
-     * a corrupted frame - the part discards silently and no counter anywhere
-     * moves, which is exactly the blindness that made two candidate faults
-     * produce identical evidence during the first on-air attempts.
-     *
-     * Set by hand because the library's set_packet_format does not expose bit
-     * 3, and writing the whole register here would silently undo whatever that
-     * call configured the moment either changes. */
+    /* CrcAutoClearOff: a frame failing CRC is delivered rather than discarded.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     {
         uint8_t pc1 = 0;
 
@@ -419,15 +436,12 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
             return 1;
     }
     if (rfm69_set_payload_length(&radio, RFM69_FIFO_SIZE - 2) != RFM69_OK) return 1;
-    /* Set but inert: filtering is FILTER_NONE above. Kept because authentication,
-     * not addressing, is what rejects a frame - filtering would only be a power
-     * optimisation, and enabling it would claim the first payload byte that the
-     * frame type now occupies. */
+    /* Set but inert: filtering is FILTER_NONE above.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_node_address(&radio, node_id) != RFM69_OK) return 1;
     if (rfm69_set_broadcast_address(&radio, BROADCAST_ADDR) != RFM69_OK) return 1;
-    /* PA1, not PA0. This module's PA0 pin is not bonded to the antenna, so the
-     * hub radiated about -40 dBm against a +13 dBm setting - measured by the
-     * device's receiver, by reciprocity and by the SDR, all agreeing. */
+    /* PA1: this module's PA0 pin is not bonded to the antenna.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_power(&radio, RFM69_PA1, 13) != RFM69_OK) return 1;
 
     if (rfm69_run_osc_calibration(&radio, 50000u) != RFM69_OK) return 1;
@@ -437,15 +451,10 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     if (hop_init(&hop, hop_prf_aes, NULL, RADIO_HOP_COUNT) != 0)
         return 1;
 
-    /* Before the grid starts. A radio that cannot seal a frame correctly should
-     * not transmit one, and the two published frames go through the same CRYP
-     * path the exchange will use rather than a round trip against itself - only
-     * matching the vector proves the nonce and AAD are assembled the way the
-     * far side assembles them. */
+    /* Before the grid starts, against published frames rather than a round trip.
+     * radio_devices_docs/radio/crypto/wire-crypto.md */
     aead_selftest_rc = aead_selftest();
-    /* After the frame cipher, deliberately: it leaves CRYP configured for GCM
-     * with a byte data width, and the PRF must be correct from that state
-     * rather than from a freshly initialised one. */
+    /* After the frame cipher, so the PRF runs from the adversarial CRYP state. */
     if (aead_selftest_rc == 0 && hop_prf_selftest() != 0)
         aead_selftest_rc = -20;
     if (aead_selftest_rc == 0 && frame_selftest() != 0)
@@ -454,21 +463,17 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     /* Not the network's key, and not zeros - see hop_key_placeholder(). */
     hop_key_placeholder();
 
-    /* Never restart the protocol's clock at zero. Everything at or below the
-     * stored ceiling was reserved by a previous boot, and reusing it under a
-     * persisted session key repeats a GCM nonce. */
+    /* Never restart the protocol's clock at zero.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     frame_counter = kv_reserved();
-    /* Reserve before the grid starts, so the very first beacon is already
-     * inside what flash guarantees rather than costing a superframe of
-     * silence to get there. */
+    /* Reserve before the grid starts, so the first beacon is already covered. */
     (void)kv_reserve(frame_counter);
 
     delay_ms_it(SUPERFRAME_US / 1000u);
     return 0;
 }
 
-/* Builds the frame in place. The length byte is the payload size, which is what
- * the RFM69 sends in variable-length mode. */
+/* Builds the frame in place; the length byte is the payload size. */
 static uint8_t build_frame(const void *payload, uint8_t payload_len) {
     if ((size_t)payload_len + 1u > sizeof(tx_buffer))
         return 0;
@@ -479,12 +484,10 @@ static uint8_t build_frame(const void *payload, uint8_t payload_len) {
 
 static rfm69_status_t transmit(uint8_t total_len) {
     rfm69_status_t st;
+    uint32_t t0 = rfm_micros();
 
-    /* Out of RX before the FIFO is touched. Writing it while the receiver is
-     * running mixes the outgoing frame with whatever the packet engine has
-     * collected and the transmit fails - measured as tx err on the join beacon
-     * once, fixed at that call site, and then hit again from pair_tx where the
-     * failure lost a PAIR_RSP. It belongs here, where no caller can omit it. */
+    /* Out of RX before the FIFO is touched, where no caller can omit it.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     st = rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
     if (st != RFM69_OK) return st;
 
@@ -498,20 +501,22 @@ static rfm69_status_t transmit(uint8_t total_len) {
 
     /* PacketSent from RegIrqFlags2 rather than polling DIO0 forever. */
     st = rfm69_wait_irq2(&radio, RFM69_IRQ2_PACKET_SENT, TX_TIMEOUT_US);
+    if (st == RFM69_OK) {
+        /* An upper bound: it carries ramp-down and the PacketSent poll too. */
+        uint32_t span = timebase_ticks_to_us(rfm_micros() - t0);
+        uint32_t air  = RADIO_AIRTIME_US(total_len - 1u);
+
+        lead_last_us = (span > air) ? (span - air) : 0u;
+        if (lead_last_us < lead_min_us) lead_min_us = lead_last_us;
+        if (lead_last_us > lead_max_us) lead_max_us = lead_last_us;
+        lead_n++;
+    }
     (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
     return st;
 }
 
-/* The superframe boundary is an absolute grid: the next one is a fixed step from
- * the last boundary, never from whenever the work finished. Adding the period to
- * "now" lets transmit time accumulate as drift, which is why the measured
- * superframe was 2004 ms rather than 2000 - and a drifting grid is one a device
- * cannot predict a slot on.
- *
- * The counter advances here and nowhere else, independent of whether anything was
- * transmitted. Tying it to transmit success stalls the protocol's clock on a
- * radio error and repeats a superframe number, which once frames are sealed is
- * nonce reuse. */
+/* An absolute grid: a fixed step from the last boundary, and the counter advances
+ * here alone. radio_devices_docs/open_hub/radio/superloop.md */
 static int superframe_due(void) {
     if (!grid_started) {
         superframe_start_tk = rfm_micros();
@@ -526,13 +531,11 @@ static int superframe_due(void) {
     superframe_start_tk += superframe_tk;
     frame_counter++;
 
-    /* Re-read after the boundary, so a refined measurement moves the next
-     * interval and never the one already being timed. */
+    /* Re-read after the boundary, so it moves the next interval, not this one. */
     superframe_tk = timebase_us_to_ticks(SUPERFRAME_US);
     join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
 
-    /* If something stalled us past a whole period, step the grid forward rather
-     * than transmitting a burst to catch up: it is a schedule, not a queue. */
+    /* Step the grid forward rather than catch up: it is a schedule, not a queue. */
     while (timebase_elapsed(superframe_start_tk + superframe_tk)) {
         superframe_start_tk += superframe_tk;
         frame_counter++;
@@ -546,15 +549,15 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
     uint8_t total;
     uint8_t hop_idx;
 
-    /* How far past the boundary this beacon actually leaves. A device measuring
-     * the period from consecutive beacons inherits this jitter directly, so it
-     * is measured rather than assumed to be small. */
+    /* How far past the boundary this beacon leaves; devices inherit it directly.
+     * radio_devices_docs/open_hub/radio/timebase.md */
     late_last_us = rfm_micros() - superframe_start_tk;
     if (late_last_us > late_max_us) late_max_us = late_last_us;
     if (late_last_us < late_min_us) late_min_us = late_last_us;
     if (late_last_us > timebase_us_to_ticks(RADIO_BEACON_LATE_LIMIT_US))
         late_over++;
 
+    memset(&payload, 0, sizeof(payload));
     payload.type       = RADIO_FRAME_DATA_BEACON;
     payload.version    = RADIO_PROTO_VERSION;
     payload.net_id     = RADIO_NET_ID;
@@ -573,13 +576,8 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
         return;
     }
 
-    /* One hop per superframe, ordered by a keyed shuffle rather than counting
-     * upwards. A linear sweep puts consecutive bursts 100 kHz apart, so one
-     * wideband interferer takes out several frames in a row, and two observed
-     * bursts give away every future channel.
-     *
-     * A PRF failure means silence, not a guess: transmitting on a channel no
-     * device can compute is worse than not transmitting. */
+    /* One hop per superframe, from a keyed shuffle; a PRF failure means silence.
+     * radio_devices_docs/radio/hopping.md */
     if (hop_channel(&hop, frame_counter, &hop_idx) != 0) {
         beacon_err++;
         beacon_err_last = RADIO_BERR_PRF;
@@ -594,16 +592,25 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
     if (transmit(total) != RFM69_OK) {
         beacon_err++;
         beacon_err_last = RADIO_BERR_TX;
+        return;
     }
+
+    /* Held for this superframe's uplinks to pair against. */
+    bl_last_us = lead_last_us;
+    bl_sf      = frame_counter;
+    bl_n++;
+    if (bl_last_us < bl_min_us) bl_min_us = bl_last_us;
+    if (bl_last_us > bl_max_us) bl_max_us = bl_last_us;
 }
 
-/* Fixed channel, cleartext, no key needed to read it. This is the one frame a
- * device can act on before it has been paired, so it carries nothing secret -
- * only what a joiner needs to find the network and align its counter. */
+/* Fixed channel, cleartext, and carrying nothing secret.
+ * radio_devices_docs/radio/joining.md */
 static void RFM_send_join_beacon(void) {
     radio_join_beacon_t payload;
     uint8_t total;
 
+    /* Whole struct first: a field added later must not go out off the stack. */
+    memset(&payload, 0, sizeof(payload));
     payload.type         = RADIO_FRAME_JOIN_BEACON;
     payload.version      = RADIO_PROTO_VERSION;
     payload.net_id       = RADIO_NET_ID;
@@ -624,8 +631,93 @@ static void RFM_send_join_beacon(void) {
         join_tx_err++;
 }
 
-/* One request, one reply, always: a caller waiting on a sequence number must
- * not be left waiting because a request type was unhandled. */
+/* One filler for the poll reply and the arrival event: two would drift. */
+static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
+    memset(d, 0, sizeof(*d));
+    d->dev_id          = e->dev_id;
+    d->last_superframe = e->last_superframe;
+    d->frames_ok       = e->frames_ok;
+    d->frames_bad      = e->frames_bad;
+    d->uptime_s        = e->uptime_s;
+    d->total           = device_count;
+    d->slot            = e->slot;
+    d->rssi_up         = e->rssi_up;
+    d->rssi_down       = e->rssi_down;
+    /* Asked, granted and done are three facts; none stands in for another. */
+    d->cmd_every       = (e->dl_cmd == RADIO_CMD_SET_RATE) ? e->dl_report_every : 0u;
+    d->cmd_state       = (e->dl_cmd != RADIO_CMD_SET_RATE) ? 0u
+                       : (e->dl_acked ? 2u : 1u);
+    d->cyc_min         = e->cyc_min;
+    d->cyc_n           = e->cyc_n;
+    d->cyc_sum         = e->cyc_sum;
+    d->supply_mv       = e->supply_mv;
+    d->report_every    = e->report_every;
+    d->flags           = e->flags;
+    d->arrival_us      = e->arrival_us;
+}
+
+/* A dropped notification and a silent device look alike, so count the drop. */
+static void uplink_notify(const dev_entry_t *e) {
+    ipc_device_report_t d;
+    uint16_t seq = 0;
+
+    fill_report(&d, e);
+    if (ipc_send_event(IPC_EVT_UPLINK, &d, (uint8_t)sizeof(d), &seq) != 0) {
+        up_evt_drop++;
+        return;
+    }
+    up_evt_sent++;
+    uint32_t since_sync = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+
+    /* An unanswered predecessor is lost, not silently replaced. */
+    if (evt_waiting)
+        evt_lost++;
+    /* It fires with 42 bytes still on air, which the budget already charges.
+     * ROADMAP item 2 */
+    if (since_sync < RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES)) {
+        /* Sooner than the air allows: the edge belonged to another frame. */
+        evt_arrival_bad++;
+    } else {
+        evt_arrival_last_us = since_sync -
+                              RADIO_POST_SYNC_AIR_US(RADIO_UPLINK_BYTES);
+        if (evt_arrival_last_us > evt_arrival_max_us)
+            evt_arrival_max_us = evt_arrival_last_us;
+    }
+    evt_sent_tk = rfm_micros();
+    evt_seq     = seq;
+    evt_waiting = 1;
+}
+
+/* One reader only: the filtering poll discards what it does not match.
+ * radio_devices_docs/open_hub/arch/ipc.md */
+static void evt_reply_service(void) {
+    ipc_msg_t m;
+    uint32_t us;
+
+    while (ipc_poll_any_event_reply(&m)) {
+        /* The reply bounds CM7's half: it cannot answer before it has handled.
+         * ROADMAP item 2 */
+        if (evt_waiting && m.seq == evt_seq) {
+            evt_waiting = 0;
+            us = timebase_ticks_to_us(rfm_micros() - evt_sent_tk);
+            evt_rtt_last_us = us;
+            if (evt_replied == 0u || us < evt_rtt_min_us) evt_rtt_min_us = us;
+            if (us > evt_rtt_max_us) evt_rtt_max_us = us;
+            evt_rtt_sum_us += us;
+            evt_replied++;
+            continue;
+        }
+        /* Held rather than handled here: the exchange is a state machine. */
+        if (ex_waiting && m.seq == ex_seq) {
+            ex_reply     = m;
+            ex_reply_new = 1;
+            continue;
+        }
+        evt_stale++;
+    }
+}
+
+/* One request, one reply, always - unhandled types included. */
 static void RFM_serve_request(const ipc_msg_t *req) {
     uint8_t status = IPC_ST_OK;
     uint8_t reply = 0;
@@ -654,9 +746,10 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
         t.superframe   = frame_counter;
         t.now_tk       = rfm_micros();
-        t.late_last_us = late_last_us;
-        t.late_max_us  = late_max_us;
-        t.late_min_us  = (late_min_us == 0xFFFFFFFFu) ? 0 : late_min_us;
+        t.late_last_us = timebase_ticks_to_us(late_last_us);
+        t.late_max_us  = timebase_ticks_to_us(late_max_us);
+        t.late_min_us  = (late_min_us == 0xFFFFFFFFu) ? 0
+                                                      : timebase_ticks_to_us(late_min_us);
         t.period_us     = SUPERFRAME_US;
         t.period_tk     = superframe_tk;
         t.calib_ppm     = calib_ppm();
@@ -671,9 +764,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));
         return;
     }
-    /* Runs the real hop PRF on a caller-supplied block, so what the accelerator
-     * actually computes can be compared against a host AES rather than argued
-     * from the reference manual. */
+    /* The real PRF on a caller-supplied block, comparable against a host AES. */
     case IPC_REQ_HOP_PRF: {
         uint8_t in[16], out[16];
 
@@ -715,11 +806,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         (void)ipc_send_reply(req, IPC_ST_OK, &p, (uint8_t)sizeof(p));
         return;
     }
-    /* Test scaffolding. The quiesce is otherwise only reachable by a real
-     * device transmitting a valid PAIR_REQ, and the thing worth verifying with
-     * an SDR - that the hub goes silent for exactly the announced number of
-     * superframes and comes back on the one it promised - does not need a
-     * device to be true. */
+    /* Test scaffolding: a quiesce is otherwise reachable only by a real device.
+     * radio_devices_docs/open_hub/testing/sdr.md */
     case IPC_REQ_QUIESCE:
         if (req->len < 1u) {
             status = IPC_ST_BAD_ARG;
@@ -744,9 +832,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         reply = (kv_write_torn() == 0) ? 1u : 0u;
         len = 1;
         break;
-    /* CM7 replaying its store into a freshly booted radio core. Without it a
-     * paired device is unreachable after any hub reset: the keys live in CM7's
-     * flash and nothing here survives power. */
+    /* CM7 replaying its store into a freshly booted radio core.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     case IPC_REQ_INSTALL_DEVICE: {
         ipc_device_keys_t k;
 
@@ -769,6 +856,125 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         reply = report_every_grant;
         len = 1;
         break;
+    case IPC_REQ_GET_SYNCTIME: {
+        ipc_synctime_t s;
+
+        memset(&s, 0, sizeof(s));
+        s.edges           = sync_edges;
+        s.frames          = rx_frames;   /* same read as edges: the ladder's denominator */
+        s.implausible     = sync_implausible;
+        s.last_offset_us  = sync_last_offset_us;
+        s.min_offset_us   = (sync_min_offset_us == 0xFFFFFFFFu) ? 0u
+                                                                : sync_min_offset_us;
+        s.max_offset_us   = sync_max_offset_us;
+        s.last_superframe = sync_last_superframe;
+        s.dio_map1        = sync_dio_map1;
+        s.dio3_asked      = RFM69_DIO3_SYNC_ADDRESS;
+        s.lead_last_us    = lead_last_us;
+        s.lead_min_us     = (lead_min_us == 0xFFFFFFFFu) ? 0u : lead_min_us;
+        s.lead_max_us     = lead_max_us;
+        s.lead_n          = lead_n;
+        s.last_offset_tk  = sync_last_offset_tk;
+        s.calib_ppm       = sync_last_ppm;
+        (void)ipc_send_reply(req, IPC_ST_OK, &s, (uint8_t)sizeof(s));
+        return;
+    }
+
+    case IPC_REQ_GET_AFC: {
+        ipc_afc_t a;
+
+        memset(&a, 0, sizeof(a));
+        a.n         = afc_n;
+        a.read_err  = afc_read_err;
+        a.last_hz   = afc_last_hz;
+        a.min_hz    = afc_min_hz;
+        a.max_hz    = afc_max_hz;
+        a.last_grid = afc_last_grid;
+        a.sum_hz    = afc_sum_hz;
+        a.sum_g     = afc_sum_g;
+        a.sum_gg    = afc_sum_gg;
+        a.sum_gh    = afc_sum_gh;
+        (void)ipc_send_reply(req, IPC_ST_OK, &a, (uint8_t)sizeof(a));
+        return;
+    }
+
+    /* The one knob that separates an overdriven front end from a dirty transmitter. */
+    case IPC_REQ_SET_LNA: {
+        /* Passed as the arg byte, which lands in payload[0]; there is no struct. */
+        if (req->len < 1u || rfm69_set_lna_gain(&radio, req->payload[0]) != RFM69_OK)
+            status = IPC_ST_BAD_ARG;
+        len = 0;
+        break;
+    }
+
+    case IPC_REQ_GET_EVT_LAT: {
+        ipc_evt_latency_t l;
+
+        memset(&l, 0, sizeof(l));
+        l.sent            = up_evt_sent;
+        l.replied         = evt_replied;
+        l.lost            = evt_lost;
+        l.arrival_last_us = evt_arrival_last_us;
+        l.arrival_max_us  = evt_arrival_max_us;
+        l.rtt_last_us     = evt_rtt_last_us;
+        l.rtt_min_us      = (evt_replied == 0u) ? 0u : evt_rtt_min_us;
+        l.rtt_max_us      = evt_rtt_max_us;
+        l.rtt_sum_us      = evt_rtt_sum_us;
+        l.stale           = evt_stale;
+        l.arrival_bad     = evt_arrival_bad;
+        (void)ipc_send_reply(req, IPC_ST_OK, &l, (uint8_t)sizeof(l));
+        return;
+    }
+
+    case IPC_REQ_GET_AFC_RAW: {
+        ipc_afc_raw_t r;
+        uint32_t i, have = (afc_n < IPC_AFC_RING) ? afc_n : IPC_AFC_RING;
+
+        memset(&r, 0, sizeof(r));
+        r.total  = afc_n;
+        r.n      = (uint8_t)have;
+        /* Newest first, walking back from the head. */
+        for (i = 0; i < have; i++) {
+            uint32_t k = (afc_ring_head + IPC_AFC_RING - 1u - i) % IPC_AFC_RING;
+
+            r.grid[i] = afc_ring_grid[k];
+            r.slot[i] = afc_ring_slot[k];
+            r.gain[i] = afc_ring_gain[k];
+            r.rssi[i] = afc_ring_rssi[k];
+            r.afc[i]  = afc_ring_afc[k];
+            if ((afc_ring_crc_ok & (1u << k)) != 0u)
+                r.crc_ok = (uint16_t)(r.crc_ok | (1u << i));
+            if ((afc_ring_in_frame & (1u << k)) != 0u)
+                r.in_frame = (uint16_t)(r.in_frame | (1u << i));
+        }
+        r.lag_max_us = sync_rssi_lag_max_us;
+        /* Saturated rather than truncated: a wrapped count reads as a small one. */
+        r.rssi_taken = (sync_rssi_taken > 0xFFFFu) ? 0xFFFFu : (uint16_t)sync_rssi_taken;
+        r.rssi_late  = (sync_rssi_late  > 0xFFFFu) ? 0xFFFFu : (uint16_t)sync_rssi_late;
+        r.rssi_err   = (sync_rssi_err   > 0xFFFFu) ? 0xFFFFu : (uint16_t)sync_rssi_err;
+        (void)ipc_send_reply(req, IPC_ST_OK, &r, (uint8_t)sizeof(r));
+        return;
+    }
+
+    case IPC_REQ_GET_SYNCSTATS: {
+        ipc_syncstats_t s;
+
+        memset(&s, 0, sizeof(s));
+        s.ref_us        = sync_ref_us;
+        s.n             = sync_stat_n;
+        s.sum_d         = sync_sum_d;
+        s.sumsq_d       = sync_sumsq_d;
+        s.lead_sum      = sync_lead_sum;
+        s.lead_sumsq    = sync_lead_sumsq;
+        s.cov_sum       = sync_cov_sum;
+        s.unpaired      = sync_unpaired;
+        s.beacon_n      = bl_n;
+        s.beacon_min_us = (bl_min_us == 0xFFFFFFFFu) ? 0u : bl_min_us;
+        s.beacon_max_us = bl_max_us;
+        (void)ipc_send_reply(req, IPC_ST_OK, &s, (uint8_t)sizeof(s));
+        return;
+    }
+
     case IPC_REQ_GET_RXDIAG: {
         ipc_rx_diag_t d;
 
@@ -779,6 +985,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.last_superframe = rx_last_superframe;
         d.last_len        = rx_last_len;
         d.last_type       = rx_last_type;
+        d.flushes         = rx_flushes;
         d.last_rssi       = rx_last_rssi;
         d.rssi_peak       = (rx_rssi_peak_x2 == -32768) ? 0 : (int8_t)(rx_rssi_peak_x2 / 2);
         d.rssi_floor      = (rx_rssi_floor_x2 == 32767) ? 0 : (int8_t)(rx_rssi_floor_x2 / 2);
@@ -793,9 +1000,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         (void)ipc_send_reply(req, IPC_ST_OK, &d, (uint8_t)sizeof(d));
         return;
     }
-    /* The FIFO is the only writable block this part has that is the same width
-     * as a frame, so a pattern through it exercises the exact read that
-     * delivers a payload - without needing anything on air. */
+    /* The only writable block as wide as a frame, so it exercises the real read. */
     case IPC_REQ_SPI_LOOP: {
         ipc_spi_loop_t r;
         uint8_t pattern[57], back[57];
@@ -805,16 +1010,13 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         if (req->len >= 4) memcpy(&n, req->payload, 4);
         if (n == 0u || n > 2000u) n = 200u;
 
-        /* Alternating high-bit bytes: a cleared or set bit 7 shows in both
-         * directions, which a pattern of one polarity could not distinguish. */
+        /* Alternating high-bit bytes, so bit 7 shows in both directions. */
         for (i = 0; i < sizeof(pattern); i++)
             pattern[i] = (i & 1u) ? 0xA5u : 0x5Au;
 
         (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
 
-        /* RegAesKey holds 16 bytes verbatim and nothing reads it - AesOn is 0.
-         * A register block round-trips by definition, so a difference here is
-         * the bus and a difference only in the FIFO is the FIFO. */
+        /* RegAesKey holds 16 bytes verbatim: the control arm for the FIFO test. */
         for (pass = 0; pass < n; pass++) {
             uint8_t rb[16];
 
@@ -859,10 +1061,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             r.passes++;
         }
         {
-            /* Both halves measured rather than derived: the kernel clock from
-             * RCC, the divider from CFG1, where MBR divides by 2^(mbr+1). A
-             * prescaler quoted without its kernel clock says nothing - the PLL
-             * that sets it is three files away and on the other core. */
+            /* Both halves measured: kernel clock from RCC, divider from CFG1. */
             uint32_t mbr = (SPI1->CFG1 & SPI_CFG1_MBR) >> SPI_CFG1_MBR_Pos;
 
             r.spi_hz = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SPI123)
@@ -897,19 +1096,15 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_SET_PAIR_INIT: {
         ipc_pair_init_t p;
 
-        /* payload[1], not payload[0]: hub_ipc_call puts its `arg` byte first so
-         * every request has one shape on the wire. Reading from 0 shifts the
-         * whole struct by a byte - which is the GET_DEVICE_INFO defect, in the
-         * same file, found the same evening. */
+        /* payload[1]: hub_ipc_call puts its arg byte at payload[0].
+         * radio_devices_docs/open_hub/arch/ipc.md */
         if (req->len < 1u + sizeof(p)) { status = IPC_ST_BAD_ARG; break; }
         memcpy(&p, &req->payload[1], sizeof(p));
         if (p.len == 0u || p.len > sizeof(pi_frame) || p.superframe == 0u) {
             status = IPC_ST_BAD_ARG;
             break;
         }
-        /* An unsent frame being displaced is worth counting rather than
-         * silently dropping: it means CM7 is building faster than the grid
-         * transmits, which is a schedule disagreement and not a radio fault. */
+        /* A displaced frame is counted: CM7 is building faster than the grid sends. */
         if (pi_superframe != 0u)
             pi_replaced++;
         memcpy(pi_frame, p.frame, p.len);
@@ -949,6 +1144,10 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.last_hz       = dl_last_hz;
         d.last_superframe = dl_last_sf;
         d.next_slot     = dl_next_slot;
+        d.cmd_sent      = dl_cmd_sent;
+        d.cmd_replaced  = dl_cmd_replaced;
+        d.cmd_acked     = dl_cmd_acked;
+        d.cmd_lost      = dl_cmd_lost;
         (void)ipc_send_reply(req, IPC_ST_OK, &d, (uint8_t)sizeof(d));
         return;
     }
@@ -956,8 +1155,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         ipc_vectors_t v;
 
         memset(&v, 0, sizeof(v));
-        /* Compiled into this binary, so what comes back is what this core was
-         * actually built with - not what the tree says today. */
+        /* Compiled in, so it reports what this core was built with. */
         memcpy(v.pair, PAIR_VECTORS_DIGEST, sizeof(PAIR_VECTORS_DIGEST));
         memcpy(v.hop, HOP_VECTORS_DIGEST, sizeof(HOP_VECTORS_DIGEST));
         v.pair_version = PAIR_VECTORS_VERSION;
@@ -984,6 +1182,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         x.seal_err        = (uint16_t)ex_seal_err;
         x.uplink_windows  = up_windows;
         x.uplink_sync     = up_sync;
+        x.uplink_evt_drop = up_evt_drop;
         x.uplink_frames   = up_frames;
         x.uplink_ok       = up_ok;
         x.uplink_bad_slot = up_bad_slot;
@@ -993,18 +1192,15 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         (void)ipc_send_reply(req, IPC_ST_OK, &x, (uint8_t)sizeof(x));
         return;
     }
-    /* The index-th live device. `total` rides along so the console learns how
-     * many there are from the first answer instead of probing until refused. */
+    /* The index-th live device; total rides along to size the list in one call. */
     case IPC_REQ_GET_DEVICE_INFO: {
         ipc_device_report_t d;
         uint32_t seen = 0;
         uint32_t want;
         uint32_t i;
 
-        /* The index is the request's arg byte, which hub_ipc_call puts at
-         * payload[0]; payload[1] onwards is a caller's own data and this call
-         * sends none. Reading it there made every listing fail with BAD_ARG,
-         * and nothing noticed because it takes a paired device to run. */
+        /* payload[0]: the arg byte, unlike SET_PAIR_INIT above.
+         * radio_devices_docs/open_hub/arch/ipc.md */
         if (req->len < 1u) {
             status = IPC_ST_BAD_ARG;
             break;
@@ -1016,27 +1212,45 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             if (seen++ != want)
                 continue;
 
-            memset(&d, 0, sizeof(d));
-            d.dev_id          = devices[i].dev_id;
-            d.last_superframe = devices[i].last_superframe;
-            d.frames_ok       = devices[i].frames_ok;
-            d.frames_bad      = devices[i].frames_bad;
-            d.uptime_s        = devices[i].uptime_s;
-            d.total           = device_count;
-            d.slot            = devices[i].slot;
-            d.rssi_up         = devices[i].rssi_up;
-            d.rssi_down       = devices[i].rssi_down;
-            d.supply_mv       = devices[i].supply_mv;
-            d.report_every    = devices[i].report_every;
-            d.flags           = devices[i].flags;
+            fill_report(&d, &devices[i]);
             (void)ipc_send_reply(req, IPC_ST_OK, &d, (uint8_t)sizeof(d));
             return;
         }
         status = IPC_ST_BAD_ARG;
         break;
     }
+    case IPC_REQ_SET_DEVICE_PARAM: {
+        ipc_device_cmd_t c;
+        uint32_t i;
+
+        /* The arg byte occupies payload[0]; the struct starts after it. */
+        if (req->len < 1u + sizeof(c)) {
+            status = IPC_ST_BAD_ARG;
+            break;
+        }
+        memcpy(&c, &req->payload[1], sizeof(c));
+        status = IPC_ST_BAD_ARG;
+        for (i = 0; i < RADIO_MAX_DEVICES; i++) {
+            if (!devices[i].used || devices[i].dev_id != c.dev_id)
+                continue;
+            /* Replacing one still in flight is counted: the old one never went. */
+            if (devices[i].dl_repeats > 0u)
+                dl_cmd_replaced++;
+            devices[i].dl_cmd          = c.cmd;
+            devices[i].dl_report_every = c.report_every;
+            devices[i].dl_arg          = c.arg;
+            devices[i].dl_repeats      = c.repeats;
+            /* Wraps past RADIO_CMD_SEQ_NONE: a zero on the wire is silence. */
+            devices[i].dl_cmd_seq++;
+            if (devices[i].dl_cmd_seq == RADIO_CMD_SEQ_NONE)
+                devices[i].dl_cmd_seq = 1u;
+            devices[i].dl_acked        = 0;
+            status = IPC_ST_OK;
+            break;
+        }
+        break;
+    }
     case IPC_REQ_REMOVE_DEVICE:
-    case IPC_REQ_SET_DEVICE_PARAM:
     default:
         status = IPC_ST_UNKNOWN_REQ;
         break;
@@ -1046,22 +1260,11 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 }
 
 
-/* The superframe counter is the protocol's clock and keeps advancing through a
- * quiesce. Only transmission stops.
- *
- * That distinction is the whole reason a quiesce is cheap here: the hop
- * sequence is *indexed* by the counter rather than stepped by it, so a device
- * that slept through the silence computes the channel for the superframe it
- * wakes into and is simply back. Freezing the counter instead would repeat
- * superframe numbers, which once frames are sealed is nonce reuse. */
+/* The counter keeps advancing through a quiesce; only transmission stops.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static void on_superframe(void) {
-    /* Past what flash guarantees, so a frame sent now would carry a counter a
-     * future boot will issue again - and a repeated GCM nonce leaks the
-     * authentication subkey, not merely the plaintext. Silence is the only safe
-     * answer. The counter still advances: it is the clock, and stalling it
-     * would repeat superframe numbers, which is the same defect by the other
-     * route. Reachable only when the flash log is full, which `rfm store`
-     * reports as an error. */
+    /* Past what flash guarantees: silence, and the counter still advances.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (!kv_counter_safe(frame_counter)) {
         unreserved_frames++;
         return;
@@ -1071,10 +1274,8 @@ static void on_superframe(void) {
         int32_t left = (int32_t)(quiesce_resume_at - frame_counter);
 
         if (left > 0) {
-            /* Repeat the announcement, counting down, so a device that missed
-             * the first copy still derives the same resume superframe from the
-             * second. After the announce run the hub is silent here and parked
-             * on the join channel. */
+            /* Repeated, counting down, so a missed copy still gives the same resume.
+             * radio_devices_docs/radio/decisions/0020-device-triggered-quiesce.md */
             if ((uint32_t)(quiesce_len - left) < RADIO_QUIESCE_ANNOUNCE)
                 RFM_send_broadcast(RADIO_BEACON_FLAG_QUIESCE, (uint8_t)left);
             else
@@ -1088,11 +1289,8 @@ static void on_superframe(void) {
 
     if (quiesce_pending) {
         quiesce_pending = 0;
-        /* Announce and commit in the same breath. The resume superframe is
-         * fixed here and never moved afterwards: devices sleep against it, so
-         * extending a quiesce would strand every one of them at a moment when
-         * none of them is listening. An exchange that overruns loses its
-         * window - the network does not lose its schedule. */
+        /* The resume superframe is fixed here and never moved: devices sleep on it.
+         * radio_devices_docs/radio/decisions/0020-device-triggered-quiesce.md */
         quiesce_resume_at = frame_counter + quiesce_len;
         pair_state = RADIO_PAIR_QUIESCE;
         RFM_send_broadcast(RADIO_BEACON_FLAG_QUIESCE, quiesce_len);
@@ -1102,45 +1300,98 @@ static void on_superframe(void) {
     RFM_send_broadcast(0, 0);
 }
 
-/* Only the device the operator named may move the state machine. A quiesce is
- * eight seconds of network silence, so triggering one from any frame that
- * arrives on an open join channel would hand a denial of service to anyone in
- * range - and the join channel is fixed and published. */
 /* --- the four-frame exchange ------------------------------------------- */
 
-/* A frame that failed CRC still occupies the FIFO once CrcAutoClearOff is set,
- * so it has to be read out or it becomes the head of the next one. */
+/* AutoRxRestart waits for an empty FIFO, so bytes left behind end the window.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static void rx_flush(void) {
+    (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
+    sync_was_set = 0;      /* the flag clears with the mode; so must its shadow */
+    (void)rfm69_set_mode(&radio, RFM69_MODE_RX);
+    rx_flushes++;
+}
+
+/* A frame failing CRC still occupies the FIFO and has to be read out. */
 static void rx_discard_frame(void) {
     uint8_t len = 0;
 
     if (rfm69_read_fifo(&radio, &len, 1) != RFM69_OK)
         return;
-    if (len == 0u || len > sizeof(rx_buffer))
+    /* A corrupt length byte is what a failed CRC produces. */
+    if (len == 0u || len > sizeof(rx_buffer)) {
+        rx_flush();
         return;
-    (void)rfm69_read_fifo(&radio, rx_buffer, len);
+    }
+    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK)
+        rx_flush();
 }
 
-/* 1 when a frame is ready and its CRC verified. Counts and drains the frames
- * that failed, which is the whole point of taking them off the hardware's
- * silent-discard path. */
-/* SyncAddressMatch is a level, not a pulse - it stays asserted until the mode
- * changes - so an edge is what a frame is. Polling the level would count one
- * arrival hundreds of times and produce a number that looks like a busy,
- * healthy channel. */
-/* Sampled every superloop pass while the receiver is open, and every sample is
- * triggered: RegRssiValue is a latch the part only refills on request, so the
- * poll this replaced reported the level at RX entry for the whole window. Peak
- * and floor were therefore always equal and always looked like a quiet band. */
+/* 1 when a frame is ready and its CRC verified; failures are counted and drained.
+ * radio_devices_docs/open_hub/radio/configuration.md */
 static void rx_sample_rssi(void) {
     int16_t x2 = 0;
 
     if (rfm69_measure_rssi(&radio, RSSI_TIMEOUT_US, &x2) != RFM69_OK)
         return;
     rx_rssi_samples++;
-    /* The register counts half-dB *below* zero and the driver returns it
-     * negated, so a stronger signal is a larger (less negative) number. */
+    /* Half-dB below zero, returned negated: stronger is larger. */
     if (x2 > rx_rssi_peak_x2)  rx_rssi_peak_x2  = x2;   /* loudest */
     if (x2 < rx_rssi_floor_x2) rx_rssi_floor_x2 = x2;   /* quietest */
+}
+
+/* Stamps TIM2 on the DIO3 SyncAddressMatch edge.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+void HAL_GPIO_EXTI_Callback(uint16_t pin) {
+    if (pin != RFM_DIO3_Pin)
+        return;
+    sync_edge_tk   = rfm_micros();
+    sync_edge_base = superframe_start_tk;
+    sync_edges++;
+    sync_edge_new = 1;
+}
+
+/* Folds one captured edge into the offset statistics. */
+static void sync_edge_service(void) {
+    uint32_t offset;
+
+    if (!sync_edge_new)
+        return;
+    sync_edge_new = 0;
+
+    /* TIM2 ticks, then converted: a tick is not a microsecond on this board. */
+    sync_last_offset_tk = sync_edge_tk - sync_edge_base;
+    sync_last_ppm       = calib_ppm();
+    offset = timebase_ticks_to_us(sync_last_offset_tk);
+    sync_last_offset_us  = offset;
+    sync_last_superframe = frame_counter;
+
+    /* Counted and reported raw, never filtered out. */
+    if (offset >= SUPERFRAME_US * 2u) {
+        sync_implausible++;
+        return;
+    }
+    if (offset < sync_min_offset_us) sync_min_offset_us = offset;
+    if (offset > sync_max_offset_us) sync_max_offset_us = offset;
+
+    /* Unpaired is counted, never dropped: the sums must share one population. */
+    if (bl_n == 0u || bl_sf != frame_counter) {
+        sync_unpaired++;
+        return;
+    }
+    if (!sync_ref_set) {
+        sync_ref_us  = offset;
+        sync_ref_set = 1;
+    }
+    {
+        int32_t d = (int32_t)(offset - sync_ref_us);
+
+        sync_stat_n++;
+        sync_sum_d      += d;
+        sync_sumsq_d    += (uint64_t)((int64_t)d * (int64_t)d);
+        sync_lead_sum   += bl_last_us;
+        sync_lead_sumsq += (uint64_t)bl_last_us * (uint64_t)bl_last_us;
+        sync_cov_sum    += (int64_t)d * (int64_t)bl_last_us;
+    }
 }
 
 static void rx_note_sync(uint8_t flags1) {
@@ -1151,15 +1402,106 @@ static void rx_note_sync(uint8_t flags1) {
     sync_was_set = now;
 }
 
-static int rx_frame_ready(uint8_t flags2) {
+/* Everything still to be keyed once the sync word has passed. */
+#define SYNC_RSSI_WINDOW_US  RADIO_FRAME_AIR_US(RADIO_UPLINK_BYTES)
+
+/* Which slot an edge landed in, off its offset. 0xFF is outside the region.
+ * radio_devices_docs/radio/tdma.md */
+static uint8_t slot_of_offset(uint32_t off) {
+    uint32_t n;
+
+    if (off < RADIO_UPLINK_OFFSET_US)
+        return 0xFFu;
+    n = (off - RADIO_UPLINK_OFFSET_US) / RADIO_SLOT_US;
+    return (n < RADIO_SLOT_COUNT) ? (uint8_t)n : 0xFFu;
+}
+
+/* Taken while the payload still arrives: the only time the level is the frame's.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static void sync_rssi_sample(void) {
+    int16_t x2 = 0;
+    uint32_t lag;
+
+    /* Attempts, not successes: never called and always failed read alike. */
+    sync_rssi_taken++;
+    /* The latch, not a trigger: a trigger never completes while sync is high.
+     * radio_devices_docs/open_hub/radio/configuration.md */
+    if (rfm69_get_rssi(&radio, &x2) != RFM69_OK) {
+        sync_rssi_err++;
+        return;
+    }
+    lag = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+    if (lag > 0xFFFFu)
+        lag = 0xFFFFu;
+    sync_rssi_dbm    = (int8_t)(x2 / 2);
+    sync_rssi_lag_us = (uint16_t)lag;
+    /* Off this edge, not off the last one folded into the statistics. */
+    sync_slot = slot_of_offset(timebase_ticks_to_us(sync_edge_tk - sync_edge_base));
+    /* 1 only inside the frame: outside it the sample is the floor under another name. */
+    sync_rssi_have = (lag <= SYNC_RSSI_WINDOW_US) ? 1u : 0u;
+    if (!sync_rssi_have)
+        sync_rssi_late++;
+    if (sync_rssi_lag_us > sync_rssi_lag_max_us)
+        sync_rssi_lag_max_us = sync_rssi_lag_us;
+}
+
+/* A failed read is counted apart: it must not enter the fit as a zero. */
+static void afc_note(uint8_t grid) {
+    int32_t hz = 0;
+    int16_t steps = 0;
+    uint8_t gain = 0;
+
+    if (rfm69_get_afc_raw(&radio, &steps) != RFM69_OK) {
+        afc_read_err++;
+        return;
+    }
+    hz = rfm69_steps_to_hz(steps);
+    if (afc_n == 0u || hz < afc_min_hz) afc_min_hz = hz;
+    if (afc_n == 0u || hz > afc_max_hz) afc_max_hz = hz;
+    afc_last_hz   = hz;
+    afc_last_grid = grid;
+    afc_sum_hz   += hz;
+    afc_sum_g    += (int64_t)grid;
+    afc_sum_gg   += (int64_t)grid * (int64_t)grid;
+    afc_sum_gh   += (int64_t)grid * (int64_t)hz;
+    afc_ring_grid[afc_ring_head] = grid;
+    afc_ring_afc[afc_ring_head]  = steps;
+    /* Read here, not later: the AGC settles back to G1 as soon as the air is idle. */
+    if (rfm69_get_lna_gain(&radio, &gain) != RFM69_OK)
+        gain = 0xFFu;
+    afc_ring_gain[afc_ring_head] = gain;
+    /* Consumed, never left behind: no frame may report the level of the one before. */
+    afc_ring_rssi[afc_ring_head] = sync_rssi_have ? sync_rssi_dbm : 0;
+    afc_ring_slot[afc_ring_head] = sync_rssi_have ? sync_slot : 0xFFu;
+    if (sync_rssi_have)
+        afc_ring_in_frame = (uint16_t)(afc_ring_in_frame | (1u << afc_ring_head));
+    else
+        afc_ring_in_frame = (uint16_t)(afc_ring_in_frame & ~(1u << afc_ring_head));
+    sync_rssi_have = 0;
+    afc_ring_crc_ok = (uint16_t)(afc_ring_crc_ok & ~(1u << afc_ring_head));
+    afc_ring_head = (uint8_t)((afc_ring_head + 1u) % IPC_AFC_RING);
+    afc_n++;
+}
+
+/* The outcome belongs to the entry afc_note just wrote, which is head - 1. */
+static void afc_note_crc_ok(void) {
+    uint8_t last = (uint8_t)((afc_ring_head + IPC_AFC_RING - 1u) % IPC_AFC_RING);
+
+    afc_ring_crc_ok = (uint16_t)(afc_ring_crc_ok | (1u << last));
+}
+
+static int rx_frame_ready(uint8_t flags2, uint8_t grid) {
     if (!(flags2 & RFM69_IRQ2_PAYLOAD_READY))
         return 0;
+    /* Before the CRC branch: the corrupt frames are the population AFC is for. */
+    afc_note(grid);
     if (!(flags2 & RFM69_IRQ2_CRC_OK)) {
         rx_crc_err++;
         rx_discard_frame();
         return 0;
     }
     rx_frames++;
+    afc_note_crc_ok();
     return 1;
 }
 
@@ -1167,15 +1509,15 @@ static void ex_reset(void) {
     ex_state   = RADIO_EX_IDLE;
     ex_dev_id  = 0;
     ex_waiting = 0;
+    /* Dropped with the exchange it belongs to, so the next one cannot read it. */
+    ex_reply_new = 0;
     ex_retry   = 0;
     memset(&ex_rsp, 0, sizeof(ex_rsp));
     memset(&ex_keys, 0, sizeof(ex_keys));
 }
 
-/* The channel is an argument because it was once a constant inside here: this
- * function tuned the join channel itself, and the downlink reusing it keyed 93
- * frames on 866.5 MHz while the device listened on the hop channel. Every
- * counter read success, because they all did transmit. */
+/* The channel is an argument, never a constant inside here.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static int frame_tx(const void *payload, uint8_t len, uint32_t hz) {
     uint8_t total = build_frame(payload, len);
 
@@ -1185,9 +1527,7 @@ static int frame_tx(const void *payload, uint8_t len, uint32_t hz) {
         return -1;
     if (transmit(total) != RFM69_OK)
         return -1;
-    /* Back to listening immediately: the device answers as soon as it has
-     * finished its own curve work, and a receiver left in standby loses the
-     * frame with no error anywhere. */
+    /* Back to listening immediately: standby loses the reply with no error. */
     (void)rfm69_set_mode(&radio, RFM69_MODE_RX);
     return 0;
 }
@@ -1197,15 +1537,11 @@ static int pair_tx(const void *payload, uint8_t len) {
     return frame_tx(payload, len, slot_hz(RADIO_JOIN_SLOT));
 }
 
-/* Split out so the self-test can compare what actually transmits against the
- * published frame. The device side sized a sealed body as grant + hop_key when
- * the grant already contained the hop key - 35 bytes instead of 19, tag failure
- * on a frame with nothing wrong, and on air indistinguishable from a radio
- * fault. A self-test built on a frame the same side assembled would have agreed
- * with the mistake perfectly. The mirror of that hole was here: nothing
- * compared these builders to anything. */
+/* Split out so the self-test compares what transmits, not a second assembly.
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
 static void build_pair_rsp(radio_pair_rsp_t *f, uint32_t hid, uint32_t did,
                            const uint8_t eph[33], const uint8_t confirm[16]) {
+    memset(f, 0, sizeof(*f));
     f->type    = RADIO_FRAME_PAIR_RSP;
     f->version = RADIO_PROTO_VERSION;
     f->hub_id  = hid;
@@ -1216,6 +1552,7 @@ static void build_pair_rsp(radio_pair_rsp_t *f, uint32_t hid, uint32_t did,
 
 static void build_pair_accept_hdr(radio_pair_accept_t *f, uint32_t hid, uint32_t did,
                                   uint32_t superframe, uint8_t retry) {
+    memset(f, 0, sizeof(*f));
     f->type       = RADIO_FRAME_PAIR_ACCEPT;
     f->version    = RADIO_PROTO_VERSION;
     f->hub_id     = hid;
@@ -1224,10 +1561,8 @@ static void build_pair_accept_hdr(radio_pair_accept_t *f, uint32_t hid, uint32_t
     f->retry      = retry;
 }
 
-/* Every frame this core assembles, against the published bytes. Field order,
- * endianness and the AAD offset all at once - and against bytes the far side
- * also compiles, which is the only thing that makes it a check rather than
- * this core agreeing with itself. */
+/* Every frame this core assembles, against bytes the far side also compiles.
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
 static int frame_selftest(void) {
     radio_pair_rsp_t rsp;
     radio_pair_accept_t acc;
@@ -1237,9 +1572,7 @@ static int frame_selftest(void) {
     if (memcmp(&rsp, PV_FRAME_RSP, sizeof(rsp)) != 0)
         return -1;
 
-    /* Only the cleartext header, because that is what this builder owns - and
-     * it is also the AAD, so a field that moved would break every tag with
-     * byte-perfect ciphertext. */
+    /* Only the cleartext header, which is also the AAD. */
     build_pair_accept_hdr(&acc, 0x33442211u, 0x0000002Au,
                           0x1a2b3c4fu, 0x00u);
     if (memcmp(&acc, PV_ACCEPT_AAD, RADIO_PAIR_ACCEPT_AAD_LEN) != 0)
@@ -1262,9 +1595,8 @@ static void send_pair_rsp(void) {
     ex_deadline = rfm_micros() + timebase_us_to_ticks(EX_DEV_TIMEOUT_US);
 }
 
-/* The slot grant, sealed under the session key the exchange just produced.
- * The network hop key travels inside it: it cannot be derived from the pairing
- * secret, which is pairwise, and it must not travel in clear. */
+/* The slot grant, sealed; the network hop key travels inside it.
+ * radio_devices_docs/radio/crypto/key-lifecycle.md */
 static void send_pair_accept(void) {
     radio_pair_accept_t f;
     radio_pair_grant_t grant;
@@ -1277,10 +1609,8 @@ static void send_pair_accept(void) {
     grant.flags        = 0;
     memcpy(grant.hop_key, ex_keys.hop_key, sizeof(grant.hop_key));
 
-    /* The slot field of the nonce cannot be the slot being granted: that value
-     * is inside the sealed plaintext, and the device needs the nonce to open
-     * it. The reserved range plus a retry index is what keeps this frame's
-     * nonces distinct from every slotted frame's and from each other. */
+    /* The nonce's slot field cannot be the slot being granted - it is sealed.
+     * radio_devices_docs/radio/crypto/wire-crypto.md */
     aead_nonce(nonce, f.superframe, ex_dev_id, RADIO_DIR_DOWNLINK,
                RADIO_NONCE_SLOT_UNSLOTTED | ex_retry);
 
@@ -1301,9 +1631,7 @@ static void send_pair_accept(void) {
     ex_state = RADIO_EX_ACCEPTED;
 }
 
-/* Installs, or replaces, one device. Replacing matters: a device that re-pairs
- * keeps its slot, and leaving the old session key in place would make every
- * frame it sends under the new one fail its tag. */
+/* Installs or replaces one device; a re-pair keeps its slot and changes its key. */
 static int install_device(const ipc_device_keys_t *k) {
     dev_entry_t *d;
 
@@ -1321,26 +1649,13 @@ static int install_device(const ipc_device_keys_t *k) {
     d->report_every = (k->report_every == 0u) ? 1u : k->report_every;
     memcpy(d->session_key, k->session_key, sizeof(d->session_key));
 
-    /* Seed the replay floor from the superframe counter, which is already
-     * durable and already monotone: kvstore reserves a ceiling ahead, so a
-     * reboot resumes at or above where it left off and never below.
-     *
-     * Without this the floor started at zero and the first frame of every boot
-     * was accepted unconditionally - the guard consulted only after an
-     * acceptance in the same session, which is exactly the moment it exists
-     * for, since a reboot is what an attacker with a recording arranges.
-     * Every recorded frame is from a superframe below this, so it is refused
-     * before it can move the floor.
-     *
-     * No new flash field: the durability comes from the counter, which had to
-     * be durable anyway to stop GCM nonces repeating. Found by applying the
-     * device side's own ever_accepted correction to this path. */
+    /* Seed the replay floor from the durable counter, never from zero.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     d->rx_floor = frame_counter;
+    d->rx_floor_slot = 0;
 
-    /* The hop key is network-wide, so every install carries the same 16 bytes.
-     * A change means the cached permutation was computed under the old key and
-     * has to be thrown away - hop_channel caches one cycle, about a minute, and
-     * would otherwise keep answering from it while the network moved on. */
+    /* A changed hop key invalidates the cached cycle, which is about a minute long.
+     * radio_devices_docs/radio/hopping.md */
     if (!net_hop_key_set || memcmp(net_hop_key, k->hop_key, sizeof(net_hop_key)) != 0) {
         memcpy(net_hop_key, k->hop_key, sizeof(net_hop_key));
         net_hop_key_set = 1;
@@ -1356,13 +1671,14 @@ static void exchange_service(void) {
     if (ex_state == RADIO_EX_IDLE || ex_state == RADIO_EX_ACCEPTED)
         return;
 
-    if (ex_waiting && ipc_poll_event_reply(ex_seq, &reply)) {
+    /* evt_reply_service runs first in RFM_Routine, so this is the same pass. */
+    if (ex_waiting && ex_reply_new) {
+        reply = ex_reply;
+        ex_reply_new = 0;
         ex_waiting = 0;
         if (reply.status != IPC_ST_OK) {
-            /* CM7 refused: an unenrolled device, a fingerprint that does not
-             * match, a repeated nonce, a confirmation that did not verify.
-             * Every one of those is a reason not to continue, and none of them
-             * is a reason to retry with the same inputs. */
+            /* CM7 refused; none of its reasons are worth a retry.
+             * radio_devices_docs/radio/pairing.md */
             ex_cm7_refused++;
             ex_reset();
             return;
@@ -1376,10 +1692,7 @@ static void exchange_service(void) {
         if (ex_state == RADIO_EX_WAIT_KEYS) {
             if (reply.len < sizeof(ex_keys)) { ex_cm7_refused++; ex_reset(); return; }
             memcpy(&ex_keys, reply.payload, sizeof(ex_keys));
-            /* Installed before the grant is transmitted. A device that opens
-             * PAIR_ACCEPT and starts reporting into a hub that has not yet
-             * installed its key would have every frame refused, and the hub
-             * would be the one at fault. */
+            /* Installed before the grant is transmitted, never after. */
             if (install_device(&ex_keys) != 0) { ex_reset(); return; }
             ex_paired++;
             send_pair_accept();
@@ -1407,36 +1720,45 @@ static void handle_uplink_frame(void) {
     radio_uplink_t f;
     radio_uplink_report_t rpt;
     uint8_t nonce[AEAD_NONCE_BYTES];
+    uint32_t dev_index;
     dev_entry_t *d;
     int16_t rssi_x2 = 0;
     uint8_t len = 0;
 
     if (rfm69_read_fifo(&radio, &len, 1) != RFM69_OK)
         return;
-    if (len == 0u || len > sizeof(rx_buffer))
+    if (len == 0u || len > sizeof(rx_buffer)) {
+        rx_flush();
         return;
-    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK)
+    }
+    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK) {
+        rx_flush();
         return;
+    }
 
-    /* Taken before anything else can retune or change mode. It is the hub's
-     * half of the link measurement and there is no second chance at it. */
+    /* Taken before anything can retune: there is no second chance at it. */
     (void)rfm69_get_rssi(&radio, &rssi_x2);
 
     up_frames++;
     if (len < sizeof(f) || rx_buffer[0] != RADIO_FRAME_UPLINK ||
-        rx_buffer[1] != RADIO_PROTO_VERSION) {
+        rx_buffer[1] != RADIO_LINK_VERSION) {
         up_bad_frame++;
         return;
     }
     memcpy(&f, rx_buffer, sizeof(f));
 
-    /* No device id on the wire: the hub assigned the slot, so it owns the map.
-     * A frame naming an unassigned slot costs no crypto at all. */
-    if (f.slot >= RADIO_MAX_DEVICES || !devices[f.slot].used) {
+    /* No device id on the wire, and three slots map to one device.
+     * radio_devices_docs/radio/tdma.md */
+    if (f.slot >= RADIO_SLOT_COUNT) {
         up_bad_slot++;
         return;
     }
-    d = &devices[f.slot];
+    dev_index = RADIO_SLOT_TO_DEVICE(f.slot);
+    if (dev_index >= RADIO_MAX_DEVICES || !devices[dev_index].used) {
+        up_bad_slot++;
+        return;
+    }
+    d = &devices[dev_index];
 
     aead_nonce(nonce, f.superframe, d->dev_id, RADIO_DIR_UPLINK, f.slot);
     if (aead_open(d->session_key, nonce, (const uint8_t *)&f, RADIO_UPLINK_AAD_LEN,
@@ -1446,71 +1768,54 @@ static void handle_uplink_frame(void) {
         return;
     }
 
-    /* After the tag, never before. A frame that has not authenticated must not
-     * be able to move the floor - that would let one forgery lock out every
-     * genuine frame behind it, turning a replay guard into a denial of service.
-     *
-     * Strictly increasing, signed so it survives the counter wrap. This is the
-     * The floor is seeded at install from the durable counter rather than from
-     * zero, so there is no "first frame of the session" that bypasses it.
-     *
-     * check rx_floor was named for in the keystore record and that nothing had
-     * ever performed: the field was written as zero in three places and read in
-     * none, so every uplink frame ever received here was replayable with a
-     * valid tag, counted as frames_ok, and overwrote the device's telemetry
-     * with whatever the recording held. */
-    if ((int32_t)(f.superframe - d->rx_floor) <= 0) {
-        up_replay++;
-        d->frames_replay++;
-        return;
+    /* After the tag, never before. The floor is a tuple; signed for the wrap.
+     * radio_devices_docs/open_hub/arch/keystore.md */
+    {
+        int32_t age = (int32_t)(f.superframe - d->rx_floor);
+
+        if (age < 0 || (age == 0 && f.slot <= d->rx_floor_slot)) {
+            up_replay++;
+            d->frames_replay++;
+            return;
+        }
     }
-    d->rx_floor = f.superframe;
+    d->rx_floor      = f.superframe;
+    d->rx_floor_slot = f.slot;
 
     up_ok++;
     d->frames_ok++;
+    /* Cycles, not frames. The minimum is the cadence, the mean carries loss. */
+    if (f.superframe != d->cyc_last_sf) {
+        if (d->cyc_last_sf != 0u) {
+            uint32_t gap = f.superframe - d->cyc_last_sf;
+
+            if (gap <= 0xFFFFu) {
+                if (d->cyc_n == 0u || gap < d->cyc_min)
+                    d->cyc_min = (uint16_t)gap;
+                d->cyc_sum += gap;
+                d->cyc_n++;
+            }
+        }
+        d->cyc_last_sf = f.superframe;
+    }
     d->last_superframe = f.superframe;
+    /* The echo names the command, so a stale ack cannot pass for this one. */
+    if (!d->dl_acked && d->dl_cmd_seq != RADIO_CMD_SEQ_NONE &&
+        rpt.ack_seq == d->dl_cmd_seq && rpt.ack_cmd == d->dl_cmd) {
+        d->dl_acked   = 1;
+        d->dl_repeats = 0;
+        dl_cmd_acked++;
+    }
+    d->arrival_us = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);
     d->rssi_up   = (int8_t)(rssi_x2 / 2);
     d->rssi_down = rpt.rssi_down;
     d->flags     = rpt.flags;
     d->supply_mv = rpt.supply_mv;
     d->uptime_s  = rpt.uptime_s;
+    uplink_notify(d);
 }
 
-/* Open for the whole uplink region rather than per slot, and closed before the
- * join region and before the next boundary - a receive in progress when the
- * beacon is due puts that delay into the number every device measures its
- * period from. */
-/* The hub's half of the periodic exchange. Sent in the downlink region, on the
- * hop channel the beacon has already left the radio tuned to, at half rate
- * because beacon + downlink + join beacon every superframe is 1.42% and over
- * the ETSI limit.
- *
- * Sealed under one device's session key, so unlike the data beacon it is
- * authenticated. That is the reason it is worth a region: a forger cannot
- * command a device without the key pairing established. */
-/* Keyed on the join channel, at the superframe CM7 named, while a window is
- * open.
- *
- * **It replaces the join beacon on that superframe**, and the replacement is
- * load-bearing rather than a duty-cycle nicety. The invitation cadence is 4 and
- * the beacon's is 2, so 4 being a multiple of 2 means every invitation shares a
- * superframe with a beacon - not sometimes, always - and both were keyed at the
- * same offset, back to back. The device heard 15 beacons and zero invitations
- * in one 59 s window through the same receiver, every invitation hidden in the
- * beacon it followed by 8 ms.
- *
- * A collision that happens on every occurrence looks like a frame that never
- * radiates, and the transmitter cannot tell the two apart: carrier read back
- * correct, PacketSent observed, tx_err zero.
- *
- * It replaces the join beacon rather than joining it: both are the hub
- * saying "here I am" on 866.5, and only one of them is addressed and
- * authenticated. See ADR-0021.
- *
- * A frame whose superframe has already passed is dropped rather than sent late.
- * The device aligns its counter from this field, so a stale one hands it a
- * counter that is wrong by exactly the amount it was delayed - worse than no
- * invitation, because it looks like a successful one. */
+/* Keyed on the join channel at the superframe CM7 named. ADR-0021 */
 static void pair_init_service(void) {
     if (pi_superframe == 0u || pi_len == 0u)
         return;
@@ -1525,8 +1830,7 @@ static void pair_init_service(void) {
     }
     if (frame_counter != pi_superframe)
         return;
-    /* Same offset the join beacon has always used, and for the same reason: it
-     * is where a device that is listening has been told to listen. */
+    /* The offset the join beacon has always used, where a device is listening. */
     if (!timebase_elapsed(superframe_start_tk + join_offset_tk))
         return;
 
@@ -1537,11 +1841,8 @@ static void pair_init_service(void) {
         pi_sent++;
         pi_last_sent_sf = frame_counter;
     }
-    /* Read back what the part actually holds, straight after the transmit.
-     * frame_tx returning 0 means PacketSent was observed; it is not evidence
-     * the carrier or the length were what was asked for, and the device hears
-     * 15 join beacons and none of these through the same receiver. A driver
-     * call that returns success is not evidence a field holds what was set. */
+    /* Read back off the part, since PacketSent is not evidence about the carrier.
+     * radio_devices_docs/open_hub/radio/configuration.md */
     {
         uint8_t v = 0;
 
@@ -1558,12 +1859,15 @@ static void pair_init_service(void) {
     pi_len = 0u;
 }
 
+/* The hub's half of the periodic exchange: downlink region, hop channel, half rate,
+ * sealed. radio_devices_docs/open_hub/radio/superloop.md */
 static void downlink_service(void) {
     radio_downlink_t f;
     radio_downlink_cmd_t body;
     uint8_t nonce[AEAD_NONCE_BYTES];
     dev_entry_t *d = NULL;
     uint8_t i, slot, hop_idx;
+    uint8_t carried = 0;
 
     if (!grid_started || pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
         return;
@@ -1574,9 +1878,7 @@ static void downlink_service(void) {
     if (!timebase_elapsed(superframe_start_tk +
                           timebase_us_to_ticks(RADIO_DOWNLINK_RX_OPEN_US)))
         return;
-    /* Past the region is not late, it is a different region: the first uplink
-     * slot opens at the close and a hub still keying there collides with the
-     * device it is talking to. */
+    /* Past the region is not late but a different region: uplink slot 0 opens there. */
     if (timebase_elapsed(superframe_start_tk +
                          timebase_us_to_ticks(RADIO_DOWNLINK_RX_CLOSE_US)))
         return;
@@ -1584,9 +1886,8 @@ static void downlink_service(void) {
     dl_served = frame_counter;
     dl_opportunities++;
 
-    /* Round robin from wherever the last one stopped. Scanned rather than
-     * indexed because slots are sparse - a removed device leaves a hole, and
-     * indexing past it would serve nobody on that opportunity. */
+    /* Round robin, scanned rather than indexed because slots are sparse.
+     * radio_devices_docs/open_hub/radio/superloop.md */
     for (i = 0; i < RADIO_MAX_DEVICES; i++) {
         slot = (uint8_t)((dl_next_slot + i) % RADIO_MAX_DEVICES);
         if (devices[slot].used) {
@@ -1601,15 +1902,22 @@ static void downlink_service(void) {
     }
 
     memset(&body, 0, sizeof(body));
-    body.cmd        = RADIO_CMD_NOP;
-    /* A superframe is SUPERFRAME_US of nominal time, so seconds is a multiply,
-     * not a divide. The first version of this line divided by 500 and would
-     * have shipped a field that is wrong by 1000x - and nothing on either side
-     * checks it, because it is advisory. */
+    /* A queued command rides this downlink; the repeat is spent only if it flies. */
+    if (d->dl_repeats > 0u) {
+        body.cmd          = d->dl_cmd;
+        body.report_every = d->dl_report_every;
+        body.arg          = d->dl_arg;
+        body.cmd_seq      = d->dl_cmd_seq;
+        carried = 1;
+    } else {
+        body.cmd = RADIO_CMD_NOP;
+    }
+    /* SUPERFRAME_US of nominal time, so seconds is a multiply, not a divide. */
     body.hub_time_s = frame_counter * (SUPERFRAME_US / 1000000u);
 
+    memset(&f, 0, sizeof(f));
     f.type       = RADIO_FRAME_DOWNLINK;
-    f.version    = RADIO_PROTO_VERSION;
+    f.version    = RADIO_LINK_VERSION;
     f.slot       = d->slot;
     f.superframe = frame_counter;
 
@@ -1619,11 +1927,8 @@ static void downlink_service(void) {
         dl_seal_err++;
         return;
     }
-    /* The hop channel of this superframe, computed here rather than inherited
-     * from whatever the beacon left tuned - the beacon can fail its retune and
-     * still leave a plausible carrier behind. A PRF failure is silence, for the
-     * same reason it is in the beacon: a frame on a channel the device cannot
-     * compute is worse than no frame. */
+    /* Computed here, never inherited from what the beacon left tuned.
+     * radio_devices_docs/open_hub/radio/superloop.md */
     if (hop_channel(&hop, frame_counter, &hop_idx) != 0) {
         dl_prf_err++;
         return;
@@ -1635,8 +1940,17 @@ static void downlink_service(void) {
         return;
     }
     dl_sent++;
+    if (carried) {
+        d->dl_repeats--;
+        dl_cmd_sent++;
+        /* The last repeat spent with no echo: counted, because silence is not proof. */
+        if (d->dl_repeats == 0u && !d->dl_acked)
+            dl_cmd_lost++;
+    }
 }
 
+/* Open for the whole uplink region, closed before the join region and the boundary.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static void uplink_service(void) {
     uint8_t flags1, flags2;
     uint32_t close_at;
@@ -1646,8 +1960,7 @@ static void uplink_service(void) {
         return;
     }
 
-    /* While a pairing window is open the join region owns the tail of the
-     * superframe, so the uplink receive has to end before it starts. */
+    /* The join region owns the tail while a window is open, so this ends first. */
     close_at = superframe_start_tk +
         ((pair_state == RADIO_PAIR_LISTEN) ? join_offset_tk
          : superframe_tk - timebase_us_to_ticks(RADIO_END_GUARD_US));
@@ -1663,21 +1976,14 @@ static void uplink_service(void) {
     }
 
     if (!uplink_rx_open) {
-        /* Tuned explicitly rather than inherited from the beacon. It used to
-         * rely on "the beacon just went out on this hop channel", and the
-         * downlink then transmitted at +25 ms through a helper that tuned the
-         * join channel - so this window opened on 866.5 MHz for every
-         * superframe carrying a downlink, which is half of them. Nothing
-         * reported an error: the window opened, the counter rose, the band was
-         * simply the wrong one.
-         *
-         * A receive window that inherits its channel is only correct until
-         * something is scheduled before it. */
+        /* Tuned explicitly rather than inherited from the beacon.
+         * radio_devices_docs/open_hub/radio/superloop.md */
         uint8_t idx;
 
         if (hop_channel(&hop, frame_counter, &idx) != 0)
             return;
-        if (rfm69_set_carrier_hz(&radio, slot_hz(hop_slot_to_grid(idx))) != RFM69_OK)
+        up_grid = (uint8_t)hop_slot_to_grid(idx);
+        if (rfm69_set_carrier_hz(&radio, slot_hz(up_grid)) != RFM69_OK)
             return;
         if (rfm69_set_mode(&radio, RFM69_MODE_RX) != RFM69_OK)
             return;
@@ -1687,18 +1993,18 @@ static void uplink_service(void) {
     }
 
     if (rfm69_get_irq_flags(&radio, &flags1, &flags2) == RFM69_OK) {
-        /* Counted separately from the join channel's sync. One counter for both
-         * would rise on pairing traffic and read as uplink activity. */
+        /* Counted apart from the join channel's sync, which pairing traffic moves. */
         uint8_t was = sync_was_set;
 
         rx_note_sync(flags1);
-        if (!was && sync_was_set)
+        if (!was && sync_was_set) {
             up_sync++;
-        if (rx_frame_ready(flags2))
+            sync_rssi_sample();
+        }
+        if (rx_frame_ready(flags2, up_grid))
             handle_uplink_frame();
-        /* After the frame and only with sync clear, for the same reason as the
-         * join window: a triggered measurement overwrites the latch the packet
-         * path reads, and that latch is the arriving frame's own level. */
+        /* After the frame and only with sync clear: the latch has one reader.
+         * radio_devices_docs/open_hub/radio/configuration.md */
         else if (!(flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH)) {
             int16_t x2 = 0;
 
@@ -1721,9 +2027,7 @@ static void handle_join_frame(void) {
     if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK)
         return;
 
-    /* Recorded before a single check runs. Every counter below says why a frame
-     * was refused; this says what it was, which is the question that actually
-     * gets asked when two implementations disagree about a contract. */
+    /* Recorded before any check runs: what the frame was, not why it was refused. */
     (void)rfm69_get_rssi(&radio, &rssi_x2);
     rx_last_len        = len;
     rx_last_type       = rx_buffer[0];
@@ -1740,8 +2044,7 @@ static void handle_join_frame(void) {
         radio_pair_conf_t c;
         ipc_pair_conf_evt_t e;
 
-        /* Only while this hub is actually waiting for one, and only from the
-         * device the exchange belongs to. */
+        /* Only while waiting, and only from the device the exchange belongs to. */
         if (ex_state != RADIO_EX_SENT_RSP || len < sizeof(c)) {
             pair_reqs_dropped++;
             reqs_drop_last = (len < sizeof(c)) ? RADIO_DROP_LEN : RADIO_DROP_BUSY;
@@ -1782,29 +2085,18 @@ static void handle_join_frame(void) {
 
         pair_reqs_seen++;
         if (len < sizeof(req)) {
-            /* The device transmitted something calling itself a PAIR_REQ at a
-             * length this side does not compile. That is a wire-contract
-             * mismatch, not a radio problem, and it is the one drop reason that
-             * says so unambiguously. */
+            /* A length this side does not compile: a wire-contract mismatch. */
             pair_reqs_dropped++;
             reqs_drop_last = RADIO_DROP_LEN;
             return;
         }
-        /* Before anything judges it. This is the last point at which the
-         * bytes are still the radio's rather than this core's reading. */
+        /* Before anything judges it, while the bytes are still the radio's. */
         memcpy(reqs_drop_head, rx_buffer, sizeof(reqs_drop_head));
         memcpy(reqs_drop_key,  rx_buffer + 24, sizeof(reqs_drop_key));
         memcpy(&req, rx_buffer, sizeof(req));
 
-        /* Only the device the operator named may move this machine. A quiesce
-         * is eight seconds of network silence, and the join channel is fixed
-         * and published, so accepting any frame that arrives would hand a
-         * denial of service to anyone in range. */
-        /* A closed window is a working hub and an operator who has not pressed
-         * the button. Counting it with a genuine identity mismatch makes a
-         * non-fault look like one - and the same argument splits the rest: a
-         * device the window was not opened for is an operator error, a wrong
-         * hub_id is two hubs in range, a wrong net_id is a different network. */
+        /* Only the device the operator named, and each refusal counted apart.
+         * radio_devices_docs/radio/joining.md */
         if (!pairing_open) {
             pair_reqs_dropped++;
             reqs_drop_last = RADIO_DROP_NO_WINDOW;
@@ -1821,18 +2113,14 @@ static void handle_join_frame(void) {
             reqs_drop_dev = req.dev_id;
             return;
         }
-        /* One exchange at a time. A second request while one is in flight is
-         * dropped rather than allowed to replace it: the first device has
-         * committed and is waiting on a response. */
+        /* One exchange at a time; the first device has committed and is waiting. */
         if (ex_state != RADIO_EX_IDLE && ex_state != RADIO_EX_ACCEPTED) {
             pair_reqs_dropped++;
             reqs_drop_last = RADIO_DROP_BUSY;
             return;
         }
 
-        /* The exchange needs clear air before it needs arithmetic. Asking CM7
-         * for 330 ms of curve work and only then discovering the rate limit
-         * refuses the quiesce would spend it for nothing. */
+        /* Clear air before arithmetic: a refused quiesce must not cost curve work. */
         if (begin_quiesce(RADIO_QUIESCE_SUPERFRAMES) == 0) {
             quiesce_lost++;
             return;
@@ -1856,13 +2144,8 @@ static void handle_join_frame(void) {
     }
 }
 
-/* The join region overlays the tail of the uplink region and is only occupied
- * while a window is open, so it costs nothing the rest of the time. Slots are
- * assigned from 0 upward, which is what keeps it over unassigned slots.
- *
- * Split across superloop passes rather than blocking for the receive window:
- * 100 ms inside one iteration would sit across a superframe boundary and put
- * 100 ms of jitter into the beacon every device measures its period from. */
+/* Overlays the uplink tail, and split across superloop passes.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static void join_region_service(void) {
     uint8_t flags1, flags2;
 
@@ -1875,22 +2158,8 @@ static void join_region_service(void) {
     }
 
     if (join_phase == 0u) {
-        /* With nothing paired, listen across the whole superframe instead of
-         * for 100 ms in the join region.
-         *
-         * The 100 ms window asks a joining device to answer inside 5% of the
-         * time, measured from the end of a beacon it has to have decoded. A
-         * device that is 20 ms late is not late by a little - it waits 2 s for
-         * another chance, and one that answers on its own schedule pairs about
-         * one attempt in twenty, which on a bench reads as an intermittent
-         * radio fault and stays alive as a wrong hypothesis for days.
-         *
-         * Receiving costs no duty cycle, so while there is no paired device to
-         * serve there is nothing to trade against it. Gated on device_count so
-         * a pairing window never costs an existing network its uplink - which
-         * does leave the second device pairing under tighter timing than the
-         * first, and that asymmetry is exactly what the hub-initiated redesign
-         * removes rather than documents. */
+        /* With nothing paired, listen across the whole superframe.
+         * radio_devices_docs/open_hub/radio/superloop.md */
         uint32_t open_tk = (pair_state == RADIO_PAIR_QUIESCE) ? 0u
                          : (device_count == 0u) ? timebase_us_to_ticks(RADIO_UPLINK_OFFSET_US)
                          : join_offset_tk;
@@ -1902,24 +2171,12 @@ static void join_region_service(void) {
         join_served_frame = frame_counter;
         join_regions++;
 
-        /* The uplink window ends exactly here - its close_at during LISTEN *is*
-         * join_offset_tk - so the handoff is made explicit at the point the
-         * radio changes owner rather than left to the order of two calls in the
-         * superloop. uplink_service() runs after this one and its close would
-         * otherwise drop the receiver to standby one line after the join region
-         * armed it, on the same pass: retuned correctly, beacon transmitted,
-         * counters all rising, and deaf.
-         *
-         * Only reachable with a device installed, because the uplink window
-         * does not exist until then - so the first pairing worked and every
-         * later one could not. */
+        /* The handoff is explicit, not left to the order of two superloop calls.
+         * radio_devices_docs/open_hub/radio/superloop.md */
         uplink_close();
 
-        /* Half rate on the join channel keeps the extra air time to 0.21%, and
-         * a joiner still finds the hub inside two superframes. */
-        /* The beacon keeps its documented 1874 ms offset even when the receive
-         * window opens early: devices measure their reply from it, and it has
-         * been verified on air at that position. Only the listening moved. */
+        /* Half rate keeps the extra air time to 0.21%, and the beacon keeps its
+         * documented offset. radio_devices_docs/radio/joining.md */
         if (device_count == 0u && pair_state == RADIO_PAIR_LISTEN) {
             if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK)
                 return;
@@ -1933,9 +2190,7 @@ static void join_region_service(void) {
 
         if (rfm69_set_mode(&radio, RFM69_MODE_RX) != RFM69_OK)
             return;
-        /* Listening is what a quiesce is for, so during one the window runs to
-         * the boundary instead of closing after the join region. It still stops
-         * short of it: the next beacon must not find a receive in progress. */
+        /* During a quiesce the window runs to the boundary, stopping short of it. */
         join_rx_deadline = (pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
             ? superframe_start_tk + superframe_tk
               - timebase_us_to_ticks(RADIO_END_GUARD_US)
@@ -1947,22 +2202,22 @@ static void join_region_service(void) {
     if (join_beacon_pending &&
         timebase_elapsed(superframe_start_tk + join_offset_tk)) {
         join_beacon_pending = 0;
-        /* Out of RX first. Writing the FIFO while the receiver is running mixes
-         * the outgoing frame with whatever the packet engine has collected, and
-         * the transmit fails - measured as tx err 2 for 2 beacons on the first
-         * build of this path. */
+        /* Out of RX first.
+         * radio_devices_docs/open_hub/radio/configuration.md */
         (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
         RFM_send_join_beacon();
         (void)rfm69_set_mode(&radio, RFM69_MODE_RX);   /* straight back to listening */
     }
 
     if (rfm69_get_irq_flags(&radio, &flags1, &flags2) == RFM69_OK) {
+        uint8_t was = sync_was_set;
+
         rx_note_sync(flags1);
-        if (rx_frame_ready(flags2))
+        if (!was && sync_was_set)
+            sync_rssi_sample();
+        if (rx_frame_ready(flags2, RADIO_JOIN_SLOT))
             handle_join_frame();
-        /* After the frame, never before it. A triggered measurement overwrites
-         * the latch, and the latch is the arriving packet's own level - the one
-         * number with no second chance at it. */
+        /* After the frame, never before: a trigger overwrites the arriving level. */
         else if (!(flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH))
             rx_sample_rssi();
     }
@@ -1975,9 +2230,7 @@ static void join_region_service(void) {
     }
 }
 
-/* 1 when this call armed a quiesce. Reporting "already quiescing" as success
- * would make a caller count arming attempts as quiesces, which is how a test
- * ends up comparing 8 announcements against 4 that happened. */
+/* 1 only when this call armed one, so a caller cannot count attempts as quiesces. */
 static uint8_t begin_quiesce(uint8_t superframes) {
     if (pair_state == RADIO_PAIR_QUIESCE || quiesce_pending)
         return 0;
@@ -2001,6 +2254,9 @@ void RFM_Routine(void) {
             pair_state = RADIO_PAIR_IDLE;
     }
 
+    sync_edge_service();
+    evt_reply_service();
+
     if (superframe_due())
         on_superframe();
 
@@ -2010,36 +2266,25 @@ void RFM_Routine(void) {
     downlink_service();
     uplink_service();
 
-    /* Only in the first half of the superframe. A flash program stalls this
-     * core for the best part of a millisecond, and the beacon's offset - 1 to
-     * 4 us, the number every device's period estimate rests on - must not
-     * inherit it. There are 4096 superframes of chances to take. */
+    /* First half only: a flash program stalls this core for nearly a millisecond.
+     * radio_devices_docs/open_hub/radio/superloop.md */
     if (grid_started && !timebase_elapsed(superframe_start_tk + superframe_tk / 2u))
         (void)kv_reserve(frame_counter);
 
-    /* Drained by polling rather than off the HSEM flag: a missed doorbell then
-     * costs latency instead of a lost request. The flag is still cleared so it
-     * does not stay pending. */
+    /* Drained by polling; the flag is cleared only so it does not stay pending.
+     * radio_devices_docs/open_hub/arch/ipc.md */
     __HAL_HSEM_CLEAR_FLAG(__HAL_HSEM_SEMID_TO_MASK(HSEM_M7_TO_M4_RFM));
     while (ipc_poll_request(&request))
         RFM_serve_request(&request);
 }
 
-/*  @retval 0 - window opened
- *
- *  Opening a window instead of running the exchange inline: the old routine sat
- *  in this loop for ten seconds, which a slot grid cannot afford. The join
- *  beacon goes out from RFM_Routine like any other frame, and the window closes
- *  on its own deadline. */
-/* Every counter below the frame layer is cumulative since boot, and a running
- * maximum from an unknown superframe answers no question anyone asks of it:
- * "did that transmission arrive" needs a sweep, not a total. The window is the
- * natural sweep boundary - it is the only interval during which the receiver
- * is on at all - so opening one starts a clean measurement. */
+/* Resets the below-frame counters, which are cumulative since boot.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static void rx_diag_reset(void) {
     rx_sync_match = 0;
     rx_frames = 0;
     rx_crc_err = 0;
+    rx_flushes = 0;
     rx_rssi_peak_x2 = -32768;
     rx_rssi_floor_x2 = 32767;
     rx_rssi_samples = 0;
@@ -2047,6 +2292,10 @@ static void rx_diag_reset(void) {
     rx_last_type = 0;
     rx_last_rssi = 0;
     rx_last_superframe = 0;
+    sync_rssi_lag_max_us = 0;
+    sync_rssi_taken = 0;
+    sync_rssi_late = 0;
+    sync_rssi_err = 0;
 }
 
 static uint8_t RFM_open_pairing(uint32_t dev_id) {

@@ -1,41 +1,34 @@
-/* Durable storage for the superframe counter.
+/**
+ * @file kvstore.c
+ * @brief Durable storage for the superframe counter: a ceiling is stored, not the
  *
- * The counter is the GCM nonce's most significant field, so a hub that restarts
- * it at zero and reuses a persisted session key repeats nonces - which does not
- * merely leak plaintext, it leaks the authentication subkey. Until this existed,
- * a hub reboot had to force re-pairing.
- *
- * **A ceiling is stored, not the counter.** Writing 32 bytes every 2 s would
- * wear the flash out and cost a bus stall in the middle of the slot grid.
- * Instead a value KV_RESERVE_AHEAD superframes in the future is written, and
- * the next boot starts there. Nothing at or below a stored ceiling is ever
- * reused, at one write per KV_RESERVE_AHEAD superframes.
- *
- * The cost of an unclean shutdown is skipping up to KV_RESERVE_AHEAD counter
- * values. That is free: the space is 2^32 and skipping is the conservative
- * direction, the same argument key-lifecycle.md makes for the transmit floor. */
+ * counter. radio_devices_docs/open_hub/arch/keystore.md
+ */
 
 #include <string.h>
 
 #include "main.h"
 #include "kvstore.h"
+#include "radio_slots.h"
 
 #define KV_MAGIC            0x564B484Fu   /* 'OHKV' little-endian */
 #define KV_VERSION          1u
 #define KV_TYPE_COUNTER     1u
 
-/* 2.3 hours between writes, and the counter jumps by at most this across a
- * reboot. Devices see that as a forward jump; a forward jump is the direction a
- * replay check accepts, and a device whose plausibility check refuses one that
- * large recovers by re-taking a beacon on trust. */
+/* 2.3 hours between writes, and the most the counter jumps across a reboot.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 #ifndef KV_RESERVE_AHEAD                 /* overridable so the write path can be
                                           * stress-tested at a rate a bench can
                                           * watch; 4096 is one write per 2.3 h */
 #define KV_RESERVE_AHEAD    4096u
 #endif
 
-/* Sectors 6 and 7 of bank 2. CM4's code lives in sector 0 and reaches 40 KB, so
- * the top of the bank is free and is not going to grow into these. */
+/* A reset spends this much counter, and a device that refuses the jump is lost.
+ * radio_devices_docs/open_hub/arch/keystore.md */
+_Static_assert(KV_RESERVE_AHEAD < RADIO_RESYNC_MAX_JUMP,
+               "a reboot burns more counter than a device will follow");
+
+/* Sectors 6 and 7 of bank 2; CM4's code is in sector 0 and reaches 40 KB. */
 #define KV_SECTOR_A         FLASH_SECTOR_6
 #define KV_SECTOR_B         FLASH_SECTOR_7
 #define KV_ADDR_A           0x081C0000u
@@ -44,29 +37,22 @@
 #define KV_RECORD_BYTES     32u
 #define KV_SLOTS_PER_SECTOR (KV_SECTOR_BYTES / KV_RECORD_BYTES)
 
-/* One H7 flash word. A flash word can be programmed once between erases, so a
- * record is written whole and never revised. */
+/* One H7 flash word, programmed once between erases and never revised. */
 typedef struct kv_record {
     uint32_t magic;
     uint8_t  version;
     uint8_t  type;
     uint16_t pad;
-    uint32_t seq;           /* highest valid seq wins; survives the sector swap */
-    uint32_t counter_mark;  /* nothing at or below this may be reused */
-    /* Carried now although pairing does not exist yet, because the format has
-     * to stop changing before anything depends on it - and because a floor that
-     * names its generation is *detectably* stale rather than merely cleared at
-     * the right moment. Clearing by call-site works until someone moves it. */
-    uint32_t key_gen;
-    uint32_t rx_floor;      /* replay floor, scoped to key_gen, never to a device */
+    uint32_t seq;           /**< highest valid seq wins; survives the sector swap */
+    uint32_t counter_mark;  /**< nothing at or below this may be reused */
+    uint32_t key_gen;       /**< named, so a stale floor is detectable, not just cleared */
+    uint32_t rx_floor;      /**< replay floor, scoped to key_gen, never to a device */
     uint32_t spare;
     uint32_t crc;
 } kv_record_t;
 
-/* A record must fill a flash word exactly. Not "be at most 32 bytes": a short
- * record leaves filler a future field could quietly claim, and a long one is two
- * programs where the code performs one. This is the invariant that actually
- * breaks if someone adds a field carelessly, so it is the one asserted. */
+/* A record fills a flash word exactly, not "at most".
+ * radio_devices_docs/open_hub/arch/keystore.md */
 _Static_assert(sizeof(kv_record_t) == KV_RECORD_BYTES,
                "kv_record_t must fill exactly one H7 flash word");
 
@@ -80,8 +66,7 @@ static uint8_t  spare_erased;
 static uint8_t  exhausted;
 static uint8_t  ready;
 
-/* Bitwise rather than table-driven: this runs over at most 8192 records once at
- * boot, and a 1 KB table is worth more than the milliseconds it saves. */
+/* Bitwise, not table-driven: 8192 records once at boot is not worth 1 KB. */
 static uint32_t crc32(const void *data, size_t len) {
     const uint8_t *p = data;
     uint32_t c = 0xFFFFFFFFu;
@@ -141,23 +126,8 @@ static uint8_t write_record(uint32_t addr, const kv_record_t *r) {
     return (st == HAL_OK) ? 0 : 1;
 }
 
-/* Newest valid record across both sectors, and where the next one goes. */
-/* Newest valid record, and the append point.
- *
- * The append point is the first *erased* slot, never one past the last valid
- * record. Those differ whenever a slot holds something the scanner rejects - a
- * torn write, or records of an older format - and deriving it from valid
- * records alone aims the next write at occupied flash.
- *
- * The consequence here is the worst in the project. An H7 flash word cannot be
- * programmed twice, so the write fails, `exhausted` latches, kv_counter_safe()
- * goes false and the radio stops transmitting - correctly, since an unreserved
- * counter is nonce reuse. But a reboot does not clear it: the boot erase cleans
- * the *spare*, the active sector keeps the torn record, and the same append
- * point is computed again. One torn record would silence the hub permanently.
- *
- * Found on the device side, which has the same store shape and where the same
- * bug instead fell through to a page erase on every write. */
+/* Newest valid record across both sectors, and the append point: the first
+ * erased slot. radio_devices_docs/open_hub/arch/keystore.md */
 static void scan(void) {
     uint32_t best_seq = 0;
     uint32_t first_erased[2];
@@ -204,10 +174,8 @@ uint8_t kv_init(void) {
     scan();
     spare = (active_addr == KV_ADDR_A) ? KV_ADDR_B : KV_ADDR_A;
 
-    /* Erase the spare now, at boot, where a stall is harmless. A 128 KB erase
-     * can outlast the 512 ms watchdog and stalls the bank CM4 executes from, so
-     * it must never happen while the slot grid is running. Keeping a spare
-     * always ready turns an in-service erase into an in-service *write*. */
+    /* Erase the spare at boot, where a stall is harmless.
+     * radio_devices_docs/open_hub/arch/keystore.md */
     spare_erased = 1;
     for (uint32_t i = 0; i < KV_SLOTS_PER_SECTOR; i++) {
         if (!slot_erased((const kv_record_t *)(spare + i * KV_RECORD_BYTES))) {
@@ -231,17 +199,8 @@ uint8_t kv_init(void) {
 
 uint32_t kv_reserved(void) { return reserved; }
 
-/* Test scaffolding: an unreadable record occupying a slot.
- *
- * A record here is exactly one flash word and the H7 programs 256 bits or
- * fails, so a *torn* record in the multi-word sense is not reachable on this
- * store - unlike CM7's, which is four words. What is reachable is a slot the
- * scanner cannot accept: corruption, or a record of a format this build does
- * not know. Both present identically, as a failed CRC.
- *
- * The seq is HIGHER than any valid record, so a scanner that accepted it would
- * win the comparison and adopt its counter mark. One with a low seq would be
- * ignored for the wrong reason and prove nothing. */
+/* Test scaffolding: an unreadable record occupying a slot, at a higher seq.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 int kv_write_torn(void) {
     kv_record_t r __attribute__((aligned(32)));
     uint32_t addr;
@@ -297,19 +256,12 @@ uint8_t kv_reserve(uint32_t counter) {
 
     if (next_slot >= KV_SLOTS_PER_SECTOR) {
         if (!spare_erased) {
-            /* Both sectors full. Refusing to write is only half the answer:
-             * the counter goes on advancing past the ceiling regardless, and a
-             * future boot would then hand those values out again. So the
-             * refusal has to be *acted on* - kv_counter_safe() goes false and
-             * the radio stops transmitting. An earlier version of this comment
-             * called refusing "the safe direction" while nothing acted on it,
-             * which made the store's whole purpose conditional on a path that
-             * had never run. A reboot compacts and clears it. */
+            /* Both sectors full, and the refusal is acted on rather than logged.
+             * radio_devices_docs/open_hub/arch/keystore.md */
             errors++;
             exhausted = 1;   /* latch: the caller runs every superloop pass, and
-                              * retrying a write that cannot succeed hammers the
-                              * flash unlock path thousands of times a second.
-                              * Measured at 1.79M attempts in 45 s before this. */
+                              * a retry that cannot succeed hammered the unlock
+                              * path 1.79M times in 45 s. */
             return 1;
         }
         active_addr  = (active_addr == KV_ADDR_A) ? KV_ADDR_B : KV_ADDR_A;

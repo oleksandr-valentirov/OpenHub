@@ -2,17 +2,72 @@
 
 #include <stdint.h>
 
-/* Measures the microsecond timebase against the LSE crystal and publishes the
- * correction to timebase.c. See docs/radio/timebase.md. */
+/**
+ * @file calib.h
+ * @brief Measures TIM2 against LSE, so a tick can be converted to a microsecond.
+ *
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
 
-void     calib_init(void);        /* starts the capture unit and takes one window */
-void     calib_poll(void);        /* drains captures; call from the superloop */
-uint8_t  calib_ready(void);       /* a window has landed, so the scale is measured */
-int32_t  calib_ppm(void);         /* timer clock offset from nominal, signed ppm */
-uint32_t calib_span_lo(void);  /* span extremes inside the last window, in ticks */
+/** @brief Starts the capture unit and takes one window. */
+void     calib_init(void);
+
+/** @brief Drains captures and accepts or rejects each window; call per superloop pass. */
+void     calib_poll(void);
+
+/**
+ * @brief Whether a window has landed, so the scale is measured rather than nominal.
+ * @retval 1  at least one window was accepted
+ * @retval 0  the scale in force is still the reset default
+ */
+uint8_t  calib_ready(void);
+
+/**
+ * @brief The timer clock's offset from nominal.
+ * @return signed ppm, positive when TIM2 runs fast
+ */
+int32_t  calib_ppm(void);
+
+/**
+ * @brief Low extreme of the spans inside the last window.
+ * @return ticks
+ */
+uint32_t calib_span_lo(void);
+
+/**
+ * @brief High extreme of the spans inside the last window.
+ * @return ticks
+ */
 uint32_t calib_span_hi(void);
-int32_t  calib_ppm_min(void);  /* spread across windows: wide means a bad measurement */
+
+/**
+ * @brief Lowest ppm across windows; a wide spread means a bad measurement.
+ * @return signed ppm
+ *
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
+int32_t  calib_ppm_min(void);
+
+/**
+ * @brief Highest ppm across windows, read together with calib_ppm_min().
+ * @return signed ppm
+ */
 int32_t  calib_ppm_max(void);
-uint32_t calib_windows(void);     /* completed windows */
-uint32_t calib_rejects(void);     /* windows dropped by the consistency checks */
-uint32_t calib_age_tk(void);      /* ticks since the last accepted window */
+
+/**
+ * @brief Windows completed, so a ppm figure can be read as a population.
+ * @return count since boot
+ */
+uint32_t calib_windows(void);
+
+/**
+ * @brief Windows the consistency checks dropped.
+ * @return count since boot
+ */
+uint32_t calib_rejects(void);
+
+/**
+ * @brief Age of the last accepted window, because a stopped reference is silent.
+ * @return ticks since it landed
+ */
+uint32_t calib_age_tk(void);

@@ -111,10 +111,8 @@ int main(void)
   __HAL_RCC_HSEM_CLK_ENABLE();
   /* Activate HSEM notification for Cortex-M4*/
   HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_ID_0));
-  /*
-  Domain D2 goes to STOP mode (Cortex-M4 in deep-sleep) waiting for Cortex-M7 to
-  perform system initialization (system clock config, external memory configuration.. )
-  */
+  /* D2 sleeps until CM7 has configured the clocks and released HSEM_ID_0.
+   * radio_devices_docs/open_hub/arch/dual-core.md */
   HAL_PWREx_ClearPendingEvent();
   HAL_PWREx_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFE, PWR_D2_DOMAIN);
   /* Clear HSEM flag */
@@ -302,9 +300,8 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-  /* The .ioc asks for /32. Register reads are clean at that rate and FIFO
-   * bursts are not - bit 7 of scattered bytes, on the air path and on a
-   * loopback alike - so the burst is what the part cannot keep up with. */
+  /* /128, not the .ioc's /32: FIFO bursts corrupt bit 7 at that rate.
+   * radio_devices_docs/open_hub/radio/configuration.md */
   hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_128;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
   {
@@ -481,9 +478,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-/* The driver owns chip select and framing; this is only the bus. One
- * full-duplex transfer rather than a transmit followed by a receive, so the
- * clock never stalls mid-transaction. */
+/* Only the bus. One full-duplex transfer, so the clock never stalls. */
 int rfm_spi_transfer(const uint8_t *tx, uint8_t *rx, size_t len) {
   static uint8_t scratch[80];
   HAL_StatusTypeDef st;
@@ -550,8 +545,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* No reporting path: the console is a task and this runs from anywhere. */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

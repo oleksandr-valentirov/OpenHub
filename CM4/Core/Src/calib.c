@@ -1,14 +1,9 @@
-/* Disciplines the microsecond timebase against the LSE crystal.
+/**
+ * @file calib.c
+ * @brief Disciplines the microsecond timebase against the LSE crystal. ADR-0019
  *
- * HSE on this board is the ST-Link MCO, measured +4200 ppm. A TDMA guard band
- * has to cover the drift between hub and device since their last resync, so at
- * 4000 ppm the grid spends its capacity on guard instead of slots. The 32.768
- * kHz crystal is the only accurate reference on the board.
- *
- * TIM16 timestamps LSE edges with the same PLL1 tree TIM2 counts, so the ratio
- * of measured to nominal ticks is the error TIM2 carries. TIM2 is left alone:
- * its prescaler steps 0.5% at a time and cannot express a 0.4% correction. The
- * schedule is corrected instead, in timebase_us_to_ticks(). */
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
 
 #include "main.h"
 #include "calib.h"
@@ -20,8 +15,8 @@ extern IWDG_HandleTypeDef hiwdg2;
 #define LSE_HZ              32768u
 #define IC_DIV              8u      /* TIM16 ICPSC: LSE periods per capture */
 #define WINDOW_CAPTURES     32u     /* 256 LSE periods, 7.8 ms */
-/* A window's own noise is ~350 ppm and does not fall when the window is made
- * longer, so it is beaten down by averaging many windows instead. */
+/* A window's own noise is ~350 ppm, beaten down by averaging windows.
+ * radio_devices_docs/open_hub/radio/timebase.md */
 #define AVG_SHIFT           12u     /* 4096 windows, ~32 s */
 #define SPAN_TOLERANCE_PCT  2u
 #define FIRST_WINDOW_US     500000u
@@ -36,9 +31,8 @@ static uint8_t  have_ref;
 static uint8_t  started;
 static uint8_t  ready;
 static uint32_t windows;
-/* When the last window landed. `ready` and `windows` only ever say that one
- * did, once - so a stopped LSE leaves the last measured scale being reported as
- * though it were current, with nothing anywhere saying how old it is. */
+/* When the last window landed, since `ready` only says one ever did.
+ * radio_devices_docs/open_hub/radio/timebase.md */
 static uint32_t last_window_tk;
 static uint64_t avg_acc;   /* the average, held << AVG_SHIFT */
 static uint32_t rejects;
@@ -47,8 +41,7 @@ static uint16_t span_lo, span_hi;    /* and inside the last one that completed *
 static int32_t  ppm_min = 0x7FFFFFFF;
 static int32_t  ppm_max = -0x7FFFFFFF;
 
-/* Derived from the nominal HSE_VALUE rather than measured, which is the point:
- * the nominal is the reference the LSE-timed window is compared against. */
+/* From the nominal HSE_VALUE: it is the reference the window is compared to. */
 static uint32_t apb2_timer_hz(void) {
     uint32_t pclk = HAL_RCC_GetPCLK2Freq();
     uint32_t ppre = (RCC->D2CFGR & RCC_D2CFGR_D2PPRE2) >> RCC_D2CFGR_D2PPRE2_Pos;
@@ -59,10 +52,8 @@ static uint32_t apb2_timer_hz(void) {
 }
 
 static void restart(void) {
-    /* Drop the pending timestamp, not just the accumulator. It was taken before
-     * the gap, so the span from it to the next capture covers an unknown number
-     * of LSE periods - and such a span can still land inside the tolerance and
-     * be counted as one period, which is a silent error of hundreds of ppm. */
+    /* Drop the pending timestamp, not just the accumulator.
+     * radio_devices_docs/open_hub/radio/timebase.md */
     (void)htim16.Instance->CCR1;                             /* clears CC1IF */
     __HAL_TIM_CLEAR_FLAG(&htim16, TIM_FLAG_CC1OF);
     have_ref  = 0;
@@ -82,21 +73,20 @@ void calib_init(void) {
     span_min = span - span * SPAN_TOLERANCE_PCT / 100u;
     span_max = span + span * SPAN_TOLERANCE_PCT / 100u;
 
-    /* A span past the counter period aliases onto a shorter one, and the 16-bit
-     * subtraction below would return a wrong value rather than an error. */
+    /* A span past the counter period aliases onto a shorter one.
+     * radio_devices_docs/open_hub/radio/timebase.md */
     if (span_max > htim16.Init.Period) return;
 
     if (HAL_TIM_IC_Start(&htim16, TIM_CHANNEL_1) != HAL_OK) return;
     started = 1;
     restart();
 
-    /* One window before the grid starts, so the first superframe is already on
-     * the corrected period. A dead crystal must not hang the radio core. */
+    /* One window before the grid starts; a dead crystal must not hang the core.
+     * radio_devices_docs/open_hub/radio/timebase.md */
     deadline = rfm_micros() + FIRST_WINDOW_US;
     while (!ready && !timebase_elapsed(deadline)) {
-        /* The wait is bounded at 500 ms against a 512 ms watchdog, and the LSI
-         * driving that watchdog is only specified to +/-50%. A dead crystal is
-         * meant to degrade to an uncalibrated timebase, not to a boot loop. */
+        /* Bounded at 500 ms against a 512 ms watchdog whose LSI is +/-50%.
+         * radio_devices_docs/open_hub/radio/timebase.md */
         HAL_IWDG_Refresh(&hiwdg2);
         calib_poll();
     }
@@ -108,9 +98,8 @@ void calib_poll(void) {
 
     if (!started) return;
 
-    /* Overcapture: a timestamp was overwritten before it was read, so the span
-     * no longer covers a known number of LSE periods. The hardware reporting
-     * this is why the count never has to be inferred from elapsed time. */
+    /* Overcapture: the span no longer covers a known number of LSE periods.
+     * radio_devices_docs/open_hub/radio/timebase.md */
     if (__HAL_TIM_GET_FLAG(&htim16, TIM_FLAG_CC1OF)) {
         __HAL_TIM_CLEAR_FLAG(&htim16, TIM_FLAG_CC1OF);
         restart();
@@ -144,12 +133,8 @@ void calib_poll(void) {
         uint32_t raw = (uint32_t)(((uint64_t)acc_ticks << 24) / nominal_window);
         int32_t  ppm;
 
-        /* An exact running mean while the average is young, exponential once it
-         * has 4096 windows behind it - the same accumulator serves both, since
-         * a full sum is already the exponential filter's state. Held shifted:
-         * updating a Q24 value in place would stall, because a correction
-         * smaller than the divisor truncates to zero and the last 244 ppm never
-         * arrive. */
+        /* Exact mean while young, exponential past 4096 windows, held shifted.
+         * radio_devices_docs/open_hub/radio/timebase.md */
         if (windows < (1u << AVG_SHIFT)) {
             avg_acc += raw;
             timebase_set_scale((uint32_t)(avg_acc / (windows + 1u)));
@@ -162,8 +147,8 @@ void calib_poll(void) {
         last_window_tk = rfm_micros();
         ready = 1;
 
-        /* Tracked on the raw window, not the average: this is the input noise,
-         * and averaging it before measuring it would hide exactly what it shows. */
+        /* On the raw window, not the average: this is the input noise.
+         * radio_devices_docs/open_hub/radio/timebase.md */
         if (windows > 8u) {
             ppm = (int32_t)((((int64_t)raw - (int64_t)(1 << 24)) * 1000000) >> 24);
             if (ppm < ppm_min) ppm_min = ppm;
@@ -183,8 +168,7 @@ void calib_poll(void) {
 uint8_t  calib_ready(void)   { return ready; }
 uint32_t calib_windows(void) { return windows; }
 uint32_t calib_rejects(void) { return rejects; }
-/* Ticks since the last accepted window, so a caller can decide whether the
- * scale it is about to use is a measurement or a memory. */
+/* Ticks since the last accepted window: a measurement, or a memory. */
 uint32_t calib_age_tk(void) { return ready ? (rfm_micros() - last_window_tk) : 0xFFFFFFFFu; }
 
 uint32_t calib_span_lo(void) { return span_lo; }
