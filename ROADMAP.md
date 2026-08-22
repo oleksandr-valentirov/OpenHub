@@ -540,8 +540,20 @@ power, which is the alternative that entry could not exclude for want of a logge
 intervention.
 
 **And a front end in compression comes out of it somewhere in 30 dB.** It did not:
-at -40 dBm this receiver is linear, so the 23 dB request that arrived as 15 dB is
-not its doing. The device session has since found the mechanism on its own side —
+at -40 dBm this receiver is linear.
+
+**That is narrower than it first read here, and the device session narrowed it.**
+The ladder ran at -40 because the board had already been turned down; **-25 dBm,
+where the missing decibels actually live, was never tested**. And the direction
+runs against this side: a compressed reading reads *low*, so the true step would
+be larger than the 14 dB measured and nearer the 23 requested — which explains the
+discrepancy with no defect on the transmitter at all. Their own candidate is
+weaker than it was, since `SUBGRF_SetTxParams` at `RBI_RFO_LP_MAXPOWER = 14`
+reduces to an identity, so the table row they suspected is not a mechanism.
+
+Owed, and it costs three minutes: **run the ladder again at -25 dBm.** It needs
+the board back at +14, which breaks whatever window is open, so it is announced
+first and run between runs. The device session has since found the mechanism on its own side —
 the SX126x PA configured once for +14 dBm while only `SetTxParams` moves after,
 each optimal point in that table having its own `paDutyCycle`.
 
