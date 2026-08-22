@@ -300,6 +300,45 @@ its AGC and AFC phases behind RSSI crossing the threshold, so a restart parks
 until a signal arrives rather than sampling the noise it restarted into. **The
 line above already said this and was contradicted from first principles anyway.**
 
+## The AGC never backs off, and the register nobody writes
+
+**`RegLna` (0x18) is not written by `rfm69_init` or by anything else in the
+driver.** The only path to it is `rfm69_set_lna_gain`, reachable from the console.
+So the part runs on the reset value: `LnaGainSelect` 000, which nominally leaves
+the AGC in charge, and `LnaZin` 0. Same class as `RegPaLevel` above — a field at
+its reset value is a configuration, and it is one nobody chose.
+
+`LnaCurrentGain`, bits 5:3, is **read-only** and reports the gain in force rather
+than the one asked for. **Read it on `PayloadReady`, before the FIFO drain.**
+`AutoRxRestartOn` restarts the receiver when the payload is read out, and the AGC
+then re-derives on idle air and returns to G1, so a later read reports the idle
+value under the frame's name. `afc_note()` reads it in the right place and its
+comment says why.
+
+Measured 2026-08-22, 120 frame rows, two devices, levels from −72 to −25 dBm:
+
+    G1 (max gain)   118 rows,  including all six at -25 dBm
+    G3                2 rows,  both at -50 dBm
+
+**The AGC never once backed off**, including under the strongest signal this
+bench has produced. G3 twice at −50 while G1 holds at −25 is not a gain schedule.
+
+The reading is only worth having because the level column's own control passed in
+the same data. A device-side reset restored a compiled-in +14 dBm transmit
+default, so both boards jumped to maximum at their own first post-reset
+transmission and the printed level moved with it — 23 dB asked for and 23
+delivered on one board, 31 asked and 32 delivered on the other. **A gain with no
+verified level beside it separates nothing**, which is the whole reason the
+ROADMAP entry stayed open for weeks.
+
+What this does **not** establish is that the loud end costs frames. Within one
+board, 33 of 50 pass CRC at −48 dBm and 2 of 6 at −25: **p = 0.18**, n = 6.
+The comparison that came back at p = 0.005 was the −45..−36 band against the −25
+band, and on this bench those two bands are two different boards — level is
+identical with board, so it says nothing about level. The solid result runs the
+other way on the other board: 15 of 30 at −72 dBm against 31 of 34 at −40,
+**p = 0.0003**. More signal helps, up to a turnover this data cannot locate.
+
 ## AFC: the one latch that is tied to its packet
 
 `RegAfcFei` bit 2 is `AfcAutoOn` and bit 3 `AfcAutoclearOn`. With both set the
