@@ -399,15 +399,6 @@ re-pairing every device.
 
 `radio/joining.md` § what ADR-0021 left unbuilt.
 
-### 20. `pair_v3.txt` has no consumer — `contract`
-
-It reproduces `pair_v2`'s published `pair_z1`, and that is all it currently
-proves. A vector whose consumer does not exist is untested in the way that
-matters — that is how the pairwise-hop-key defect survived cross-verification by
-two independent implementations.
-
-`open_hub/security/self-tests.md`.
-
 ### 21. `UPLINK_AIM_US` is a contract number that lives on one side — `contract`
 
 Where a frame sits inside its slot is the same kind of number as where the slot
@@ -658,9 +649,10 @@ not a patch.
 ### 38. The northbound link forgets its server on every reset — `debt`
 
 `telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
-`ip static`. Both wait on the configuration store that `cfg save` / `cfg load`
-stub out. Until then the link cannot come up unattended, which is most of what a
-server is for.
+`ip static`. Both wait on a configuration store that does not exist; the `cfg`
+command that stubbed it out was removed on 2026-08-22, so nothing on the console
+advertises it any more. Until the store is built the link cannot come up
+unattended, which is most of what a server is for.
 
 `open_hub/network/telemetry.md`, `open_hub/network/ethernet.md`.
 

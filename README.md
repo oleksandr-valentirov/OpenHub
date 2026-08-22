@@ -31,7 +31,9 @@ The hub boots as a DHCP client. <code>ip</code> shows the current address,<br>
 
 <h2>Console</h2>
 <p>
-The CLI lives on the ST-Link virtual COM port &mdash; <code>/dev/ttyACM0</code>, 115200 8N1.<br>
+The CLI lives on the ST-Link virtual COM port &mdash; the stable
+<code>/dev/serial/by-id/</code> path rather than <code>/dev/ttyACM&lt;N&gt;</code>, whose numbering
+moves when another board is plugged in. 115200 8N1.<br>
 Type <code>?</code> for the command list.
 </p>
 
@@ -51,8 +53,20 @@ Type <code>?</code> for the command list.
             <td>CLI routine and command handlers</td>
         </tr>
         <tr>
-            <td>CM7/Core/Src/crypt.c</td>
-            <td>AES-128 routine</td>
+            <td>CM7/crypto/crypto.c</td>
+            <td>P-256, HKDF and AES-GCM over mbedTLS, plus the self-tests</td>
+        </tr>
+        <tr>
+            <td>CM7/Core/Src/keystore.c</td>
+            <td>Append-only key store in flash</td>
+        </tr>
+        <tr>
+            <td>CM7/Core/Src/pairing.c</td>
+            <td>The pairing exchange, on the core that has the curve</td>
+        </tr>
+        <tr>
+            <td>CM7/Core/Src/telemetry.c</td>
+            <td>The northbound link to openhub-server</td>
         </tr>
         <tr>
             <td>CM7/Core/Src/networking.c</td>
@@ -72,8 +86,16 @@ Type <code>?</code> for the command list.
             <td>Radio state machine and the M7 request handler</td>
         </tr>
         <tr>
-            <td>CM4/Core/Src/random.c</td>
-            <td>Pseudo-random number generator</td>
+            <td>CM4/Core/Src/timebase.c</td>
+            <td>TIM2 at 1 MHz and the scale the LSE window corrects it by</td>
+        </tr>
+        <tr>
+            <td>CM4/Core/Src/calib.c</td>
+            <td>Measures that scale against the 32.768 kHz crystal</td>
+        </tr>
+        <tr>
+            <td>Common/src/rng.c</td>
+            <td>Random numbers, from the hardware generator</td>
         </tr>
         <tr>
             <td>CM4/rfm69_lib/</td>
