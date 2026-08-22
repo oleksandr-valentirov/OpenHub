@@ -782,81 +782,41 @@ mean without moving anything that looks like an error.
 
 `open_hub/radio/configuration.md`.
 
-### 44. `arrival_us` is stamped after the decrypt and reported as an arrival — `defect`
+### 50. Nothing refuses to run on an undisciplined timebase — `defect`
 
-`CM4/Core/Src/radio.c` takes `rfm_micros()` at the **end** of
-`handle_uplink_frame()` — after the GCM tag, after the replay floor, after the
-cycle counters, after the `ack_seq` match — and stores it as `arrival_us`.
-`Common/inc/ipc.h` describes the field as "into its superframe, so the air half
-is checkable", which is the one thing it cannot do.
+`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`** — checked with
+`git grep` over `CM4`, `CM7` and `Common`. `CM4/Core/Src/timebase.c` starts at
+`scale_q24 = 1u << 24`, the nominal, and every microsecond the grid computes goes
+through it. So a hub whose LSE never delivers a window runs the TDMA grid on a
+scale that is measurably wrong, and says so to nobody.
 
-The number is three terms under one name: **the device's aim inside its slot,
-the frame's air time, and the hub's own processing.** None of the three can be
-read out of it, and it is the sum that leaves for the northbound API.
+Measurably is the word. The disciplined scale on this bench sits **3452 ppm** off
+nominal over 2082 accepted windows:
 
-Measured against the grid, 24 arrivals over 912 s, both devices:
+    2 s superframe   x 3452 ppm = 6.9 ms of placement error
+    RADIO_SLOT_US 9400 us        guard 1400 us
 
-    residual past slot open   mean 9131 us   sd 239   8715..9996
-    RADIO_UPLINK_AIR_US       8000 us        RADIO_SLOT_US 9400
+Three quarters of a slot, on a grid whose guard is a seventh of one.
 
-The air accounts for 88% of it and the spread alone is **1281 us** — an order of
-magnitude past the 100 us disagreement item 31 exists to resolve. The two
-devices agree to 113 us while sitting 30 dB apart, which is what a hub-side term
-common to both looks like.
+There are three ways in, and none of them is loud. `calib_init()` waits
+`FIRST_WINDOW_US` for the first window and then returns; `started` stays 0 if
+`span_max > htim16.Init.Period` or if `HAL_TIM_IC_Start()` fails, and then
+`calib_poll()` returns on its first line for the rest of the run. `ready` is also
+**sticky** — one window at boot and a dead crystal afterwards leaves it 1 forever,
+running on a scale measured once. That is the absent-versus-stale distinction the
+event path already had to learn.
 
-**The instrument this wants is already in the tree and already running.**
-DIO3 stamps TIM2 on the hardware `SyncAddressMatch` edge, and `sync_edge_tk`
-with `sync_edge_base` are captured together so a superframe rollover cannot
-split them. `slot_of_offset(timebase_ticks_to_us(sync_edge_tk - sync_edge_base))`
-is the expression this field needs and is already computed for `sync_slot`.
+`calib_age_tk()` computes exactly the number that would name all three, returns
+`0xFFFFFFFF` when no window has landed, and reaches both the console and the
+northbound API. **Nothing acts on it**, which is the decorative shape from the
+`verification` skill rather than a missing instrument.
 
-**The new field goes beside `arrival_us`, not over it.** Replacing the value
-would change what an existing reader gets without changing the name it reads.
+The fix is not refusing to boot: a hub that cannot discipline its timebase can
+still pair, still answer a server and still be debugged. What it cannot do is
+hold a grid, so the refusal belongs where the grid starts, and the condition has
+to leave northbound under its own name rather than as an age nobody reads.
 
-**The hazard the fix must carry, not drop:** the edge is global, not per device.
-The event path already pairs edge to frame and counts `evt_arrival_bad` when the
-air time says the edge belonged to another one. A substitution that skips that
-guard trades a wrong number for an unattributed one.
-
-Northbound, `src` names the field and not the edge. Correcting it moves the
-server's docs digest and not the wire digest, so the description can be fixed
-without reflashing; the field itself cannot.
-
-`open_hub/radio/sync-timestamp.md`, `open_hub/network/telemetry.md`.
-
-### 45. The northbound frame ring drops two opportunities in three — `defect`
-
-`CM7/Core/Src/telemetry.c` attributes a ring row to a device by
-`s->afc.slot[i] != slot`, where `slot` is the device's **base** slot and
-`s->afc.slot[i]` is the **opportunity index** `slot_of_offset()` returns, 0..193.
-Device n owns slots n, n+65 and n+130, so the equality holds on the first
-opportunity and on neither of the others. `put_device_air()` has the same filter
-and returns on its first match, so `rssi_up_sync_dbm`, `lna_gain` and `afc_hz`
-on the device object come from the base opportunity alone.
-
-Live, and it is not a sampling effect:
-
-    /api/devices/c4d444aa/frames   60 rows, slot == 0 in all 60
-    /api/devices/dcbac6f5/frames   35 rows, slot == 1 in all 35
-
-**Controlled against an empty population**, because a device transmitting only on
-its base opportunity would make the filter right. `arrival_us` comes off the
-device object rather than the ring, and over 912 s it placed 24 arrivals: 14 on
-the base opportunity and **10 on slots 65, 66, 130 and 131**. They arrive, they
-are accepted, and none of them can reach `/frames`.
-
-`Common/inc/radio_slots.h` already carries the mapping this needs,
-`RADIO_SLOT_TO_DEVICE(n)` = `n % RADIO_SLOT_STRIDE`, and telemetry does not use
-it. **The naive substitution introduces a worse defect:** `0xFF` marks an
-unplaceable sample and `0xFF % 65` is 60, so every unplaceable row would be
-attributed to device 60. Today the equality filter cannot cross-attribute at all
-— `_Static_assert(RADIO_DEVICE_MAX <= RADIO_SLOT_STRIDE)` forbids it — so the
-fix must exclude `0xFF` first or it trades loss for mixing.
-
-Any ratio taken from `/frames` has a denominator cut to one opportunity in three,
-and cut systematically rather than at random.
-
-`open_hub/network/telemetry.md`.
+`open_hub/radio/timebase.md`.
 
 ---
 
