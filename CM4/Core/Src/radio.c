@@ -22,13 +22,17 @@
 #include "calib.h"
 #include "build_id.h"
 
-/* The pairing window's slack, narrowed by a throwaway build so the guard
- * must refuse. radio_devices_docs/open_hub/radio/sync-timestamp.md */
-#ifndef RADIO_SYNC_PAIR_SLACK_US
+/* The pairing window's slack, narrowed by a throwaway build so the guard must
+ * refuse. The id names the tree, so an override names itself in the id too.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+#ifdef RADIO_SYNC_PAIR_SLACK_US
+#define BUILD_SUFFIX  "+narrow"
+#else
 #define RADIO_SYNC_PAIR_SLACK_US  RADIO_SLOT_US
+#define BUILD_SUFFIX  ""
 #endif
 /* Truncation would emit a plausible id; the build fails instead. */
-_Static_assert(sizeof(BUILD_ID) <= 24u, "BUILD_ID does not fit ipc_timing_t.build");
+_Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 #include "kvstore.h"
 #include "aead.h"
 #include "main.h"
@@ -789,7 +793,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         t.calib_windows = calib_windows();
         t.calib_rejects = calib_rejects();
         t.calib_age_tk  = calib_age_tk();
-        memcpy(t.build, BUILD_ID, sizeof(BUILD_ID));
+        memcpy(t.build, BUILD_ID BUILD_SUFFIX, sizeof(BUILD_ID BUILD_SUFFIX));
         t.late_over     = late_over;
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));
         return;
