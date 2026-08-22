@@ -7,8 +7,7 @@ item needs a paragraph to justify it, that paragraph belongs on its page and the
 line here shrinks to a pointer.
 
 **Cite a tag or a commit message, never a bare SHA.** A rewrite orphans a hash
-silently and neither the writer nor the reader is told; `e2e5ed0` sat in item 1
-for a day pointing into history reachable only from `pre-squash-2026-08-21`.
+silently and neither the writer nor the reader is told.
 
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
@@ -39,24 +38,18 @@ reasoning; this one keeps the queue.
 > the hub survive a reboot and restore the link. An event at a sensor reaches
 > the hub and is processed there within 1 s.
 
-**"No side commands from a CLI" means none typed on the device.** The operator's
-`device add <id> <pubkey>` on the hub is the out-of-band enrolment step and the
-criteria do not forbid it — settled 2026-08-21, recorded because the other
-reading would have made the threat model itself look like an open item.
+Three readings were settled on 2026-08-21 and are recorded because the other
+reading would change what gets built:
 
-**Slots are never chosen by an operator — settled 2026-08-21.** `device add <id>
-<pubkey>` is the whole of the out-of-band step; the hub assigns the slot and the
-two ends negotiate everything else between them. This retired a proposed
-`device add … [slot]` argument that the device session wanted for a guard
-measurement, and it constrains the event schedule: the base slot is granted at
-enrolment and the other opportunities are **derived by contract constants**, so
-no operator picks any of the three.
-
-**Irregular messages are out and a deadline is in — settled 2026-08-21.** There
-are no contention windows and no transmit outside the grid; instead the whole
-protocol owes a sensor event delivery *and* hub-side processing within 1 s. The
-clause that had no code at all is gone, and the deadline it is replaced by is
-not met by the grid as built.
+- **"No side commands from a CLI" means none typed on the device.** The
+  operator's `device add <id> <pubkey>` on the hub is the out-of-band enrolment
+  step and the criteria do not forbid it.
+- **Slots are never chosen by an operator.** The hub assigns the base slot and
+  the other two opportunities are derived by contract constants, so no operator
+  picks any of the three.
+- **Irregular messages are out and a deadline is in.** No contention windows and
+  no transmit outside the grid; instead delivery *and* hub-side processing within
+  1 s, which the grid as built does not yet meet.
 
 Five of the nine clauses are done and verified on air and four are partial. What
 is left is below.
@@ -67,78 +60,23 @@ is left is below.
 
 ### 1. Three opportunities a superframe, built and not yet on air — `blocking` `contract`
 
-A device got one slot per superframe, so an event waited up to **2 s — twice the
+One opportunity a superframe made an event wait up to **2 s — twice the
 deadline** — and the contention windows that were the plan are forbidden by the
-same decision that set the deadline. The deadline is bought only with the largest
-gap between a device's transmit opportunities, and **three per superframe are the
-minimum**: two bottom out at exactly 1000 ms, which fails for any positive air
-time.
+same decision that set the deadline. **Three per superframe are the minimum**:
+two bottom out at exactly 1000 ms, which fails for any positive air time.
 
-Landed as the pair `054c17f` + `95d6625`, which the shared header's air-time
-assert shows is **one change**: 50 kbps, deviation left at 25 kHz, 194 slots of
-9400 µs, stride 65, **exactly 64 devices**, the 1400 µs guard untouched, largest
-gap 778 ms and 210 750 µs left for the hub.
+Landed as `feat(grid): 50 kbps, three opportunities a superframe, and a duty
+cycle that fits` with `feat(wire): link_v4` — 194 slots of 9400 µs, stride 65,
+exactly 64 devices, the 1400 µs guard untouched, largest gap 778 ms and
+210 750 µs left for the hub.
 
-**Blocked on one thing.** *Item 12* is what the first frames at the new rate
-found: 21 sent, 10 reached sync, 10 failed CRC, none accepted. The geometry is not
-what is wrong.
-
-**The second blocker never existed, and this file carried it for a day.** It read:
-the device's replay floor is the superframe alone, so two of every three k = 3
-frames are refused. The sentence came from the device session's own roadmap, was
-believed here without being checked, and was wrong at both ends.
-
-Checked on 2026-08-22 against `HEAD` in both trees rather than against either
-working tree. A k = 3 frame is transmitted by the device and received *here*, and
-this side's floor is the tuple — `age < 0 || (age == 0 && f.slot <= rx_floor_slot)`
-in `CM4/Core/Src/radio.c` — so three slots rising inside one superframe are three
-strictly greater tuples and all three are accepted. The device's floor guards what
-the *device* receives, which is downlinks, and `dl_served` allows one of those per
-superframe. **There is no k = 3 anywhere near it.**
-
-A blocker is a claim about code and decays exactly like a measurement. Checking
-someone else's costs one `git grep` against `HEAD`; publishing your own unchecked
-costs the other side however long they believe it.
-
-What is left is the part no assert can do: **neither firmware has transmitted a
-single frame at 50 kbps that the other one could read.** Sensitivity is ~3 dB worse plus about a dB for the
-h = 1 demod penalty, and neither of us has read the datasheet row. A PER run at
-the new rate is the acceptance evidence, not the host tests.
+**What is left is the part no assert can do.** At 50 kbps two thirds of the
+device's frames do not arrive (item 30), so the geometry that buys the deadline
+has never delivered against it. A PER run at the new rate is the acceptance
+evidence, not the host tests. Sensitivity is ~3 dB worse plus about a dB for the
+h = 1 demod penalty, and neither side has read the datasheet row.
 
 `radio/tdma.md` § the event deadline, § what k = 3 breaks.
-
-### 2. The hub half of the event deadline — `measured`
-
-The arrival-driven path exists: `handle_uplink_frame()` pushes `IPC_EVT_UPLINK`,
-CM7 handles it, and both sides' counters agree frame for frame. The doorbell has
-a handler — `HSEM1_IRQHandler` was a weak alias to `Default_Handler` on both
-cores with its NVIC line never enabled — so a wake is arrival-driven, with the
-20 ms poll left as the semaphore's timeout so a dead doorbell degrades rather
-than wedges.
-
-**Measured 2026-08-21, and it is not the problem.** `device latency` stamps both
-terms on CM4's clock, so no two cores' ticks are compared:
-
-    frame end to the event leaving   ~484 us   CM4's poll granularity
-    the event leaving to its reply    214 us   the doorbell wake
-    hub half                         ~700 us   of RADIO_HUB_HANDLE_SLACK_US,
-                                               210 750 us: 0.33 %
-
-The 214 us also closes an older question: the doorbell wake is real, not the
-20 ms poll timeout wearing its name. That handler was a weak alias to
-`Default_Handler` with its NVIC line never enabled.
-
-**The first reading was 7204 us and the error was in the label.** The sync edge
-fires 1280 us into the frame, so the term carried 6720 us of the device's air
-time under a heading reading "this core's work" — and the budget it was quoted
-against already subtracts the uplink air time, charging the air twice. A label
-broader than its measurement is the same defect as a report broader than its
-check.
-
-**What the deadline now depends on is item 30, not this.** One second is met if
-the frame arrives; two thirds of them do not.
-
-`open_hub/arch/ipc.md`.
 
 ### 3. The application payload has room and no application — `blocking`
 
@@ -162,8 +100,7 @@ costs a grid change and a re-measurement.
 The hub grants `report_every` and holds no evidence any device honours it. This
 already produced one wrong dismissal: `uplink windows 375, sync 1` read as eleven
 missing reports when the device had no reporting loop at all, so the population
-was one transmission. `windows` counts this side's opportunities; the device's
-transmissions are the population that matters.
+was one transmission.
 
 **The hub must not derive the denominator.** An `expected` column on `devices`
 would print an assumption with a column heading. The device has to say what it
@@ -174,19 +111,15 @@ sent.
 ### 5. A device that loses the counter cannot find the hub — `blocking` `device`
 
 The clause *both survive a reboot and restore the link* was exercised from the
-hub side for the first time on 2026-08-21, by flashing this firmware, and **the
-link did not come back**. Keys, slots and the store all survived; the device's
-superframe counter did not, and the hop channel is a function of it.
-
-`time follow` tunes the channel for `superframe_now() + 1`, which after a gap is
-the wrong number, so each attempt is a 1-in-28 draw — it took four, three of them
-listening on channels chosen by a counter 2990 superframes stale.
+hub side on 2026-08-21 and **the link did not come back**. Keys, slots and the
+store all survived; the device's superframe counter did not, and the hop channel
+is a function of it. `time follow` tunes for `superframe_now() + 1`, which after
+a gap is the wrong number, so each attempt is a 1-in-28 draw.
 
 **The fix is device-side and costs the hub nothing**: park on one hop channel and
-wait, expected 56 s and 99% within 254 s, then verify the counter heard maps to
+wait, expected 56 s and 99 % within 254 s, then verify the counter heard maps to
 the channel parked on. Listed here because ADR-0021 removed the broadcast join
-beacon on an analysis that says this case does not exist, and the hub must not
-assume an invitation reaches a device nobody is inviting.
+beacon on an analysis that says this case does not exist.
 
 `radio/joining.md` § re-acquisition after a counter loss.
 
@@ -196,117 +129,69 @@ Every part is verified separately and the whole has never run: clean hub, clean
 device, enrol, invite, exchange, encrypted traffic, reboot both, recover.
 Pairing has run **one device, once**.
 
-Sweep the success-only paths while doing it. The evening pairing first worked,
-five defects surfaced in code that could only execute after something finally
-went right — `GET_DEVICE_INFO` read its index from the wrong byte and had failed
-every call since it was written, because printing a row needs a paired device.
+Sweep the success-only paths while doing it. When the evening pairing first
+worked, five defects surfaced in code that could only execute after something
+finally went right.
 
 `open_hub/testing/on-target.md`. Never erase bank 1 from CM7.
 
 ### 29. A device that keeps its counter cannot transmit for up to 33 minutes — `blocking` `device` `contract`
 
-The mirror of item 5, and worse. That one is a device that **lost** its counter
-and cannot find the hub. This is a device that **kept** it and may not speak.
+The mirror of item 5 and worse: that one is a device that **lost** its counter
+and cannot find the hub; this is one that **kept** it and may not speak. Found
+2026-08-21 by the device session on its own board — `STORE_COUNTER_STEP` 1000,
+the reserved mark pushed to ~644552 while the hub was at 644181, every genuine
+beacon refused as a replay 368 superframes "in the past".
 
-Found 2026-08-21 by the device session, on its own board, in full:
-
-    STORE_COUNTER_STEP        1000 superframes
-    reserve_extend at arming  pushed the durable mark to ~644552
-    the hub was at            644181
-    every genuine beacon      refused as a replay, 368 superframes "in the past"
-
-Two separable faults sit in it, and the second is the one that blocks.
-
-**The durable mark gates the wrong thing.** It answers *which counters may I
-seal with* — a statement about nonce space — and it was also answering *what
-time is it*. Aligning a clock to a beacon is timing, not crypto. The device
-session's fix is to split the guards: beacon replay against the last accepted
-beacon counter, nonce safety against the durable mark. It is security-relevant
-and deliberately not being written at three in the morning.
-
-**Splitting them does not remove the outage.** Nothing may be sealed below the
-reserved mark, because everything under it may already have been used. At a step
-of 1000 that is **up to 33 minutes of silence after any reset**, by design, with
-nothing anywhere announcing it.
-
-Against an acceptance criterion that says a sensor event is delivered and
-processed **within one second**, and a clause that says both ends survive a
-reboot and restore the link. A device that reboots is out of contact for half an
-hour and the hub cannot tell that from a dead device.
+Two faults sit in it. **The durable mark gates the wrong thing** — it answers
+*which counters may I seal with* and was also answering *what time is it*; the
+device session's fix splits beacon replay from nonce safety. **Splitting them
+does not remove the outage**: nothing may be sealed below the reserved mark, so
+at a step of 1000 that is **up to 33 minutes of silence after any reset**, by
+design, announced nowhere.
 
 **The hub's half is to stop reading this as a fault.** `devices` shows `never`
-for a device that has not reported, which is correct and useless here — the same
-display covers a device that is gone, one that is deaf, and one that is serving
-its reservation. Nothing on this side distinguishes them, and the hub is the
-only place an operator looks.
+for a device that has not reported, which covers a device that is gone, one that
+is deaf and one that is serving its reservation with one word — and the hub is
+the only place an operator looks.
 
-`radio/known-issues.md`, and the device session's item on the counter store.
+`radio/known-issues.md`.
 
-### 30. Two thirds of the device's frames never arrive, at a level called healthy — `blocking` `defect`
+### 30. Two thirds of the device's frames never arrive, and the loss grows with offset into the superframe — `blocking` `defect`
 
-Found 2026-08-21, against a denominator the hub cannot compute: the device
-session counted what it sent.
+Counted by both sides over one agreed superframe range, sf 647403..647694, with
+the device transmitting 151 cycles on all three opportunities:
 
-    rate 8   62 frames sent, 19 delivered    31 %
-    rate 2  291 frames sent, 105 delivered   36 %
+    slot   1    59 accepted of 151   39 %      (64 detected, 42 %)
+    slot  66    22 accepted of 151   15 %      (24 detected, 16 %)
+    slot 131     9 accepted of 151    6 %      (15 detected, 10 %)
 
-Both at **-17 dBm**, the level at which item 12's arm reads 15 of 18 accepted
-and which both sides have been calling healthy. The 4x cadence change does not
-move it, so there is no receiver ceiling and no cadence effect.
+**23 % detected, 20 % accepted**, at −17 dBm — the level both sides had been
+calling healthy. A 4x cadence change does not move it, so there is no receiver
+ceiling and no cadence effect. The hub cannot compute the denominator (item 4):
+`accepted / delivered` is 81 % while `delivered / transmitted` is 31 %, and only
+the numerator exists on this side.
 
-**A third window, 2026-08-21 23:2x, is worse than either and is the one to
-believe**: sf 647403..647694, the device transmitting 151 cycles on all three
-opportunities, 453 frames. The hub took 103 sync edges and accepted 90 — **23 %
-detected, 20 % accepted.** It is lower than the rows above because those two used
-a denominator counted over a differently-bounded window; this one was counted by
-both sides over one agreed superframe range.
+**Decomposed 2026-08-22: the loss is entirely before sync.** `sync_match` equals
+`frames + crc_err` exactly, so nothing is lost after detection, and the CRC
+failure *rate* is flat across k while the counts are not. Level (sd 0.7 dB), AFC
+and LNA gain are flat across k as well, and the receive window is open from
+50 000 to 1 873 600 µs, so no window closes between opportunities. Item 37's
+`worst lag 658 us` bounds the superloop three orders of magnitude below the
+611 ms between opportunities, which kills FIFO blocking as the mechanism.
 
-**It hid inside a numerical coincidence.** 100 % of rate-8 traffic, 31 % of
-rate-8 traffic and 27 % of rate-2 traffic are all near 0.4 frames a superframe.
-Every reading taken that evening landed in that band for three different
-reasons.
+**What is left is placement.** Per-cycle slopes of arrival against k change sign
+between cycles (+480, −107, +357 …), so this is per-cycle placement noise rather
+than a constant clock-scale difference, and the statistic to grade is the
+*spread* of those slopes. Neither side's placement instrument can see the class
+alone: each measures its own frames against its own computed target.
 
-**And it hid behind the wrong fraction.** `accepted / delivered` is 81 %;
-`delivered / transmitted` is 31 %. The first was quoted and a conclusion drawn
-about the second. Only the numerator exists on this side, which is item 4's
-point arriving from the other direction.
-
-Losses are not flat across the three opportunities:
-
-    slot   1    55 of 97   57 %
-    slot  66    30 of 97   31 %
-    slot 131    20 of 97   21 %
-
-and the agreed window says the same shape four times lower — accepted over what
-the device transmitted, 151 per slot:
-
-    slot   1    59 of 151   39 %      (64 detected, 42 %)
-    slot  66    22 of 151   15 %      (24 detected, 16 %)
-    slot 131     9 of 151    6 %      (15 detected, 10 %)
-
-**The first reading of this window put the per-slot counts over 89 and got
-72/27/17 %.** 89 was this side's own *accepted* total, so each numerator was
-divided by a sum that contains it. It survived a read because the device's
-progress report an hour earlier had also said 89 — a partial count of a different
-quantity that happened to collide — so the two halves looked like one population.
-The device session caught it. `verification` skill § numerators and denominators.
-
-**`ok` and `CRC FAIL` have to be carried separately per slot from here on.** The
-late opportunities do not merely go missing; the frames that do arrive fail CRC
-more often — 6 of 15 at slot 131 against 5 of 64 at slot 1. Small numbers, no
-conclusion, but "never detected" and "detected and broken" are different faults
-and only this side can tell them apart: every frame leaves the device identically
-and its instrument reads both as a transmit with no consequence.
-
-Monotonic with offset into the superframe, which is the shape of anything that
-scales with that offset — including a clock-scaling residual on either side.
-**Neither side's placement instrument can see that class**: each measures its own
-frames against its own computed target, and an error in the target leaves both
-readings flat.
-
-The discriminator is agreed and needs no flash: a single-slot window. If slot 131
-alone delivers ~21 % the loss tracks the offset; if it delivers ~57 % the loss is
-competition or recovery inside the hub's receive window.
+**The discriminator is running.** Window 2, cut at superframe 713752, separates
+the two boards by `SUPERFRAME_PERIOD_BASELINE` (1 against 64) at a matched
+received level — treatment and control split by **board rather than by time**,
+which is what every earlier window lacked. Grading is pre-registered: the spread
+of per-cycle slopes and the k-gradient between boards, reported as *not measured*
+if either board reaches fewer than 8 cycles.
 
 `radio/phy.md`, `open_hub/radio/configuration.md`.
 
@@ -325,7 +210,7 @@ about 8 ms apart.
 
 By name the fault ADR-0021 records: the device heard 15 beacons and no
 invitations until the beacon was suppressed. **Found by reading, not on air**, so
-what it actually costs a receiver is unmeasured.
+what it costs a receiver is unmeasured.
 
 `CM4/Core/Src/radio.c:1700`.
 
@@ -351,266 +236,112 @@ needs no instruments, just `timing` and a host clock.
 The hub trusts its schedule rather than counting its own air time, so any
 slot-timing change must be re-measured with the SDR.
 
-**k = 3 promotes this from tidiness.** A device that used all three opportunities
-every superframe sits at **1.200%** at 50 kbps and **2.400%** at 25 kbps, so the
-deadline caps the sustained event rate as well as costing capacity — and nothing
-in either firmware would refuse, every individual frame being legal. The device's
-bound is a budget over the regulator's hour (36 s of air), not an integer per
-superframe: the hub's `SUPERFRAME_US / 100` rule is a stricter proxy that suits
-scheduled traffic and not bursty traffic.
+**k = 3 promotes this from tidiness.** A device using all three opportunities
+every superframe sits at **1.200 %** at 50 kbps, so the deadline caps the
+sustained event rate as well as costing capacity — and nothing in either firmware
+would refuse, every individual frame being legal. The device's bound is a budget
+over the regulator's hour (36 s of air), not an integer per superframe.
 
-The SDR cannot referee it either. `--expect-ms` selects our bursts by air time,
-and halving the frame while tripling the count is what invalidates that
-selection, so the instrument needs re-validating at whatever rate is chosen
-before it can gate anything.
+The SDR cannot referee it either: `--expect-ms` selects our bursts by air time,
+and halving the frame while tripling the count invalidates that selection, so the
+instrument needs re-validating at the chosen rate before it can gate anything.
 
-**Both figures above were the 42-byte wire until 2026-08-21** — 1.008% and
-2.016%, carried in prose on both sides and never recomputed when `link_v4` took
-the uplink to 50 bytes. Found by the device session. `RADIO_DUTY_PPM` now
-derives them from `RADIO_UPLINK_AIR_US`, so the next wire change moves the
-number instead of leaving it behind: **a budget held in frames is a budget a
-wire change edits silently.**
+`RADIO_DUTY_PPM` now derives the figures from `RADIO_UPLINK_AIR_US`, because a
+budget held in frames is a budget a wire change edits silently.
 
 `radio/phy.md` § duty cycle, § the device's budget.
-
----
 
 ### 11. A zero timebase scale would wedge the grid, and only luck forbids it — `debt`
 
 `superframe_due()` in `CM4/Core/Src/radio.c` steps the boundary by
 `superframe_tk` in a `while` loop, so a zero step is an unterminated loop with a
 runaway counter, and `timebase_ticks_to_us` divides by the same scale. The device
-session hit exactly this on 2026-08-21 — a clock aligned with a stub period of
-zero, counter at 117 948 578, console dead with the core.
+session hit exactly this on 2026-08-21.
 
 It cannot fire here, and **the reason is two derivations away from the value**:
-`calib.c` rejects any capture window outside ±2 % of nominal, so the average
-those windows feed can only land near `1 << 24`. Nothing between
+`calib.c` rejects any capture window outside ±2 % of nominal. Nothing between
 `timebase_set_scale`, which takes any `uint32_t`, and the loop that trusts it
-would notice a zero.
-
-The fix is the one the device session arrived at: make the bad value
-unrepresentable at the setter rather than checked at the use. Deliberately not
-folded into the grid commit — a defensive-path change does not belong in a wire
-change.
+would notice a zero. The fix is to make the bad value unrepresentable at the
+setter rather than checked at the use.
 
 `open_hub/radio/timebase.md`, and the `verification` skill § failure-path sweep.
 
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
 Found 2026-08-21 by the device session dropping its transmit power from +14 to
--17 dBm. Matched windows of 36 frames, attributed frame by frame off two
-independently computed hop maps:
+−17 dBm. Matched windows attributed frame by frame off two independently computed
+hop maps:
 
     A  -17   57 frames   8 syncs   8 accepted   0 CRC failures
     B  +14   36 frames   1 sync    0 accepted   1 CRC failure
     C  -17   36 frames   9 syncs   8 accepted   1 CRC failure
 
     accepted  B 0/36 vs C 8/36   p = 0.0025
-    synced    B 1/36 vs C 9/36   p = 0.0068
     pooled    low 16/17 syncs accepted vs high 2/20   p = 1.8e-07
 
-C reproduced A on fresh channels minutes later, so drift is excluded. **Sync
-moves as well as CRC** — the long-held "sync is fine, CRC is dead" described the
-high-power era, which was the only era there was.
+C reproduced A on fresh channels minutes later, so drift is excluded. **Which end
+is not settled**: the experiment varied transmit power, which is this receiver's
+front end in compression *and* that transmitter's PA at its rated maximum,
+perfectly confounded, and both predict every observation.
 
-**Which end is not settled.** The experiment varied transmit power, which is this
-receiver's front end in compression *and* that transmitter's PA at its rated
-maximum, perfectly confounded. Both predict every observation. The device session
-raised it against its own hypothesis.
-
-**The discriminator has now been run once and it did not settle this.** Pinning
-the LNA, reconstructed 2026-08-21 from the whole of the run's ring rather than
-from a chosen sub-window:
-
-    pinned G6   18 frames   15 accepted   83 %   level -14..-12 dBm
-    G1 pooled   50 frames   28 accepted   56 %   level -45..-25 dBm
-
-    pinned vs pooled G1          p = 0.034  (one-sided)
-    G1 before vs after the pin   p = 0.517  <- no time trend, so pooling is licensed
-
-Three things about that table, and the third is the reason the entry stays open:
-
-1. G6 is 30 dB *below* G1, and the reported level went **up** 24 dB. The part
-   does not compensate RSSI for the LNA setting, so a linear front end reads
-   lower, not higher. Compression explains it; so does the transmitter's power
-   having changed mid-run.
-2. **Neither the pin nor the transmit power is in the log.** Both had to be
-   inferred afterwards from a column, so the run cannot be re-read and cannot
-   exclude (1)'s second explanation. Any repeat must log the intervention.
-3. It was read three times to three different ratios — 7/7, then 15/17 against a
-   hand-picked 2/11, then this. `p = 3.6e-04` was quoted from that 2/11 control
-   and does not survive a pooled one. **The effect is p = 0.034 on one confounded
-   run**, which is a reason to look, not a mechanism.
-
-The discriminator itself: `LnaCurrentGain`, bits 5:3 of `RegLna`,
-is read-only and reports the gain the AGC settled on. It is sampled per delivered
-frame in `afc_note()`, because the AGC returns to G1 the moment the air is idle
-and a console read would catch the idle value. **If it reads G1 on frames
-arriving at +14, the AGC is not backing off under a level measured to break the
-link**, and the device's PA is exonerated without proving a negative about it.
-
-A gain with no level beside it does not separate the two, and the device session
-said so: G1 at -12 dBm is an AGC refusing to back off, G1 at -53 dBm is an AGC
-doing its job on a weak signal, and the two conclusions are opposite. So
-`device afcraw` now carries the level as well, read off the latch at
-`SyncAddressMatch` (item 14). At the device's -17 dBm it reads **-43 dBm**
-against a -96 dBm floor, which puts +14 at about **-12 dBm** — a level this
-front end can plausibly be loaded by. The three-way reading is:
-
-    G1 at about -12 dBm   the AGC is not backing off; the device's PA is clear
-    G1 at about -53 dBm   the level column is stale and nothing else is readable
-    G4..G6                the AGC backed off; the device's PA is the suspect
-
-**The window itself is the control for the column**: 31 dB of transmit power
-must move the printed level by about 31 dB, or the column is not measuring the
-frame and no gain reading may be quoted from the same output.
-
-The second, independent arm — spectral regrowth at high power — is **void as
-captured**. Both wideband files clip the dongle's ADC (0.11 % of samples at the
-rails at -17 dBm, 0.17 % at +14, `-g 30`), so any regrowth measured off them is
-the receiver's own clipping offered as the transmitter's. Recapture at much
-lower gain before this arm is read at all. What the captures do support, because
-it is a ratio inside one file, is that the device's three opportunities land at
-+59.4, +670.4 and +1281.4 ms after the boundary exactly as the grid says.
-
-The carrier error is measured and **excluded**: corrections span -7691 to +17944
-Hz, change sign frame to frame, disagree with themselves by kilohertz on one
-channel, and the frame carrying the largest correction ever recorded was
-accepted. `RADIO_CARRIER_ERR_HZ`, the 342 Hz of filter margin and the whole
-bandwidth class retire with it. Why the reference wanders is open and no longer
-blocking.
-
-The hypotheses refuted along the way — bandwidth, deviation, DAGC low beta, a
-band correlation, a channel-dependent slope, a separation between the corrections
-of accepted and refused frames — are in the `rfm69` and `verification` skills,
-which is where reasoning belongs.
-
-**2026-08-22: the level column's own control ran by accident, and it passed.**
-This entry's condition was that 31 dB of transmit power must move the printed
-level by about 31 dB. A device-side flash restored a compiled-in default of
-+14 dBm — the bench had been running below it and nothing persisted or restored
-the setting — so both boards jumped to maximum at their own first post-flash
-transmission, and the frame ring caught it:
-
-    0xc4d444aa   -72 dBm before 15:48:25   ->  -42 / -40 after   (+31 dB asked)
-    0xdcbac6f5   -48 dBm before 15:52:06   ->  -25       after   (+23 dB asked)
-
-The step lands at **each board's own first transmission** rather than at a shared
-moment, so it is the firmware and not the room. **The level column measures the
-frame**, and the "the column is stale and nothing else is readable" branch of the
-three-way reading above is dead.
-
-That leaves one branch live: `lna_gain` reads **G1 on every one of 120 rows**,
-including all six at -25 dBm, with the level column now known good. Checked on
-this side rather than assumed — `RegLna` is never written by the driver, in
-`rfm69_init` or anywhere else, so `LnaGainSelect` sits at its reset 000 and the
-AGC is nominally in charge; and the read is in `afc_note()` on `PayloadReady`,
-before the FIFO drain and so before `AutoRxRestartOn` restarts the receiver. So
-**the AGC is not backing off under the strongest signal this bench has produced.**
-
-**What is still not established is that the loud end costs frames.** Within one
-board, `0xdcbac6f5` passes CRC on 33 of 50 at -48 dBm and 2 of 6 at -25, which is
-**p = 0.18** — n = 6 and nothing. The comparison that looked significant, the
--45..-36 band against the -25 band at p = 0.005, is one board against the other
-and says nothing about level. What *is* solid is the other direction on the other
-board: `0xc4d444aa` passes 15 of 30 at -72 dBm and 31 of 34 at -40, **p = 0.0003**,
-so more signal helps until some turnover this data cannot locate.
-
-**2026-08-22, the LNA ladder: this receiver is not the missing decibels.** Pinning
-`LnaGainSelect` G1 through G6 — thirty decibels — against a level the transmitters
-held fixed, announced at superframe 695004 and logged:
+**This receiver is cleared at −40 dBm and nowhere else.** The LNA ladder pinned
+`LnaGainSelect` G1..G6 — thirty decibels — against a level the transmitters held
+fixed:
 
     pinned   G1     G2     G3     G4     G6      A crc      B crc
     board A  -40.7  -42.2  -42.8  -43.1  -40.2   6/7 5/5 8/10 11/12 7/12
     board B  -39.2  -41.7  -42.2  -42.1  -39.3   2/5 2/3 5/6  5/7   6/9
 
-**2.4 dB of movement for 30 dB of gain, and not monotone.** `RegRssiValue` is
-input-referred: it divides the LNA setting back out. The `rfm69` skill said the
-opposite and is corrected.
+**2.4 dB of movement for 30 dB of gain, and not monotone**: `RegRssiValue` is
+input-referred, and the `rfm69` skill's contrary claim is corrected. The pin is
+real — frames arrive at every step and board A's CRC rate falls to 7/12 at G6
+against 11/12 at G4 — so this is not a command that did nothing. A front end in
+compression comes out of it somewhere in 30 dB; at −40 dBm this one is linear.
 
-The pin is real, which is the control that separates this from a command that did
-nothing: frames arrive at every step and board A's CRC rate falls to 7 of 12 at G6
-against 11 of 12 at G4. The gain costs sensitivity; the reading does not follow it.
+**The ladder ran at −40 because the board had already been turned down, and
+−25 dBm, where the missing decibels live, was never tested** — narrowed by the
+device session. The direction runs against this side: a compressed reading reads
+*low*, so the true step would be nearer the 23 dB requested, which explains the
+discrepancy with no defect on the transmitter at all.
 
-So the 2026-08-21 puzzle in point 1 above dissolves — "G6 is 30 dB below G1 and the
-reported level went **up** 24 dB, and a linear front end reads lower" — because the
-reading was never going to move with gain. What moved that run was the transmit
-power, which is the alternative that entry could not exclude for want of a logged
-intervention.
+Also established: `lna_gain` reads **G1 on all 120 rows** with the level column
+known good (31 dB of transmit power asked, 31 dB delivered), so the AGC is not
+backing off under the strongest signal this bench has produced. Within one board
+the loud end is not yet shown to cost frames — 33/50 at −48 dBm against 2/6 at
+−25 is p = 0.18.
 
-**And a front end in compression comes out of it somewhere in 30 dB.** It did not:
-at -40 dBm this receiver is linear.
+**Owed, and it costs three minutes: run the ladder again at −25 dBm.** It needs a
+board back at +14, which breaks whatever window is open, so it is announced first
+and run between runs. Any repeat must **log the intervention** and equalise the
+*received* levels rather than the transmitted ones — equal transmit power leaves
+23 dB of siting difference in place, which is the confound itself.
 
-**That is narrower than it first read here, and the device session narrowed it.**
-The ladder ran at -40 because the board had already been turned down; **-25 dBm,
-where the missing decibels actually live, was never tested**. And the direction
-runs against this side: a compressed reading reads *low*, so the true step would
-be larger than the 14 dB measured and nearer the 23 requested — which explains the
-discrepancy with no defect on the transmitter at all. Their own candidate is
-weaker than it was, since `SUBGRF_SetTxParams` at `RBI_RFO_LP_MAXPOWER = 14`
-reduces to an identity, so the table row they suspected is not a mechanism.
+Not measured by the same ladder, though it was meant to come free: the hub's
+sync-detection slope against level, +1.74 ± 2.42 µs/dB on one board and
++0.05 ± 1.63 on the other, intervals containing zero and the device's −3.09. The
+pre-registered power calculation used the spread at one opportunity (sd 40-54 µs)
+while the run collects all three (236 µs) — **power has to be computed on the
+population the run will have.**
 
-Owed, and it costs three minutes: **run the ladder again at -25 dBm.** It needs
-the board back at +14, which breaks whatever window is open, so it is announced
-first and run between runs. The device session has since found the mechanism on its own side —
-the SX126x PA configured once for +14 dBm while only `SetTxParams` moves after,
-each optimal point in that table having its own `paDutyCycle`.
+`radio/phy.md`, the `rfm69` skill.
 
-What is **not** measured is the hub's sync-detection slope against level, which the
-same ladder was meant to give for free: +1.74 ± 2.42 µs/dB on one board and
-+0.05 ± 1.63 on the other, intervals containing both zero and the device's
--3.09 µs/dB. The pre-registered power calculation used sd 40-54 µs, the spread at
-the base opportunity, while the population collected mixes all three opportunities
-and runs to 236 µs. **Power has to be computed on the population the run will
-have, not on its tightest subset.**
-
-The next run needs the **received** levels equalised rather than the transmitted
-ones — equal transmit power leaves the 23 dB of siting difference in place, which
-is the confound itself — and the intervention logged, which point 2 above already
-demanded and this run again did not have.
-
-`radio/phy.md`, the `rfm69` skill § the carrier is still moving.
-
-### 14. `rssi_up` is read from an untriggered latch, and nobody knows what it holds — `defect`
+### 14. `rssi_up` is read from an untriggered latch — `defect`
 
 `handle_uplink_frame()` takes the level with `rfm69_get_rssi()`, which reads
-`RegRssiValue` and triggers nothing; the superloop's `rfm69_measure_rssi()` runs
-only in the branch where sync is clear. So the value is whatever the part last
-latched, and the code cannot say what that was.
+`RegRssiValue` and triggers nothing, so the sealed report carries a level with no
+provenance.
 
-**The first version of this entry said it was therefore stale, and that is not
-established.** The receiver's startup sequence gates its AGC and AFC phases
-behind RSSI crossing the threshold, so a restart parks until a signal arrives
-and the latch may hold this frame's level after all. The measurement argues the
-same way: a stale between-frames sample would read near the -92 dBm the part
-shows at rest, and `rssi_up` reads -25 dBm, which is what a device a metre away
-should produce. A number that survives a plausibility check it had no reason to
-pass is not a stale one.
+**Half done, and the half that is done answers what the entry asks.**
+`sync_rssi_sample()` samples at the sync-match edge and `device afcraw` prints it
+per frame: **−43 dBm against a −96 dBm floor**, 53 dB apart, so the latch is not
+holding a between-frames sample. The first version triggered a fresh measurement
+instead and failed on every frame — **an RSSI trigger does not complete while
+`SyncAddressMatch` is high** — which is why the counter counts attempts and
+failures apart rather than successes alone.
 
-What is actually wrong is that **nothing in the firmware distinguishes the two**,
-and the operator is shown a level with no provenance. Sample at
-`SyncAddressMatch` instead, which the superloop already notices in
-`rx_note_sync()` and which DIO3 is wired for (item 21): the level when the sync
-word lands is the only one that says whether a burst was demodulable, and it
-needs no assumption about the startup sequence.
-
-**Half done, and the half that is done answers the question the entry asks.**
-`sync_rssi_sample()` samples at the sync-match edge and `device afcraw` prints
-the result per frame. It reads **-43 dBm against a -96 dBm floor**, 53 dB apart,
-so the latch is *not* holding a between-frames sample: the receiver's own gating
-measurement writes it at the start of each reception. The first version of the
-sampler triggered a fresh measurement instead and failed on every frame — **an
-RSSI trigger does not complete while `SyncAddressMatch` is high** — which is why
-the counter now counts attempts and failures apart rather than successes alone.
-
-What remains is `rssi_up` itself: `handle_uplink_frame()` still reads the latch
-after the frame, and the sealed report still carries a level with no provenance.
-`afc_note()` consumes the sync-match sample before the frame handler runs, so
-the fix is to stash it for the frame just delivered rather than to read again.
-
-The −43 dBm reading stands; the window that admitted it did not, until `2aada5c`.
-Item 37 has the scope of that, and it is the distribution rather than this figure.
+What remains is `rssi_up` itself. `afc_note()` consumes the sync-match sample
+before the frame handler runs, so the fix is to stash it for the frame just
+delivered rather than to read again.
 
 `CM4/Core/Src/radio.c:1378`, `:1625`, `open_hub/radio/configuration.md`.
 
@@ -622,8 +353,8 @@ channel — **none of which is a cryptographic guarantee**. The fix is a network
 broadcast key, which has the property such keys always have: one compromised node
 can forge broadcasts. Worth making deliberately rather than inheriting.
 
-Unlike the join beacon, which is unauthenticated *by necessity* and cannot be
-fixed, this one is unauthenticated *because nothing has sealed it yet*.
+Unlike the join beacon, which is unauthenticated *by necessity*, this one is
+unauthenticated *because nothing has sealed it yet*.
 
 `radio/known-issues.md`, `radio/pairing.md` § denial of service.
 
@@ -663,7 +394,7 @@ re-pairing every device.
   size is asserted, charged and pinned in three places, all agreeing on 57.
   Buys 10.6 ms of device air for a coordinated wire change.
 - **The broadcast join beacon is still transmitted.** The decision removes it;
-  the implementation only suppresses it on invitation superframes — and item 6
+  the implementation only suppresses it on invitation superframes — and item 7
   is that even this is incomplete.
 
 `radio/joining.md` § what ADR-0021 left unbuilt.
@@ -683,101 +414,60 @@ Where a frame sits inside its slot is the same kind of number as where the slot
 sits inside the superframe, and it belongs in `Common/inc/radio_slots.h`. It is
 700 µs on the device — the frame is centred in the slot's slack — and appears
 nowhere in the hub, which assumed flush at slot start. Both sides stayed
-internally consistent while computing about different geometry. It has already
-cost one wrong guard analysis.
+internally consistent while computing about different geometry, and it has
+already cost one wrong guard analysis.
 
-**Measured 2026-08-21, and the aim is real.** `handle_uplink_frame()` takes no
-timestamp, but the DIO3 `SyncAddressMatch` EXTI instrument does — and it had
-been running all along. `device synctime` over 965 edges, slot 1:
-
-    offset in superframe: last 72094 us, min 72031, max 72560
-
-Slot 1 opens at 69 000 µs and the sync edge follows the first bit by 2 560 µs
-(preamble 4 B + sync 4 B at 25 kbps), so flush-at-slot-start predicts 71 560 µs
-and a 700 µs aim predicts 72 260. **The band's centre is 72 295** — 35 µs from
-the aim, 735 µs from the hub's assumption. `UPLINK_AIM_US` belongs in
-`Common/inc/radio_slots.h` and the hub's geometry is the side that is wrong.
-
-**That arithmetic is 25 kbps and so is its grid**, which makes the conclusion
-sound and every number in it unusable. The pre-sync term is derived rather than
-carried, so at 50 kbps `RADIO_AIR_START_TO_SYNC_US` is **1 280 µs, not 2 560**;
-the slot offsets moved as well, and slot 1 no longer opens at 69 000 µs. A
-prediction stated against a grid that no longer exists is the shape a stale tool
-default has — it would have produced a confident refusal.
-
-**Measured from the hub side 2026-08-22, on the current grid.** `arrival_sync_us`
+**Measured from the hub side 2026-08-22 on the current grid.** `arrival_sync_us`
 is the DIO3 edge against `superframe_start_tk`, so it carries no processing term
-at all. Read through the headers rather than restated:
+at all:
 
-    slot  0 opens  50 000    a 700 us aim predicts a sync edge at  51 980
-    slot  1 opens  59 400                                          61 380
-    slot 65 opens 661 000                                         662 980
-    slot 66 opens 670 400                                         672 380
+    0xc4d444aa   aim 659 / 616 / 604
+    0xdcbac6f5   aim 574 / 545
 
-    0xc4d444aa  51 939 / 51 896 / 662 884   ->  aim 659 / 616 / 604
-    0xdcbac6f5  61 254 / 672 225            ->  aim 574 / 545
+Flush at slot start would predict 1 280 µs of residual and the readings are 1 825
+to 1 939, so **the aim is real and the hub's old assumption is the side that was
+wrong.** Both boards land 40 to 155 µs *early* of the 700 they compile. The
+device session's own instrument — sharing no code, no clock and not even the same
+side of the antenna — gives 634 sd 4 and 586 sd 5 over 114 transmissions each,
+agreeing per board to 3 and 12 µs and **reproducing the difference between the
+boards** (48 µs their way, 66 µs this way).
 
-Flush at slot start would predict 1 280 of residual and the readings are 1 825 to
-1 939, so **the aim is real and the hub's old assumption is the side that was
-wrong.** Both boards land 40 to 155 µs *early* of the 700 they compile.
+Their side has the cause: `UPLINK_LEAD_US` models the ramp and the `SetTx` delay
+about 100 µs longer than the real path. **Early eats the guard from the safe
+side**, which is why nothing ever failed and why no counter could see it — the
+hub's uplink window is open across all three opportunities, so an early frame is
+received and recorded nowhere as early.
 
-The device session's own instrument, sharing no code, no clock and not even the
-same side of the antenna, gives 634 µs sd 4 on `0xc4d444aa` and 586 sd 5 on
-`0xdcbac6f5` over 114 transmissions each. The two agree per board to 3 and 12 µs
-**and reproduce the difference between the boards** — 48 µs their way, 66 µs
-this way. A difference between boards can only have come from the boards.
-
-**The number still does not go in the shared header yet, and the reason is this
-item's own.** Five samples on this side is not a population, and writing a
-figure that two firmwares compile on the strength of five readings would repeat
-`UPLINK_AIM_US = 700` at a different value. The collection is running off
-`/api/stream`; the target is ~20 per board per opportunity, and what lands in
-`Common/inc/radio_slots.h` is then agreed with the device session rather than
-taken here.
-
-Their side has already found what the 700 actually is: `UPLINK_LEAD_US` models
-the ramp and the `SetTx` delay about 100 µs longer than the real path, so the
-frame lands early. **Early eats the guard from the safe side**, which is why
-nothing ever failed and why no counter on either side could see it — the hub's
-uplink window is open across all three opportunities, so an early frame is
-received and recorded nowhere as early. It took an instrument that measures
-*where* a frame sat rather than *whether* it arrived.
+**The number does not go in the shared header until it is a population.** Five
+readings is not one; the target is ~20 per board per opportunity off
+`/api/stream`, and what lands in `Common/inc/radio_slots.h` is then agreed with
+the device session rather than taken here.
 
 `verification` skill § know which artifact each assert pins.
 
 ### 22. `uptime_s` is trusted on arithmetic and unconfirmed on a board — `contract`
 
 **The comment is corrected and the field is believed.** It said the field wraps
-at 4294.967 s; it does not. The device session moved the fold out of `timebase.c`
-and pinned it across the crossing — 4294 before, **4296 after**, 11496 two hours
-past — and the correction is in `Common/inc/radio_protocol.h` as of the `link_v5`
-commit.
+at 4294.967 s; it does not. The device session pinned it across the crossing —
+4294 before, **4296 after**, 11496 two hours past — and the correction is in
+`Common/inc/radio_protocol.h` as of `link_v5`.
 
 **Neither side's field data ever reached the test.** The hub's largest
-observation is 1496 s and the device's is 4255 s, against a 4295 s threshold —
-short by forty seconds. A host test proves the arithmetic, not the board, so the
-first device that stays up past 4295 s settles it. Until then this is a claim
-about code that both sides read and neither has watched.
+observation is 1496 s and the device's 4255 s, against a 4295 s threshold. A host
+test proves the arithmetic, not the board.
 
-What it unblocks, and what is therefore also unbuilt: `devices` prints `never`
-for a device that has not reported, covering *gone*, *deaf*, and *serving a nonce
-reservation* (item 29) with one word. `uptime_s` splits them — small means
-rebooted and says when, large means it never rebooted — and nothing on this side
-reads the field that way yet.
+What it unblocks is also unbuilt: `devices` prints `never` for a device that has
+not reported, covering *gone*, *deaf* and *serving a nonce reservation* (item 29)
+with one word. `uptime_s` splits them and nothing on this side reads it that way.
 
 `radio/known-issues.md`.
 
----
-
-### 23. The device's channel filter is 5 kHz too narrow, and the shared assert never saw it — `contract`
+### 23. The device's channel filter is 5 kHz too narrow — `contract`
 
 `radio_phy.h` carried one `RADIO_RX_BANDWIDTH_HZ` of 125000 with a comment saying
 the device used 117300, and the Carson assert compiled the hub's number on both
-builds. Green on the device for as long as the rate has been 50 kbps, covering a
-filter that side does not use — the same shape as an assert tying two definitions
-one side owns.
-
-With the carrier error finally measured, the arithmetic is no longer hypothetical:
+builds — the same shape as an assert tying two definitions one side owns. With
+the carrier error measured, the arithmetic is no longer hypothetical:
 
     required at 11230 Hz measured    122460
     hub  125000                      passes, 2540 Hz of margin
@@ -785,24 +475,15 @@ With the carrier error finally measured, the arithmetic is no longer hypothetica
 
 The constants are now named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
 against a shared `RADIO_RX_BW_MIN_HZ`. **Only the hub's is asserted**, because
-asserting the device's today fails both builds and the configuration change is
-the device's to make. The next encodable step above the requirement is 125000 —
-the hub's own value.
+asserting the device's fails both builds today and the configuration change is
+the device's to make.
 
 **Measured before it was configured, and the measurement says wait.** Over 19
-cycles with the band filter off, the device lost **0 of 19 beacons** on the short
-filter. And 125000 is not available to it: the SX126x picks from a table whose
-neighbouring steps are 117300 and 156200, so the honest second assert would have
-to name a filter 31 kHz wider than the requirement rather than one matched to it.
-
-**The budget also predicts the wrong side.** The receiver short of it loses
-nothing; the receiver that clears it by 342 Hz fails nearly every frame. So the
-filter width does not look like the term that decides the corruption, and the
-hub's own 342 Hz of margin is probably not worth a flash either.
-
-What survives is the header defect itself — one number compiled by two sides, and
-the constants are now named apart. The second assert waits for a measurement that
-asks for it.
+cycles the device lost **0 of 19 beacons** on the short filter, and 125000 is not
+available to it — the SX126x table steps 117300 to 156200. The budget also
+predicts the wrong side: the receiver short of it loses nothing while the
+receiver that clears it by 342 Hz fails nearly every frame. What survives is the
+header defect; the second assert waits for a measurement that asks for it.
 
 `radio_devices_docs/radio/phy.md`.
 
@@ -813,46 +494,33 @@ Neither `BEACON_BOUNDARY_LAG_US` nor `UPLINK_AIM_US` appears anywhere in
 contract page never disagreed with either side and nobody found this by reading.
 
 The hub measures superframe boundary to first bit directly: **358..366 µs over
-529 beacons**. The device compiles **260 ± 5 µs** in `Core/Inc/beacon.h`, applied
-as `at_us - BEACON_BOUNDARY_LAG_US` where `start_us` has already subtracted
+529 beacons**. The device compiles **260 ± 5 µs**, applied as
+`at_us - BEACON_BOUNDARY_LAG_US` where `start_us` has already subtracted
 `RADIO_PRE_SYNC_US`. So the device's constant covers the hub's term **plus** its
 own detect-to-timestamp residual, and a residual cannot be negative — **the
 device's number must be larger than the hub's and it is 100 µs smaller.**
 
-One of three things is wrong: the hub's 358..366, the device's 260, or the
-pre-sync subtraction. **Adopting either number would be the worst outcome
-available** — the anchor moves 100 µs and may land correctly for a false reason.
+**Adopting either number would be the worst outcome available.** The discriminator
+is agreed and cheap: the device forges a beacon on its own boundary while the hub
+reports the lag it computes, to be run in the same boot as item 30's window so it
+does not become another two-window fraction.
 
-The discriminator is agreed and cheap: the device forges a beacon on its own
-boundary while the hub reports the lag it computes, so the device's own
-transmit-path boundary-to-first-bit is measurable locally and the difference is
-its receive residual with nothing else in it. To be run in the same boot as
-item 30's single-slot window, so it does not become another two-window fraction.
-
-**The pre-sync term is the suspect this side can contribute to.** It is
-`RADIO_PRE_SYNC_AIR_US`, derived from `RADIO_US_PER_BYTE`, so it halved when the
-rate did — 2 560 µs to 1 280. Any lag reading taken before the rate change and
-compared with one taken after is out by a preamble and a sync word. Item 21's
-`device synctime` run is exactly such a reading, and its re-measurement has a
-prediction attached.
+The pre-sync term is the suspect this side can contribute to: `RADIO_PRE_SYNC_AIR_US`
+halved with the rate, 2 560 µs to 1 280, so any lag reading taken before the rate
+change and compared with one after is out by a preamble and a sync word.
 
 Raised by the device session. Device items 9 and 12.
 
 ### 33. Half rate is no longer forced by duty cycle — `debt` `contract`
 
 `RADIO_DOWNLINK_EVERY` is 2 because beacon + downlink + join beacon every
-superframe came to over 1% at 25 kbps. At 50 kbps the three are **16.0 ms,
-0.800%**, and fit. The constraint that chose the value no longer binds.
+superframe came to over 1 % at 25 kbps. At 50 kbps the three are **16.0 ms,
+0.800 %**, and fit.
 
-**Nothing is wrong today** — the value stands and the assert that pins it passes.
-What changed is that it is now a choice rather than a requirement, so a proposal
-to raise the downlink rate has to be refused or accepted on its own merits and no
-longer by pointing at the budget. The binding negative moved to the device: k = 3
-uplinks every superframe is over 1%, which is why a device reports on a granted
-cadence.
-
-Listed so the next reader does not re-derive the old refusal from a page that no
-longer says it.
+**Nothing is wrong today** — the value stands and its assert passes. What changed
+is that it is now a choice rather than a requirement, so a proposal to raise the
+downlink rate has to be refused or accepted on its own merits. Listed so the next
+reader does not re-derive the old refusal from a page that no longer says it.
 
 `radio/phy.md` § duty cycle.
 
@@ -860,86 +528,59 @@ longer says it.
 
 `dl_nonce_is_new()` is the per-device floor that makes the downlink's nonce
 uniqueness explicit instead of a side effect of `dl_served`'s scheduling. No path
-reaches it today — that was traced before it was written — so it is a guard for
-the day the scheduling variable is removed as the optimisation it resembles.
+reaches it today, so it is a guard for the day that scheduling variable is
+removed as the optimisation it resembles.
 
 **A counter that has only ever read 0 is indistinguishable from one that cannot
-read anything else.** `device dlnonce` is the control shipped with it rather than
-after it: it asks the live predicate for its verdict at the last sealed
-superframe, one past it and one before, prints the expected value beside each,
-and seals nothing. The three must read 0/1/0.
-
-Unread until a boot. It joins item 35's four lines.
+read anything else.** `device dlnonce` is the control shipped with it: it asks
+the live predicate for its verdict at the last sealed superframe, one past it and
+one before, and the three must read 0/1/0. Unread until a boot.
 
 `radio/crypto/wire-crypto.md`.
 
----
+### 37. The sync-RSSI window is fixed, and the instrument is still blind one way — `defect`
 
-### 37. Every sync-RSSI reading before 2aada5c has an unbounded window — `defect`
-
-`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs measured from the sync
-edge, where the frame ends 6720 µs after that edge. Samples in the 1280 µs beyond
-it were the noise floor admitted as a frame level, and the guard was wrong in the
-permissive direction — it could never lose a sample, only admit a bad one, so
-nothing about the readings looked wrong.
-
-Fixed, and **read 2026-08-22**, which is what this entry was waiting for:
+`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs from the sync edge where
+the frame ends at 6720, so samples in the gap were the noise floor admitted as a
+frame level. Fixed by `fix(cm4): the sync-RSSI window was measured from the wrong
+instant`, and read on 2026-08-22:
 
     levels: 179 tried, 0 late, 0 failed, worst lag 658 us
 
-Against a frame that ends 6720 µs after the sync edge, so the window was never
-close to being reached and no level in `afcraw` is a floor reading wearing a
-frame's name. The superloop's period, listed as unmeasured everywhere it mattered,
-is bounded above by that 658 µs — a sample is taken when the superloop notices
-`SyncAddressMatch`, so the lag cannot be shorter than the period that produced it.
+No level in `afcraw` is a floor reading wearing a frame's name, and the
+superloop's period — listed as unmeasured everywhere it mattered — is bounded
+above by that 658 µs.
 
-**The instrument is still blind in the direction that would hurt.** It records the
-lag of samples that were *taken*; a stall long enough to lose a frame produces no
-sample and no entry, so `0 late` is a statement about arrivals and not about the
-superloop's worst case. What the number does close is a mechanism: a frame held
-unread in the FIFO cannot block the next opportunity 611 ms later, because the
-drain happens three orders of magnitude sooner than that.
-
-**Item 14's −43 dBm against a −96 dBm floor is not in doubt** and should not be
-re-opened by this: 53 dB apart is a frame level by any window. What this touches
-is the per-slot distribution, where a single admitted floor sample moves a slot's
-mean without moving anything that looks like an error.
+**What remains is the direction that would hurt.** The instrument records the lag
+of samples that were *taken*; a stall long enough to lose a frame produces no
+sample, so `0 late` is a statement about arrivals and not about the superloop's
+worst case.
 
 `open_hub/radio/configuration.md`.
 
 ### 50. Nothing refuses to run on an undisciplined timebase — `defect`
 
-`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`** — checked with
-`git grep` over `CM4`, `CM7` and `Common`. `CM4/Core/Src/timebase.c` starts at
-`scale_q24 = 1u << 24`, the nominal, and every microsecond the grid computes goes
-through it. So a hub whose LSE never delivers a window runs the TDMA grid on a
-scale that is measurably wrong, and says so to nobody.
+`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`**, and
+`CM4/Core/Src/timebase.c` starts at the nominal `scale_q24 = 1u << 24`. So a hub
+whose LSE never delivers a window runs the TDMA grid on a scale that is
+measurably wrong and says so to nobody.
 
-Measurably is the word. The disciplined scale on this bench sits **3452 ppm** off
-nominal over 2082 accepted windows:
+Measurably is the word — the disciplined scale on this bench sits **3452 ppm**
+off nominal over 2082 accepted windows:
 
     2 s superframe   x 3452 ppm = 6.9 ms of placement error
     RADIO_SLOT_US 9400 us        guard 1400 us
 
-Three quarters of a slot, on a grid whose guard is a seventh of one.
-
-There are three ways in, and none of them is loud. `calib_init()` waits
-`FIRST_WINDOW_US` for the first window and then returns; `started` stays 0 if
-`span_max > htim16.Init.Period` or if `HAL_TIM_IC_Start()` fails, and then
-`calib_poll()` returns on its first line for the rest of the run. `ready` is also
-**sticky** — one window at boot and a dead crystal afterwards leaves it 1 forever,
-running on a scale measured once. That is the absent-versus-stale distinction the
-event path already had to learn.
-
-`calib_age_tk()` computes exactly the number that would name all three, returns
-`0xFFFFFFFF` when no window has landed, and reaches both the console and the
-northbound API. **Nothing acts on it**, which is the decorative shape from the
-`verification` skill rather than a missing instrument.
+Three ways in, none loud: `calib_init()` returns after `FIRST_WINDOW_US`;
+`started` stays 0 if `span_max > htim16.Init.Period` or `HAL_TIM_IC_Start()`
+fails; and `ready` is **sticky**, so one window at boot and a dead crystal
+afterwards leaves it 1 forever. `calib_age_tk()` computes the number that would
+name all three and **nothing acts on it** — the decorative shape.
 
 The fix is not refusing to boot: a hub that cannot discipline its timebase can
-still pair, still answer a server and still be debugged. What it cannot do is
-hold a grid, so the refusal belongs where the grid starts, and the condition has
-to leave northbound under its own name rather than as an age nobody reads.
+still pair, answer a server and be debugged. What it cannot do is hold a grid, so
+the refusal belongs where the grid starts, and the condition has to leave
+northbound under its own name.
 
 `open_hub/radio/timebase.md`.
 
@@ -947,34 +588,19 @@ to leave northbound under its own name rather than as an age nobody reads.
 
 `touch CM7/custom_m7_flash.ld && cmake --build CM7/build` prints **`ninja: no work
 to do`**, and the same on CM4. The script reaches the link only as the `-T`
-argument inside `rules.ninja`; nothing lists it as a dependency edge, so a change
-to it does not invalidate the ELF.
+argument inside `rules.ninja`; nothing lists it as a dependency edge.
 
-The failure mode is silence. Editing the memory map, moving a section, changing an
-origin — all of them rebuild cleanly and produce the binary that predates the
-edit, and the flash that follows writes it without complaint. `.shared_mem` and
-the two custom sections in `open_hub/arch/memory-map.md` are exactly the kind of
-change that would be made this way.
-
-Found by editing both scripts for the comment-length rule and noticing that only
-one core relinked, for an unrelated reason. Until it is fixed, **delete the ELF
-before rebuilding after any linker script change** — that is what proved the edits
-here are sound, and the two ELFs came back byte-identical, which is what a
-comment-only edit should produce.
+The failure mode is silence: editing the memory map, moving a section or changing
+an origin rebuilds cleanly and produces the binary that predates the edit. Until
+it is fixed, **delete the ELF before rebuilding after any linker script change.**
 
 `open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
 
 ### 55. A device setting changed without a reset has no witness — `contract`
 
-`radio power -9` was sent to a board at 16:16 on 2026-08-22 and left **nothing on
-the wire**. It was found from the other side of the antenna, as a 15 dB step in
-the received level, and only because someone was watching for one.
-
-The other two regime boundaries do have witnesses and both are already carried.
-A hub reset moves `boot_id`; a device reset or reflash makes `dev_uptime_s` fall
-back, which is the device's `boot_id` in everything but name and which nothing on
-this side partitions by yet. This one has neither, because the value lives on the
-device and the hub cannot know it.
+`radio power -9` was sent to a board on 2026-08-22 and left **nothing on the
+wire**. It was found from the other side of the antenna, as a 15 dB step in the
+received level, and only because someone was watching for one.
 
     boundary                      witness           state
     hub reset                     boot_id           carried, now per row
@@ -983,13 +609,11 @@ device and the hub cannot know it.
 
 It matters because it is the boundary most likely to be crossed **during** a
 measurement rather than between two: a reset announces itself by breaking the
-link, and a console command does not. The confounded run of 2026-08-22 crossed all
-three, and this was the one that had to be reconstructed from memory.
+link, a console command does not.
 
 The device reporting its own transmit power in the sealed report closes it, and
-that is a contract change — agree it with the device session, whose own item 52
-covers the setting not persisting rather than not being reported. The two are
-different defects with one cause.
+that is a contract change — agree it with the device session, whose item 52
+covers the setting not persisting rather than not being reported.
 
 `radio/known-issues.md`, `open_hub/network/telemetry.md`.
 
@@ -1015,37 +639,28 @@ Nothing is implemented, and there is now a link to protect: telemetry and
 commands run in the clear over TCP between the hub and `openhub-server`, so
 anything on the LAN can read every device's RSSI and issue `device_remove`.
 
-Two of the page's three open questions are settled. The protocol is OHT over one
-outbound connection, so the hub is a TLS **client** and mbedTLS goes straight
-over the socket — no `altcp_tls`, and therefore no lwIP-2.1.2-against-mbedTLS-3.6
-mismatch to resolve. What is left is the identity question: PSK is far smaller on
-the hub, a pinned self-signed certificate is trivial on the server and costs the
-hub X.509 and ECDSA.
+The protocol is OHT over one outbound connection, so the hub is a TLS **client**
+and mbedTLS goes straight over the socket — no `altcp_tls`. What is left is
+identity: PSK is far smaller on the hub, a pinned self-signed certificate is
+trivial on the server and costs the hub X.509 and ECDSA. The PSK branch was
+blocked on the stdlib — `set_psk_server_callback` is absent on the 3.12 the
+server's Dockerfile pins and was added in 3.13, measured here only as absent on
+3.12.3. **Verify by raising the base image, not by reading this line.**
 
-**The terminator this item used to need does not exist in either branch, and the
-sentence that said it did was reading a pinned image as a property of Python.**
-The certificate branch is already wired: `config.ssl_context()` is built and
-handed to `asyncio.start_server(ssl=...)` in the server's `hublink.py`, so
-nothing terminates anything. The PSK branch was blocked on the stdlib, and the
-stdlib moved — `set_psk_server_callback` is absent on 3.12, which the server's
-Dockerfile pins, and was added in 3.13. **Verify by raising the base image, not
-by reading this line**: measured here only as absent on 3.12.3.
-
-A proxy in front of the API is a different question with a different answer, and
-one fact belongs beside this item rather than inside it: the REST and websocket
+One fact belongs beside this item rather than inside it: the REST and websocket
 API carries **no authentication at all** — the token is checked in HELLO and
-nowhere else — so the `device_remove` exposure above is reachable on the API
-surface too, not only on the hub link. Turning authentication on breaks every
-caller at once, which is why it is a decision and not a patch.
+nowhere else — so the `device_remove` exposure is reachable there too. Turning
+authentication on breaks every caller at once, which is why it is a decision and
+not a patch.
 
 `open_hub/network/tls.md`, `open_hub/network/telemetry.md`.
 
 ### 38. The northbound link forgets its server on every reset — `debt`
 
 `telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
-`ip static`. Both wait on the same configuration store that `cfg save` / `cfg
-load` stub out. Until then the link cannot come up unattended, which is most of
-what a server is for.
+`ip static`. Both wait on the configuration store that `cfg save` / `cfg load`
+stub out. Until then the link cannot come up unattended, which is most of what a
+server is for.
 
 `open_hub/network/telemetry.md`, `open_hub/network/ethernet.md`.
 
@@ -1053,81 +668,53 @@ what a server is for.
 
 `dev_app` reaches the firmware end to end and is refused there with
 `not_implemented`: the downlink's `app[6]` is unwritten, which is *item 3* seen
-from the north side. Everything above the radio is built — the argument is
-carried, validated and acked — so agreeing the payload with the WL55 session is
-the only work left, and it lands as one commit in `radio.c` rather than as a new
-path through three layers.
-
-Until then "raise the transmit power" and "run a calibration" are not things the
-server can ask a device to do, whatever a dashboard's buttons suggest.
+from the north side. Everything above the radio is built, so agreeing the payload
+with the WL55 session is the only work left and it lands as one commit in
+`radio.c`.
 
 `open_hub/network/telemetry.md`, `radio/tdma.md` § slot budget.
 
 ### 40. A snapshot costs 45 ms, almost all of it waiting on the mailbox — `debt`
 
 `snapshot_us` reads 45 000 with two devices installed. The work is nine
-`hub_ipc_call()` round trips and each one polls for its reply on a 5 ms
-`osDelay`, so the figure is the polling interval times the number of calls and
-has almost nothing to do with CM4. At 64 devices it would be over half a second
-of one task spinning.
+`hub_ipc_call()` round trips and each polls for its reply on a 5 ms `osDelay`, so
+the figure is the polling interval times the number of calls and has almost
+nothing to do with CM4. At 64 devices it would be over half a second of one task
+spinning.
 
 The fix is a reply notification rather than a poll, which the doorbell semaphore
-already does for events. Not urgent at two devices; it becomes urgent at the
-first bench with more than about ten.
+already does for events. It becomes urgent at the first bench with more than
+about ten devices.
+
+`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
+
+### 49. A frame-ring row cannot say which superframe or which regime it came from — `debt`
+
+`ipc_afc_raw_t` carries `grid`, `slot`, `gain`, `rssi` and `afc` per sample and
+**no superframe**, so a northbound row cannot be joined against the device's own
+transmit log by arrival. Packing the counter at snapshot time does not fix it:
+that number is when CM7 assembled the snapshot.
+
+`grid` is a partial witness already on the wire — it is a bijection onto
+`superframe mod 28`, so it can **refuse** a claimed superframe with no new field.
+Not built. Reconstruction cannot be more than a refusal: over 22 observed
+inter-arrival gaps, **13 exceeded the hop cycle**, so a guess would be right 41 %
+of the time and silently wrong the rest.
+
+The honest fix fits: `IPC_PAYLOAD_MAX` is 96 and `sizeof(ipc_afc_raw_t)` is 72,
+so a `uint16_t` per entry costs 18 of the 24 free bytes with CM7 restoring the
+high bits. A CM4-to-CM7 contract change, so both cores reflash together.
+
+**The same gap in a bigger form:** one afternoon put the bench through four
+regimes — a device firmware change, the transmit power it restored, the level
+match that undid it, and two hub flashes — and every boundary falls *inside* the
+ring. Both sessions had to partition from memory, and twice that memory was
+wrong. Time is the wrong key; `hello.build` and `boot_id` already exist and are
+sent once per connection, so what is missing is carrying them **per row**.
 
 `open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ---
-
-### 49. The frame ring cannot say which superframe a sample arrived in — `debt`
-
-`ipc_afc_raw_t` carries `grid`, `slot`, `gain`, `rssi` and `afc` per sample, and
-every scalar beside them describes the ring rather than an entry. **No superframe
-is recorded per sample.** So the northbound row cannot be joined against the
-device's own transmit log by arrival, which is what two instruments need to share
-a population rather than two windows.
-
-Packing the counter at snapshot time does not fix it: that number is when CM7
-assembled the snapshot, and a join on it is a join on read time wearing the name
-of an arrival. This is the shape `arrival_us` already has, one field over.
-
-**`grid` is a partial witness and is on the wire today.** It comes from
-`hop_channel(&hop, frame_counter, &idx)`, so it is a function of the superframe,
-not of a position inside one — the deck is a permutation of `RADIO_HOP_COUNT`,
-which makes `grid` a bijection onto `superframe mod 28`. That cannot name the
-superframe, but it can **refuse** a claimed one, with no new field at all. Not
-built.
-
-Recovery cannot be more than a refusal, because the ambiguity lands exactly where
-the measurement is: over 22 observed inter-arrival gaps, **13 exceeded the hop
-cycle**. A reconstruction would be right 41% of the time and silently wrong the
-rest, which is worse than absent.
-The honest fix is an array, and it fits: `IPC_PAYLOAD_MAX` is 96 and
-`sizeof(ipc_afc_raw_t)` is 72, so 24 bytes are free. A `uint32_t` per entry costs
-36 and does not fit; a `uint16_t` costs 18 and does, with CM7 restoring the high
-bits from the counter it already holds. It is a CM4-to-CM7 contract change, so
-both cores are reflashed together.
-
-**And the same gap in a bigger form, found 2026-08-22: a row cannot say which
-regime it came from.** One afternoon put the bench through four — a device
-firmware change, the transmit power that change restored, the level match that
-undid it, and two hub flashes — and every boundary falls **inside** the ring
-rather than between rings. So no before-and-after can be read out of it by either
-session, and both had to partition from memory of what happened when. Twice that
-memory was wrong.
-
-Time is the wrong key for it. A timestamp needs a reader who remembers what
-happened at 17:33; a row that carries its own provenance does not. The two fields
-that would do it already exist and are already sent once per connection —
-`hello.build` names the firmware and `boot_id` names the reset — so what is
-missing is carrying them **per row** rather than per link. `frame.slot` is the
-precedent for how cheap that is: it already encodes the opportunity as
-`base + 65 * k` and nothing had to be added, only documented.
-
-Raised by the server session, which reached the same conclusion from its own side
-and named it better: what belongs beside a row is not the time but the **regime**.
-
-`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ## Bench debts
 
@@ -1141,6 +728,7 @@ not assuming.
 
 ### 28. Owed to the device session
 
+- **The LNA ladder re-run at −25 dBm** (item 12), announced before it starts.
 - Node B's PA-ramp capture.
 - Node A (`0xC4D444AA`) has never been resynced.
 - A constant for radiated energy in the duty-cycle model — **model only, never a
@@ -1150,10 +738,5 @@ not assuming.
 - **Warning before the next hub reset**, so node B is parked and instrumented
   when it happens. Park-and-wait recovery is built on their side; an unannounced
   reset spends the one honest test of it on nobody watching.
-- **`link_v4` is superseded by `link_v5`** and their build includes the generated
-  header directly. The sizes did not move, so nothing on their side fails to
-  compile — only the version byte differs, and `aead_selftest` catches it at
-  runtime here because a compile-time assert was added for exactly that. They
-  need the new header before they build against the v5 wire.
 
 `open_hub/testing/sdr.md`.
