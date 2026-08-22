@@ -113,9 +113,10 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
 
     meta = iqfile.read_meta(path)
     raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
-    # A burst at the rails is the receiver's clipping offered as the
-    # transmitter's. radio_devices_docs/open_hub/testing/sdr.md
-    clip = float(np.mean(np.abs(raw) >= 127.0))
+    # Per burst, never per file: bursts are under a percent of this bench's
+    # recording, so a clipped burst divides down to a quiet-looking fraction.
+    # radio_devices_docs/open_hub/testing/sdr.md
+    railed = np.abs(raw) >= 127.0
     x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
     x -= x.mean()                      # kill the RTL-SDR centre spike
     rate, centre = meta["rate"], meta["centre"]
@@ -180,10 +181,17 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
                      "air_ms": (e - s) * slot_s * 1e3, "hz": abs_hz, "ch": idx,
                      "err_hz": abs_hz - (base + idx * spacing),
                      "snr_db": float(seg.max()),
+                     "clip": float(railed[2 * s * nfft:2 * e * nfft].mean()),
                      "f_rel": f_rel, "on_grid": 0 <= idx < count})
+    # The silence is the control: it says the two populations differ, so a
+    # burst figure cannot be dismissed as the file's own noise.
+    quiet = np.ones(len(railed), dtype=bool)
+    for r in recs:
+        quiet[2 * r["s"] * nfft:2 * r["e"] * nfft] = False
     return {"x": x, "rate": rate, "centre": centre, "slot_s": slot_s,
             "floor": floor, "bursts": recs, "P": P, "freqs": freqs,
-            "clip": clip}
+            "clip_file": float(railed.mean()),
+            "clip_quiet": float(railed[quiet].mean()) if quiet.any() else 0.0}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -220,15 +228,19 @@ def main():
         raise SystemExit(f"nothing {a.snr:.0f} dB above the per-bin floor")
     bursts = [(r["s"], r["e"]) for r in recs]
     print(f"floor {d['floor'].mean():.1f} dB (per-bin), {len(bursts)} burst(s)")
-    # A level read off a clipped capture is the dongle's, whoever transmitted it.
-    if d["clip"] > 1e-4:
-        print(f"WARNING: {100*d['clip']:.3f} % of samples at the ADC rails - "
-              f"no dB column here may be read as a transmitted level. Recapture lower.")
-    else:
-        print(f"{100*d['clip']:.4f} % of samples at the rails")
+    # A level read off a clipped burst is the dongle's, whoever transmitted it.
+    worst = max((r["clip"] for r in recs), default=0.0)
+    nclip = sum(1 for r in recs if r["clip"] > 1e-4)
+    print(f"rails: worst burst {100*worst:.2f} %, {nclip} of {len(recs)} burst(s) "
+          f"over 0.01 %; silence {100*d['clip_quiet']:.4f} %, whole file "
+          f"{100*d['clip_file']:.4f} %")
+    if worst > 1e-4:
+        print(f"WARNING: a burst is clipping the ADC - no dB column below may be "
+              f"read as a transmitted level. Recapture at a lower manual gain "
+              f"(rtl_sdr -g 0 means AUTOMATIC, not zero).")
     print()
-    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'dB':>6} {'com kHz':>8}"
-          f" {'2tone kHz':>10} {'sep kHz':>8}  gap")
+    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'dB':>6} {'clip%':>7}"
+          f" {'com kHz':>8} {'2tone kHz':>10} {'sep kHz':>8}  gap")
     prev, seen, bad = None, [], 0
     chan_of = {}
     frel_of = {}
@@ -242,7 +254,7 @@ def main():
         gap = "" if prev is None else f"{(s-prev)*slot_s*1e3:8.1f} ms"
         print(f"{r['t_ms']:10.2f} {r['air_ms']:9.2f} {r['hz']/1e6:11.4f} "
               f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['snr_db']:6.1f}"
-              f" {r['err_hz']/1e3:8.1f}"
+              f" {100*r['clip']:7.2f} {r['err_hz']/1e3:8.1f}"
               f" {('%10.1f' % (r['tone_err_hz']/1e3)) if r['tone_err_hz'] is not None else '         -'}"
               f" {('%8.1f' % (r['tone_sep_hz']/1e3)) if r['tone_sep_hz'] is not None else '       -'}  {gap}")
         prev = s
