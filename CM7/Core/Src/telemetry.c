@@ -301,6 +301,9 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     OHT_PUT(w, OHT_F_DEVICE_REPORT_EVERY, d->report_every);
     OHT_PUT(w, OHT_F_DEVICE_REPORT_FLAGS, d->flags);
     OHT_PUT(w, OHT_F_DEVICE_ARRIVAL_US, d->arrival_us);
+    /* Absent, never zero: zero would read as arrival exactly on the boundary. */
+    if (d->arrival_sync_us != IPC_ARRIVAL_SYNC_NONE)
+        OHT_PUT(w, OHT_F_DEVICE_ARRIVAL_SYNC_US, d->arrival_sync_us);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_LATCH_DBM, d->rssi_up);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_DOWN_DBM, d->rssi_down);
     OHT_PUT(w, OHT_F_DEVICE_CYC_MIN_MS, d->cyc_min);

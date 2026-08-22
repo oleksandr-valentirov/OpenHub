@@ -232,6 +232,7 @@ typedef struct ipc_exchange_state {
     uint32_t uplink_windows;   /**< receive windows actually opened */
     uint32_t uplink_sync;      /**< ... and sync detections inside them */
     uint32_t uplink_evt_drop;  /**< arrivals CM7 was never told about */
+    uint32_t uplink_sync_unpaired; /**< accepted frames whose sync edge was not theirs */
 } __attribute__((packed)) ipc_exchange_state_t;
 
 /* Reply for IPC_REQ_GET_RXDIAG: what the radio hears, below the frame layer.
@@ -368,6 +369,10 @@ typedef struct ipc_afc_raw {
 _Static_assert(IPC_AFC_RING <= 16u,
                "crc_ok and in_frame are uint16 bitmasks, one bit per entry");
 
+/* Never a real offset: an arrival lands inside the superframe, not past its end.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+#define IPC_ARRIVAL_SYNC_NONE  0xFFFFFFFFu
+
 /* Fstep units; `device afc` prints the driver's hertz for the same frame.
  * radio_devices_docs/open_hub/radio/configuration.md */
 #define IPC_AFC_STEPS_TO_HZ(steps)  ((int32_t)(((int64_t)(steps) * 32000000) >> 19))
@@ -489,7 +494,8 @@ typedef struct ipc_device_report {
     uint8_t  flags;            /**< RADIO_REPORT_FLAG_* from the last report */
     uint8_t  ack_arg;          /**< the argument the device said it applied, per ack_cmd */
     uint8_t  reserved;
-    uint32_t arrival_us;       /**< into its superframe, so the air half is checkable */
+    uint32_t arrival_us;       /**< into its superframe, stamped after the decrypt. ROADMAP item 44 */
+    uint32_t arrival_sync_us;  /**< the same, off the DIO3 edge; IPC_ARRIVAL_SYNC_NONE if unpaired */
     uint8_t  cmd_every;        /**< report_every the last SET_RATE carried, 0 if none */
     uint8_t  cmd_state;        /**< 0 none, 1 still riding downlinks, 2 acked */
     uint16_t cyc_min;          /**< shortest gap between cycles: the observed cadence */

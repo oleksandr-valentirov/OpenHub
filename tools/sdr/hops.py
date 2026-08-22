@@ -64,6 +64,35 @@ def air_time_envelope(x, rate, s_slot, e_slot, slot_s, f_rel, bw=60e3, guard=12)
 
 
 
+def two_tone_carrier(band, freqs, lo, hi, sep_hz, tol=0.35):
+    """Carrier as the midpoint of the FSK pair, with the pair's spacing as its own control.
+
+    A centre of mass over occupied bins moves with how many bins a burst lights,
+    which tracks burst length rather than the transmitter. The two tones sit at
+    +/- fdev whatever the payload, so their midpoint does not.
+    radio_devices_docs/open_hub/testing/sdr.md
+    """
+    import numpy as np
+    w = band[lo:hi]
+    f = freqs[lo:hi]
+    if len(w) < 5:
+        return None, None
+    pk = int(np.argmax(w))
+    # The partner tone is the strongest peak at least a third of the pair away.
+    step = f[1] - f[0]
+    guard = int(abs(sep_hz) * 0.5 / abs(step)) if step else 0
+    mask = np.ones(len(w), dtype=bool)
+    a, b = max(0, pk - guard), min(len(w), pk + guard + 1)
+    mask[a:b] = False
+    if not mask.any():
+        return None, None
+    pk2 = int(np.argmax(np.where(mask, w, -np.inf)))
+    got = abs(f[pk2] - f[pk])
+    # Refused rather than reported: a pair that is not the pair proves nothing.
+    if abs(got - sep_hz) > tol * sep_hz:
+        return None, got
+    return (f[pk] + f[pk2]) / 2.0, got
+
 def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
            base=None, spacing=None, count=None):
     """Every burst in the band, with where it sat and which channel that is.
@@ -138,7 +167,13 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
             sel = ch_of_bin == k
             if sel.any() and float(seg[sel].max()) > snr:
                 lit.add(k)
-        recs.append({"lit": lit, "s": s, "e": e, "t_ms": s * slot_s * 1e3,
+        tone_rel, tone_sep = two_tone_carrier(band, freqs, lo, hi,
+                                             2.0 * c["RADIO_DEVIATION_HZ"])
+        tone_hz = None if tone_rel is None else centre + tone_rel
+        recs.append({"tone_hz": tone_hz, "tone_sep_hz": tone_sep,
+                     "tone_err_hz": None if tone_hz is None
+                                    else tone_hz - (base + idx * spacing),
+                     "lit": lit, "s": s, "e": e, "t_ms": s * slot_s * 1e3,
                      "air_ms": (e - s) * slot_s * 1e3, "hz": abs_hz, "ch": idx,
                      "err_hz": abs_hz - (base + idx * spacing),
                      "f_rel": f_rel, "on_grid": 0 <= idx < count})
@@ -180,7 +215,8 @@ def main():
         raise SystemExit(f"nothing {a.snr:.0f} dB above the per-bin floor")
     bursts = [(r["s"], r["e"]) for r in recs]
     print(f"floor {d['floor'].mean():.1f} dB (per-bin), {len(bursts)} burst(s)\n")
-    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'err kHz':>8}  gap")
+    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'com kHz':>8}"
+          f" {'2tone kHz':>10} {'sep kHz':>8}  gap")
     prev, seen, bad = None, [], 0
     chan_of = {}
     frel_of = {}
@@ -193,7 +229,9 @@ def main():
         frel_of[(s, e)] = r["f_rel"]
         gap = "" if prev is None else f"{(s-prev)*slot_s*1e3:8.1f} ms"
         print(f"{r['t_ms']:10.2f} {r['air_ms']:9.2f} {r['hz']/1e6:11.4f} "
-              f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['err_hz']/1e3:8.1f}  {gap}")
+              f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['err_hz']/1e3:8.1f}"
+              f" {('%10.1f' % (r['tone_err_hz']/1e3)) if r['tone_err_hz'] is not None else '         -'}"
+              f" {('%8.1f' % (r['tone_sep_hz']/1e3)) if r['tone_sep_hz'] is not None else '       -'}  {gap}")
         prev = s
 
     total = sum((e - s) * slot_s for s, e in bursts)

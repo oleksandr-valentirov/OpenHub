@@ -69,6 +69,7 @@ typedef struct dev_entry {
     uint16_t supply_mv;
     int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
     uint32_t arrival_us;        /**< into the superframe the report claimed */
+    uint32_t arrival_sync_us;   /**< the same off the DIO3 edge, or IPC_ARRIVAL_SYNC_NONE */
     int8_t   rssi_down;         /**< as the device heard the hub's last beacon */
     uint8_t  dl_cmd;            /**< RADIO_CMD_*, queued for this device */
     uint8_t  dl_report_every;
@@ -192,6 +193,8 @@ static uint32_t ex_tx_err, ex_seal_err;
 static uint32_t up_frames, up_ok, up_bad_slot, up_bad_frame, up_bad_tag;
 static uint32_t up_replay;   /* authenticated, but not newer than the floor */
 static uint32_t up_windows, up_sync;
+/* Frames whose sync edge could not be attributed to them. ROADMAP item 44 */
+static uint32_t up_sync_unpaired;
 /* The downlink rotation, held across superframes.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static uint8_t  dl_next_slot;
@@ -668,6 +671,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->flags           = e->flags;
     d->ack_arg         = e->dl_ack_arg;
     d->arrival_us      = e->arrival_us;
+    d->arrival_sync_us = e->arrival_sync_us;
 }
 
 /* A dropped notification and a silent device look alike, so count the drop. */
@@ -1211,6 +1215,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         x.uplink_windows  = up_windows;
         x.uplink_sync     = up_sync;
         x.uplink_evt_drop = up_evt_drop;
+        x.uplink_sync_unpaired = up_sync_unpaired;
         x.uplink_frames   = up_frames;
         x.uplink_ok       = up_ok;
         x.uplink_bad_slot = up_bad_slot;
@@ -1667,6 +1672,8 @@ static int install_device(const ipc_device_keys_t *k) {
     if (!d->used)
         device_count++;
     memset(d, 0, sizeof(*d));
+    /* Zero would read as an arrival on the boundary, which cannot happen. */
+    d->arrival_sync_us = IPC_ARRIVAL_SYNC_NONE;
     d->used         = 1;
     d->slot         = k->slot;
     d->dev_id       = k->dev_id;
@@ -1834,6 +1841,20 @@ static void handle_uplink_frame(void) {
         dl_cmd_acked++;
     }
     d->arrival_us = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);
+    /* The edge is global, so it is paired to this frame or the field stays absent.
+     * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+    {
+        uint32_t since = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+        uint32_t air   = RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES);
+
+        if (since < air || since > air + RADIO_SLOT_US) {
+            d->arrival_sync_us = IPC_ARRIVAL_SYNC_NONE;
+            up_sync_unpaired++;
+        } else {
+            d->arrival_sync_us =
+                timebase_ticks_to_us(sync_edge_tk - sync_edge_base);
+        }
+    }
     d->rssi_up   = (int8_t)(rssi_x2 / 2);
     d->rssi_down = rpt.rssi_down;
     d->flags     = rpt.flags;

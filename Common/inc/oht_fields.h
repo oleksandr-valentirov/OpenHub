@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "9f5b89b1994488c3"
+#define OHT_SCHEMA_DIGEST  "31f5b3f3527d1b55"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -68,6 +68,7 @@
 #define OHT_F_DEVICE_REPORT_EVERY       0x1006u, OHT_T_U8
 #define OHT_F_DEVICE_REPORT_FLAGS       0x1007u, OHT_T_U8
 #define OHT_F_DEVICE_ARRIVAL_US         0x1008u, OHT_T_U32
+#define OHT_F_DEVICE_ARRIVAL_SYNC_US    0x1009u, OHT_T_U32
 #define OHT_F_DEVICE_RSSI_UP_SYNC_DBM   0x1010u, OHT_T_I8
 #define OHT_F_DEVICE_RSSI_UP_LATCH_DBM  0x1011u, OHT_T_I8
 #define OHT_F_DEVICE_RSSI_DOWN_DBM      0x1012u, OHT_T_I8

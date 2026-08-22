@@ -781,8 +781,9 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             cli_out(cli, "\r\n");
         }
     }
-    cli_out(cli, "uplink windows %lu, sync %lu\r\n",
-            (unsigned long)x.uplink_windows, (unsigned long)x.uplink_sync);
+    cli_out(cli, "uplink windows %lu, sync %lu, sync unpaired %lu\r\n",
+            (unsigned long)x.uplink_windows, (unsigned long)x.uplink_sync,
+            (unsigned long)x.uplink_sync_unpaired);
     {
         ipc_rx_diag_t ud;
 
