@@ -517,6 +517,42 @@ and says nothing about level. What *is* solid is the other direction on the othe
 board: `0xc4d444aa` passes 15 of 30 at -72 dBm and 31 of 34 at -40, **p = 0.0003**,
 so more signal helps until some turnover this data cannot locate.
 
+**2026-08-22, the LNA ladder: this receiver is not the missing decibels.** Pinning
+`LnaGainSelect` G1 through G6 — thirty decibels — against a level the transmitters
+held fixed, announced at superframe 695004 and logged:
+
+    pinned   G1     G2     G3     G4     G6      A crc      B crc
+    board A  -40.7  -42.2  -42.8  -43.1  -40.2   6/7 5/5 8/10 11/12 7/12
+    board B  -39.2  -41.7  -42.2  -42.1  -39.3   2/5 2/3 5/6  5/7   6/9
+
+**2.4 dB of movement for 30 dB of gain, and not monotone.** `RegRssiValue` is
+input-referred: it divides the LNA setting back out. The `rfm69` skill said the
+opposite and is corrected.
+
+The pin is real, which is the control that separates this from a command that did
+nothing: frames arrive at every step and board A's CRC rate falls to 7 of 12 at G6
+against 11 of 12 at G4. The gain costs sensitivity; the reading does not follow it.
+
+So the 2026-08-21 puzzle in point 1 above dissolves — "G6 is 30 dB below G1 and the
+reported level went **up** 24 dB, and a linear front end reads lower" — because the
+reading was never going to move with gain. What moved that run was the transmit
+power, which is the alternative that entry could not exclude for want of a logged
+intervention.
+
+**And a front end in compression comes out of it somewhere in 30 dB.** It did not:
+at -40 dBm this receiver is linear, so the 23 dB request that arrived as 15 dB is
+not its doing. The device session has since found the mechanism on its own side —
+the SX126x PA configured once for +14 dBm while only `SetTxParams` moves after,
+each optimal point in that table having its own `paDutyCycle`.
+
+What is **not** measured is the hub's sync-detection slope against level, which the
+same ladder was meant to give for free: +1.74 ± 2.42 µs/dB on one board and
++0.05 ± 1.63 on the other, intervals containing both zero and the device's
+-3.09 µs/dB. The pre-registered power calculation used sd 40-54 µs, the spread at
+the base opportunity, while the population collected mixes all three opportunities
+and runs to 236 µs. **Power has to be computed on the population the run will
+have, not on its tightest subset.**
+
 The next run needs the **received** levels equalised rather than the transmitted
 ones — equal transmit power leaves the 23 dB of siting difference in place, which
 is the confound itself — and the intervention logged, which point 2 above already
