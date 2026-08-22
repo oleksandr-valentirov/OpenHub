@@ -129,13 +129,14 @@ task before starting.
 | `sdr` | `~/.claude/skills` | a radio claim needs evidence from the air rather than from a counter |
 | `cubemx` | `~/.claude/skills` | peripherals, pins, clocks, FreeRTOS tasks or middleware change — or a change is about to be hand-written into a generated file |
 | `verification` | `~/.claude/skills` | adding or reading a check, a self-test, a counter, a test vector or a probe; before quoting a measurement; whenever a first success is imminent |
+| `telemetry` | `~/.claude/skills` | reading the hub's live state or commanding it through `openhub-server`, over REST or the websocket, instead of the console |
 
 Keep them current. A new surprise about the radio goes in `rfm69`, a new way a
 green check turned out to be worthless goes in `verification` — not here.
 
-**`sdr`, `cubemx` and `verification` are shared with the WL55 device session and
-no longer live in this tree.** Only `rfm69` is still committed here, because the
-RFM69 is the hub's radio and the device has an SX126x. The three are loaded by
+**`sdr`, `cubemx`, `verification` and `telemetry` are shared with the WL55
+device session and no longer live in this tree.** Only `rfm69` is still committed here, because the
+RFM69 is the hub's radio and the device has an SX126x. They are loaded by
 name exactly as before; what changed is that an edit to any of them is not a
 commit here. Make the edit in `~/.claude/skills` and **tell the device session**,
 so it picks the change up rather than finding it by accident.
