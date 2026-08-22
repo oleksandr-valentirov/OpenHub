@@ -11,18 +11,6 @@
  * radio_devices_docs/open_hub/network/ethernet.md
  */
 
-#define USER_SERVERS_MAX_NUM  2
-#define USER_SERVER_NAME_LEN  32
-
-typedef struct user_server {
-  char name[USER_SERVER_NAME_LEN];
-  int sock;
-  ip4_addr_t ip;
-  uint8_t status;  /**< 0 - not active, !0 - active */
-} user_server_t;
-
-extern struct user_server servers[USER_SERVERS_MAX_NUM];
-
 /**
  * @brief Renders the interface's addressing into a caller's buffer.
  * @param resp_buffer  receives the text

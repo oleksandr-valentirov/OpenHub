@@ -89,11 +89,10 @@ static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
 static int cmd_vectors(cli_data_t *cli, int argc, char **argv);
 static int cmd_telemetry(cli_data_t *cli, int argc, char **argv);
-static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, char *name);
 
 static const cli_cmd_t commands[] = {
     {"status",  0, 0, cmd_status,  "",                       "print system status"},
-    {"ip",      0, 4, cmd_ip,      "[dhcp|static|set ...]",  "show or set network config"},
+    {"ip",      0, 4, cmd_ip,      "[dhcp|static ...]",      "show or set network config"},
     {"ping",    1, 1, cmd_ping,    "<ip addr>",              "send ping message"},
     {"device",  1, 3, cmd_device,  "<add|window|remove|list|pair|...>","devices and the radio"},
     {"devices", 0, 4, cmd_devices, "[rate <n> | cmd <dev_id> ...]",  "paired devices and their link"},
@@ -487,15 +486,10 @@ static int cmd_ip(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(argv[1], "set") == 0 && argc == 5)
-        return set_server_ip_addr(cli, argv[2], argv[3], argv[4]);
-
     cli_out(cli,
         "\r\nip                              show current config\r\n"
         "ip dhcp                         switch to DHCP (default at boot)\r\n"
-        "ip static <ip> <mask> <gw>      switch to a fixed address\r\n"
-        "ip set s<n> <ip> <name>         remember a remote server, n in [0 - %u]\r\n",
-        USER_SERVERS_MAX_NUM - 1);
+        "ip static <ip> <mask> <gw>      switch to a fixed address\r\n");
     return 0;
 }
 
@@ -1781,34 +1775,6 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         "latency                 - the hub half of the event deadline\r\n"
         "lna <0..6>              - pin the front-end gain; 0 hands it back to AGC\r\n"
         "dump <reg>              - read an RFM69 register\r\n");
-    return 0;
-}
-
-static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, char *name) {
-    size_t name_len = strlen(name);
-    uint8_t index;
-
-    if (strlen(server_num) != 2 || server_num[0] != 's' ||
-        server_num[1] < '0' || server_num[1] >= '0' + USER_SERVERS_MAX_NUM) {
-        cli_out(cli, "\r\nError: server must be s0..s%u\r\n", USER_SERVERS_MAX_NUM - 1);
-        return 0;
-    }
-    index = (uint8_t)(server_num[1] - '0');
-
-    /* the name field has to hold a terminator too */
-    if (name_len >= USER_SERVER_NAME_LEN) {
-        cli_out(cli, "\r\nError: server name is longer than %i chars.\r\n",
-                USER_SERVER_NAME_LEN - 1);
-        return 0;
-    }
-
-    if (ip4addr_aton(addr, &(servers[index].ip)) == 0) {
-        cli_out(cli, "\r\nError: failed to convert IP address.\r\n");
-        return 0;
-    }
-
-    memcpy(servers[index].name, name, name_len + 1);
-    cli_out(cli, "\r\nok\r\n");
     return 0;
 }
 

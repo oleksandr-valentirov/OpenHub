@@ -38,7 +38,6 @@ typedef struct ping_args {
 } ping_args_t;
 
 /* variables */
-struct user_server servers[USER_SERVERS_MAX_NUM];
 extern struct netif gnetif;
 
 static uint8_t ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr) {
