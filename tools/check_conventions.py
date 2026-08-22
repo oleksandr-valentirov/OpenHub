@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Checks the comment conventions from CLAUDE.md; see that file for the rules."""
-import io, os, re, subprocess, sys, tokenize
+import ast, io, os, re, subprocess, sys, tokenize
 
 # CubeMX and vendor files: regeneration overwrites them, so the rules cannot hold there.
 GENERATED = re.compile(
@@ -73,8 +73,29 @@ def handwritten(text):
             own.add(n)
     return own
 
+def long_docstrings(path, text, only):
+    """A docstring is the Doxygen block of a Python file: its first line is the @brief."""
+    out = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return out
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = ast.get_docstring(node, clean=False)
+        if not doc:
+            continue
+        first = re.sub(r"radio_devices_docs/[A-Za-z0-9_./-]+", "", doc.strip().split("\n")[0])
+        n = getattr(node, "lineno", 1)
+        if len(first) > 100 and (only is None or only.get(path) is None or n in only[path]):
+            out.append("%s:%d (%d chars)" % (path, n, len(first)))
+    return out
+
 def check(files, only=None):
     long_blocks, own_line, cyrillic, long_brief = [], [], [], []
+    long_doc = []
     for p in files:
         if GENERATED.search(p) or GENERATED_VEC.search(p) or not os.path.isfile(p):
             continue
@@ -87,6 +108,8 @@ def check(files, only=None):
             continue
         if p != "CLAUDE.md" and re.search("[\u0400-\u04ff]", text):
             cyrillic.append(p)
+        if p.endswith(".py"):
+            long_doc.extend(long_docstrings(p, text, only))
         mine = handwritten(text)
         # Shell and CMake are not tokenizable; only Python gets the string check.
         hashes = hash_comment_lines(text) if p.endswith(".py") else None
@@ -140,23 +163,24 @@ def check(files, only=None):
                         continue
                     if only is None or only.get(p) is None or n in only[p]:
                         own_line.append("%s:%d" % (p, n))
-    return long_blocks, own_line, cyrillic, long_brief
+    return long_blocks, own_line, cyrillic, long_brief, long_doc
 
 def main():
     changed = "--changed" in sys.argv
     files = tracked(changed)
-    longb, own, cyr, brief = check(files, touched_lines() if changed else None)
+    longb, own, cyr, brief, docs = check(files, touched_lines() if changed else None)
     scope = "lines changed against HEAD" if changed else "all tracked files"
     print("scope: %s (%d), generated and vendored excluded\n" % (scope, len(files)))
     for title, items in (("non-English outside CLAUDE.md", cyr),
                          ("comment blocks over 100 characters", longb),
                          ("struct-field comments on their own line", own),
-                         ("Doxygen @brief over 100 characters", brief)):
+                         ("Doxygen @brief over 100 characters", brief),
+                         ("Python docstring first line over 100 characters", docs)):
         print("== %s: %d ==" % (title, len(items)))
         for i in items[:15]:
             print("   " + i)
         if len(items) > 15:
             print("   ... and %d more" % (len(items) - 15))
-    return 1 if (longb or own or cyr or brief) else 0
+    return 1 if (longb or own or cyr or brief or docs) else 0
 
 sys.exit(main())
