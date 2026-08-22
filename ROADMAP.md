@@ -851,6 +851,35 @@ to leave northbound under its own name rather than as an age nobody reads.
 
 `open_hub/radio/timebase.md`.
 
+### 51. The uplink sync pairing guard has never refused anything — `defect`
+
+`uplink windows 1476, sync 100, sync unpaired 0`, read from the console. The two
+bounds in `handle_uplink_frame()` have not fired once since they were written, so
+a working guard and a guard that **cannot** fire are the same reading. Every
+number taken through `arrival_sync_us` rests on it.
+
+The good half is a measurement and worth keeping: with zero refusals, every
+arrival that reached the northbound API carried a real edge, and the absences the
+server sees are its own diff rather than an unpaired stamp.
+
+Two things are missing and they are separate.
+
+**The control.** A build with the bounds deliberately narrowed must drive the
+counter, and nothing else proves the guard can move. It costs a flash, so it goes
+in the next one rather than on its own — the same rule the `verification` skill
+states for `timing`, which was verified exactly this way.
+
+**The counter northbound, per device.** `uplink_sync_unpaired` is hub-wide, and
+an event carries only `device:<id>`, so it cannot reach the stream and could not
+attribute a refusal to a device if it did. A per-device counter turns an absent
+`arrival_sync_us` back into two distinguishable states — absent with the counter
+moved is *not measured*, absent with it still is *unchanged by the diff* — which
+is the distinction the field was built for and which the transport currently
+erases. New field id, so the wire digest moves and both cores are reflashed;
+the id is the server session's to allocate.
+
+`open_hub/radio/sync-timestamp.md`, `open_hub/network/telemetry.md`.
+
 ---
 
 ## Design agreed but unbuilt
