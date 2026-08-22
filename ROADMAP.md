@@ -969,6 +969,38 @@ and a build id does not replace a contract check.
 
 `open_hub/network/telemetry.md`, `open_hub/testing/on-target.md`.
 
+### 49. The frame ring cannot say which superframe a sample arrived in — `debt`
+
+`ipc_afc_raw_t` carries `grid`, `slot`, `gain`, `rssi` and `afc` per sample, and
+every scalar beside them describes the ring rather than an entry. **No superframe
+is recorded per sample.** So the northbound row cannot be joined against the
+device's own transmit log by arrival, which is what two instruments need to share
+a population rather than two windows.
+
+Packing the counter at snapshot time does not fix it: that number is when CM7
+assembled the snapshot, and a join on it is a join on read time wearing the name
+of an arrival. This is the shape `arrival_us` already has, one field over.
+
+**`grid` is a partial witness and is on the wire today.** It comes from
+`hop_channel(&hop, frame_counter, &idx)`, so it is a function of the superframe,
+not of a position inside one — the deck is a permutation of `RADIO_HOP_COUNT`,
+which makes `grid` a bijection onto `superframe mod 28`. That cannot name the
+superframe, but it can **refuse** a claimed one, with no new field at all. Not
+built.
+
+Recovery cannot be more than a refusal, because the ambiguity lands exactly where
+the measurement is: over 22 observed inter-arrival gaps, **13 exceeded the hop
+cycle**. A reconstruction would be right 41% of the time and silently wrong the
+rest, which is worse than absent.
+
+The honest fix is an array, and it fits: `IPC_PAYLOAD_MAX` is 96 and
+`sizeof(ipc_afc_raw_t)` is 72, so 24 bytes are free. A `uint32_t` per entry costs
+36 and does not fit; a `uint16_t` costs 18 and does, with CM7 restoring the high
+bits from the counter it already holds. It is a CM4-to-CM7 contract change, so
+both cores are reflashed together.
+
+`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
+
 ## Bench debts
 
 ### 27. Cold start is untested — `device`
