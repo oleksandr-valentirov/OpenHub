@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Checks the comment conventions from CLAUDE.md; see that file for the rules."""
-import ast, io, os, re, subprocess, sys, tokenize
+import ast, io, os, re, subprocess, sys, tokenize, unicodedata
 
 # CubeMX and vendor files: regeneration overwrites them, so the rules cannot hold there.
 GENERATED = re.compile(
@@ -42,6 +42,30 @@ def tracked(changed):
     out += subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
                           capture_output=True, text=True).stdout.split()
     return out
+
+def foreign_letters(text):
+    """Letters from a script the repository does not write in, with their names.
+
+    The check was Cyrillic-only for months under a heading that said non-English,
+    which is a name broader than its coverage - a CJK character slipped through it
+    on 2026-08-22. Latin and Greek stay, because Greek carries units; so do the
+    micro and ohm signs, which are letters by category and symbols by intent.
+    """
+    keep = ("LATIN", "GREEK")
+    allow = ("MICRO SIGN", "OHM SIGN", "ANGSTROM SIGN")
+    out = []
+    for ch in set(text):
+        if ord(ch) < 0x80 or not unicodedata.category(ch).startswith("L"):
+            continue
+        try:
+            name = unicodedata.name(ch)
+        except ValueError:
+            name = "UNNAMED U+%04X" % ord(ch)
+        if name.startswith(keep) or name in allow:
+            continue
+        out.append(name)
+    return sorted(set(out))
+
 
 def kind(path):
     base = os.path.basename(path)
@@ -157,15 +181,19 @@ def check(files, only=None):
     for p in files:
         if GENERATED.search(p) or GENERATED_VEC.search(p) or not os.path.isfile(p):
             continue
-        pfx = kind(p)
-        if pfx is None:
-            continue
         try:
             text = open(p, errors="replace").read()
         except OSError:
             continue
-        if p != "CLAUDE.md" and re.search("[\u0400-\u04ff]", text):
-            cyrillic.append(p)
+        # Before kind(): the language rule covers every file, and .md and .ld have
+        # no comment prefix, so gating on one skipped them for the rule's whole life.
+        if p != "CLAUDE.md":
+            foreign = foreign_letters(text)
+            if foreign:
+                cyrillic.append("%s (%s)" % (p, ", ".join(foreign[:3])))
+        pfx = kind(p)
+        if pfx is None:
+            continue
         if p.endswith(".py"):
             long_doc.extend(long_docstrings(p, text, only))
         mine = handwritten(text)
