@@ -1137,7 +1137,7 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nError: not enrolled, or flash write failed\r\n");
         return 0;
     }
-    /* Nothing is sent to CM4: it holds no per-device state yet.
+    /* CM4 keeps its own entry and is not told. ROADMAP item 56
      * radio_devices_docs/open_hub/arch/ipc.md */
     cli_out(cli, "\r\nremoved 0x%08lx\r\n", (unsigned long)dev_id);
     return 0;

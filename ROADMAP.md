@@ -608,6 +608,28 @@ covers the setting not persisting rather than not being reported.
 
 `radio/known-issues.md`, `open_hub/network/telemetry.md`.
 
+### 56. `device remove` forgets a device on one core only — `defect`
+
+`cmd_device_remove()` calls `ks_forget()` and sends CM4 nothing, under a comment
+saying CM4 "holds no per-device state yet". That stopped being true: CM4 keeps
+`devices[RADIO_MAX_DEVICES]` with each device's keys, slot and downlink state,
+installed over `IPC_REQ_INSTALL_DEVICE`.
+
+`used` is written in exactly one place — set to 1 at install — and **cleared
+nowhere**, so a removed device keeps its slot on the radio until the next reset:
+its uplinks are still accepted, still decrypted and still reported northbound,
+and downlinks still go out to it. The operator is told `removed 0x...`.
+
+`IPC_REQ_REMOVE_DEVICE` exists in the shared enum and CM4's handler answers it
+`IPC_ST_UNKNOWN_REQ` by falling into `default`, so the request is reserved and
+refused rather than missing. The fix is to implement it and to send it, and the
+control is the one the CLI already hints at: remove, then re-enrol, and check
+that CM4 holds one entry rather than two.
+
+Found by a cleanup sweep for requests only one core knows about — not on air.
+
+`open_hub/arch/ipc.md`, `open_hub/cli.md`.
+
 ---
 
 ## Design agreed but unbuilt

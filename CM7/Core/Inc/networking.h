@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 #include "main.h"
-#include "ip4_addr.h"
 
 /**
  * @file networking.h
