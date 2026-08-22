@@ -79,7 +79,6 @@ static int cmd_status(cli_data_t *cli, int argc, char **argv);
 static int cmd_help(cli_data_t *cli, int argc, char **argv);
 static int cmd_ip(cli_data_t *cli, int argc, char **argv);
 static int cmd_ping(cli_data_t *cli, int argc, char **argv);
-static int cmd_cfg(cli_data_t *cli, int argc, char **argv);
 static int cmd_device(cli_data_t *cli, int argc, char **argv);
 static int cmd_lwip(cli_data_t *cli, int argc, char **argv);
 static int cmd_rng(cli_data_t *cli, int argc, char **argv);
@@ -96,7 +95,6 @@ static const cli_cmd_t commands[] = {
     {"status",  0, 0, cmd_status,  "",                       "print system status"},
     {"ip",      0, 4, cmd_ip,      "[dhcp|static|set ...]",  "show or set network config"},
     {"ping",    1, 1, cmd_ping,    "<ip addr>",              "send ping message"},
-    {"cfg",     1, 1, cmd_cfg,     "<save | load>",          "config subcommand"},
     {"device",  1, 3, cmd_device,  "<add|window|remove|list|pair|...>","devices and the radio"},
     {"devices", 0, 4, cmd_devices, "[rate <n> | cmd <dev_id> ...]",  "paired devices and their link"},
     {"vectors", 0, 0, cmd_vectors, "",                       "vector sets each core was built against"},
@@ -507,20 +505,6 @@ static int cmd_ping(cli_data_t *cli, int argc, char **argv) {
     /* prints through stdout on its own */
     Networking_ping_command(argv[1], 4, 0, 1, NULL);
     cli_out(cli, "\r\n");
-    return 0;
-}
-
-static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
-    UNUSED(argc);
-
-    if (strcmp(argv[1], "save") == 0 || strcmp(argv[1], "load") == 0)
-        cli_out(cli, "\r\nError: not implemented\r\n");
-    else
-        cli_out(cli,
-            "\r\ncfg <save | load>\r\n"
-            "save - saves current config to the pre-defined memory section\r\n"
-            "load - loads config from the pre-defined memory section\r\n");
-
     return 0;
 }
 

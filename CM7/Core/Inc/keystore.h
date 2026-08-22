@@ -200,9 +200,6 @@ int      ks_legacy_pending(void);
  */
 int      ks_legacy_commit(void);
 
-/** @brief Records migrated since boot. @return count */
-uint32_t ks_migrated(void);
-
 /**
  * @brief Room left in the append-only log.
  * @return records still writable, which is the number the exhausted path acts on

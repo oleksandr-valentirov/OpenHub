@@ -16,7 +16,6 @@ SHARED_MEM ipc_shared_t shared_ipc;
 /* One counter per core; a reply always echoes rather than allocating. */
 static uint16_t next_seq = 1;
 static uint32_t stale_replies = 0;
-static uint32_t stale_event_replies = 0;
 
 static uint16_t alloc_seq(void) {
     uint16_t seq = next_seq++;
@@ -156,19 +155,6 @@ int ipc_send_event(uint8_t type, const void *payload, uint8_t len, uint16_t *seq
     return 0;
 }
 
-int ipc_poll_event_reply(uint16_t seq, ipc_msg_t *out) {
-    ipc_msg_t m;
-
-    while (ring_pop(&shared_ipc.evt_rsp, &m)) {
-        if (m.seq == seq) {
-            *out = m;
-            return 1;
-        }
-        stale_event_replies++;
-    }
-    return 0;
-}
-
 /* No sequence filter, so the caller owns the dispatch and nothing is dropped
  * on its behalf. radio_devices_docs/open_hub/arch/ipc.md */
 int ipc_poll_any_event_reply(ipc_msg_t *out) {
@@ -194,10 +180,6 @@ int ipc_send_event_reply(const ipc_msg_t *evt, uint8_t status, const void *paylo
 
 uint32_t ipc_stale_replies(void) {
     return stale_replies;
-}
-
-uint32_t ipc_stale_event_replies(void) {
-    return stale_event_replies;
 }
 
 void ipc_ring_state(const ipc_ring_t *r, uint32_t *head, uint32_t *tail) {

@@ -16,12 +16,6 @@
 uint32_t rfm_micros(void);
 
 /**
- * @brief The same counter in nominal milliseconds.
- * @return rfm_micros() divided by 1000, so it inherits the uncorrected scale
- */
-uint32_t get_rfm_counter(void);
-
-/**
  * @brief Whether a deadline has passed, comparing signed so a wrap is safe.
  * @param deadline_us  a value previously derived from rfm_micros()
  * @retval 1  the deadline is reached or passed
@@ -34,25 +28,6 @@ uint8_t  timebase_elapsed(uint32_t deadline_us);
  * @param us  ticks to wait, not corrected microseconds
  */
 void     delay_us_poll(uint32_t us);
-
-/**
- * @brief Busy-waits in milliseconds.
- * @param ms  milliseconds to block for
- */
-void     delay_ms_poll(uint32_t ms);
-
-/**
- * @brief Arms a non-blocking deadline the radio state machine polls.
- * @param ms  milliseconds until get_delay_ms_flag() reads 1
- */
-void     delay_ms_it(uint32_t ms);
-
-/**
- * @brief Polls the deadline armed by delay_ms_it().
- * @retval 1  no deadline is outstanding
- * @retval 0  the interval is still running
- */
-uint8_t  get_delay_ms_flag(void);
 
 /**
  * @brief Converts a wanted interval into the ticks that measure it.

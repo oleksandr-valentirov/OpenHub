@@ -282,13 +282,6 @@ const pairing_stats_t *pairing_get_stats(void) {
     return &stats;
 }
 
-uint8_t pairing_hub_pubkey(uint8_t pub[33]) {
-    if (!hub_pub_ready)
-        return 0;
-    memcpy(pub, hub_pub, 33);
-    return 1;
-}
-
 /* pair_v3's invitation, built here and keyed by CM4.
  * radio_devices_docs/open_hub/radio/pairing.md */
 static struct {

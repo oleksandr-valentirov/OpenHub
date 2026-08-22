@@ -59,14 +59,6 @@ const pairing_stats_t *pairing_get_stats(void);
 const uint8_t *pairing_last_transcript(uint32_t *dev_id, uint32_t *superframe);
 
 /**
- * @brief The hub's public key, as provisioned to devices.
- * @param pub  receives the 33-byte compressed point
- * @retval 1  it has been recovered and was copied out
- * @retval 0  none is available yet
- */
-uint8_t pairing_hub_pubkey(uint8_t pub[33]);
-
-/**
  * @brief The reporting cadence PAIR_ACCEPT grants.
  * @return superframes between reports, granted at pairing rather than compiled in
  *

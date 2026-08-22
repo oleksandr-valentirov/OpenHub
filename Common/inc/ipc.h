@@ -628,18 +628,6 @@ int ipc_send_reply(const ipc_msg_t *req, uint8_t status, const void *payload, ui
 int ipc_send_event(uint8_t type, const void *payload, uint8_t len, uint16_t *seq_out);
 
 /**
- * @brief Takes the event reply matching one sequence number, on CM4.
- * @param seq  the number ipc_send_event() gave out
- * @param out  receives the reply
- * @retval 1  a matching reply was taken
- * @retval 0  none yet
- *
- * Filtering: everything else is discarded on the way past. With more than one
- * waiter this silently eats the other's reply - use ipc_poll_any_event_reply().
- */
-int ipc_poll_event_reply(uint16_t seq, ipc_msg_t *out);
-
-/**
  * @brief Takes any event reply, so one dispatcher can serve every waiter.
  * @param out  receives the reply, whatever it answers
  * @retval 1  a reply was taken
@@ -674,13 +662,6 @@ int ipc_send_event_reply(const ipc_msg_t *evt, uint8_t status, const void *paylo
  * @return count; non-zero means requests are timing out and CM4 is answering late
  */
 uint32_t ipc_stale_replies(void);
-
-/**
- * @brief The same for events, counted apart.
- * @return count; a pairing timing out on CM7 and a CLI request timing out on the
- *         radio are different faults, and one number for both names neither
- */
-uint32_t ipc_stale_event_replies(void);
 
 /**
  * @brief Reads a ring's indices, for the console to print occupancy.

@@ -214,7 +214,6 @@ static void put_hub(oht_writer_t *w, const snap_t *s) {
     OHT_PUT(w, OHT_F_HUB_UPTIME_MS, osKernelGetTickCount());
     OHT_PUT(w, OHT_F_HUB_IPC_READY, ipc_ready());
     OHT_PUT(w, OHT_F_HUB_IPC_STALE_REPLIES, ipc_stale_replies());
-    OHT_PUT(w, OHT_F_HUB_IPC_STALE_EVENTS, ipc_stale_event_replies());
 
     if (s->have_timing) {
         OHT_PUT(w, OHT_F_HUB_SUPERFRAME, s->timing.superframe);

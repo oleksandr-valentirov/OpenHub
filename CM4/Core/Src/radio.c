@@ -490,7 +490,6 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     /* Reserve before the grid starts, so the first beacon is already covered. */
     (void)kv_reserve(frame_counter);
 
-    delay_ms_it(SUPERFRAME_US / 1000u);
     return 0;
 }
 

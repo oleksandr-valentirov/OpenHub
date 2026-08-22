@@ -49,7 +49,6 @@ static uint8_t     exhausted;
 static uint8_t     ready;
 /* Carried out of scan() separately, so a legacy record is never served as current.
  * radio_devices_docs/open_hub/arch/keystore.md */
-static uint32_t    migrated;      /* key records carried across a format bump */
 static uint8_t     legacy_hub_key[KS_ROOT_KEY_BYTES];
 static uint8_t     legacy_hub_valid;
 static uint32_t    legacy_hub_seq;
@@ -301,7 +300,6 @@ int ks_legacy_commit(void) {
         memcpy(r.root_key, legacy_hub_key, KS_ROOT_KEY_BYTES);
         if (append(&r) != 0)
             return -1;
-        migrated++;
         done++;
     }
     if (legacy_net_valid && !net_key_valid) {
@@ -312,13 +310,11 @@ int ks_legacy_commit(void) {
         memcpy(r.root_key, legacy_net_key, 16);
         if (append(&r) != 0)
             return -1;
-        migrated++;
         done++;
     }
     return done;
 }
 
-uint32_t ks_migrated(void) { return migrated; }
 int ks_legacy_pending(void) {
     return (legacy_hub_valid && !hub_key_valid) ||
            (legacy_net_valid && !net_key_valid);
