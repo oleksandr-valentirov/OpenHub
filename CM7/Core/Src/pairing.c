@@ -20,6 +20,7 @@
 #include "ipc.h"
 #include "radio_protocol.h"
 #include "radio_slots.h"
+#include "telemetry.h"
 
 #include "mbedtls/sha256.h"
 #include "mbedtls/platform_util.h"
@@ -460,6 +461,9 @@ static void serve_uplink(const ipc_msg_t *m) {
     memcpy(&up_evt.last, m->payload, sizeof(up_evt.last));
     up_evt.last_tick = osKernelGetTickCount();
     up_evt.seen++;
+    /* Handed on before the reply, so the deadline is not paid for twice.
+     * ROADMAP item 2 */
+    telemetry_notify_uplink(&up_evt.last);
     /* Sent after the handling, never before: it is the handling it reports. */
     (void)ipc_send_event_reply(m, IPC_ST_OK, NULL, 0);
 }

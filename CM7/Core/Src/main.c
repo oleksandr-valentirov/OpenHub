@@ -94,6 +94,18 @@ const osThreadAttr_t cliTask_attributes = {
   .priority = (osPriority_t) osPriorityIdle,
 };
 /* USER CODE BEGIN PV */
+/* Its own stack: a snapshot walks the device table through the mailbox. */
+osThreadId_t telemetryTaskHandle;
+uint32_t telemetryTaskBuffer[ 1536 ];
+osStaticThreadDef_t telemetryTaskControlBlock;
+const osThreadAttr_t telemetryTask_attributes = {
+  .name = "telemetry",
+  .cb_mem = &telemetryTaskControlBlock,
+  .cb_size = sizeof(telemetryTaskControlBlock),
+  .stack_mem = &telemetryTaskBuffer[0],
+  .stack_size = sizeof(telemetryTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -105,6 +117,7 @@ static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 extern void CLI_Task(void *argument);
 #include "pairing.h"
+#include "telemetry.h"
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -237,6 +250,7 @@ Error_Handler();
 
   /* USER CODE BEGIN RTOS_THREADS */
   pairTaskHandle = osThreadNew(PairingTask, NULL, &pairTask_attributes);
+  telemetryTaskHandle = osThreadNew(TelemetryTask, NULL, &telemetryTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

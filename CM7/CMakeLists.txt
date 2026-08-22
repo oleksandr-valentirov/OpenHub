@@ -104,8 +104,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/keystore.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
+    Core/Src/telemetry.c
     ../Common/src/rng.c
     ../Common/src/ipc.c
+    ../Common/src/oht_codec.c
     crypto/entropy_hw.c
     crypto/crypto.c
     crypto/mbedtls_alloc.c

@@ -46,3 +46,13 @@ open_hub/radio/timebase.md:rate_Hz     # variable in the calibration derivation
 open_hub/radio/timebase.md:true_ppm    # likewise
 # A udev device path in an untagged fence, not a symbol.
 open_hub/testing/on-target.md:STMicroelectronics_STLINK  # the console's by-id path
+
+# Telemetry field and command names. Their authority is
+# openhub-server/schema/telemetry.yaml, which is not in this tree; the header it
+# generates spells them OHT_F_*/OHT_CMD_*/OHT_RES_*, and the page uses the names
+# a REST reader actually sees. Quoting the macro instead would document a form
+# no client ever handles.
+open_hub/network/telemetry.md:rssi_up_sync_dbm  # schema field, OHT_F_DEVICE_RSSI_UP_SYNC_DBM here
+open_hub/network/telemetry.md:snapshot_ask_ms   # schema field, OHT_F_LINK_SNAPSHOT_ASK_MS here
+open_hub/network/telemetry.md:dev_app           # schema command, OHT_CMD_DEV_APP here
+open_hub/network/telemetry.md:not_implemented   # schema result, OHT_RES_NOT_IMPLEMENTED here

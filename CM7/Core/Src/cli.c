@@ -36,6 +36,8 @@
 #include "crypto.h"
 
 /* HAL/LL */
+#include "telemetry.h"
+#include "oht_proto.h"
 #include "stm32h7xx_hal_rng.h"
 
 /* LWIP */
@@ -86,6 +88,7 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv);
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
 static int cmd_vectors(cli_data_t *cli, int argc, char **argv);
+static int cmd_telemetry(cli_data_t *cli, int argc, char **argv);
 static int set_server_ip_addr(cli_data_t *cli, char *server_num, char *addr, char *name);
 
 static const cli_cmd_t commands[] = {
@@ -102,6 +105,8 @@ static const cli_cmd_t commands[] = {
     {"crypto",  0, 0, cmd_crypto,  "",                       "run the crypto self-tests"},
     {"timing",  0, 0, cmd_timing,  "",                       "superframe grid and beacon jitter"},
     {"hopprf",  1, 1, cmd_hopprf,  "<32 hex chars>",         "run the hop PRF on CM4"},
+    {"telem",   0, 4, cmd_telemetry, "[server <ip> <port> [token] | on | off | now]",
+                                                            "the northbound telemetry link"},
     {"?",       0, 0, cmd_help,    "",                       "print available commands"},
 };
 
@@ -1863,6 +1868,108 @@ void USART3_IRQHandler(void) {
     }
 
     portYIELD_FROM_ISR(woken);
+}
+
+
+/* Why the link is down is one of several things, so it is printed, not inferred.
+ * radio_devices_docs/open_hub/network/telemetry.md */
+static const char *disc_reason_name(uint8_t r) {
+    switch (r) {
+    case OHT_DISC_REASON_NONE:           return "none";
+    case OHT_DISC_REASON_CONNECT_FAILED: return "connect failed";
+    case OHT_DISC_REASON_PEER_CLOSED:    return "server closed it";
+    case OHT_DISC_REASON_SEND_FAILED:    return "send failed";
+    case OHT_DISC_REASON_RECV_FAILED:    return "receive failed";
+    case OHT_DISC_REASON_BAD_FRAME:      return "bad frame";
+    case OHT_DISC_REASON_HELLO_REFUSED:  return "hello refused";
+    case OHT_DISC_REASON_KEEPALIVE_LOST: return "silent too long";
+    case OHT_DISC_REASON_OPERATOR:       return "turned off here";
+    default:                             return "?";
+    }
+}
+
+static const char *hello_reason_name(uint8_t r) {
+    switch (r) {
+    case OHT_ACK_OK:              return "accepted";
+    case OHT_ACK_BAD_TOKEN:       return "bad token";
+    case OHT_ACK_BAD_VERSION:     return "protocol version";
+    case OHT_ACK_SCHEMA_MISMATCH: return "schema digest";
+    case OHT_ACK_BUSY:            return "another hub is connected";
+    default:                      return "?";
+    }
+}
+
+static int cmd_telemetry(cli_data_t *cli, int argc, char **argv) {
+    const telemetry_stats_t *s;
+    const char *ip = NULL;
+    uint16_t port = 0;
+
+    if (argc >= 4 && strcmp(argv[1], "server") == 0) {
+        int n = atoi(argv[2 + 1]);
+
+        if (n <= 0 || n > 65535) {
+            cli_out(cli, "\r\nError: port is 1..65535\r\n");
+            return 0;
+        }
+        if (telemetry_configure(argv[2], (uint16_t)n, (argc >= 5) ? argv[4] : NULL) != 0) {
+            cli_out(cli, "\r\nError: %s is not an IPv4 address\r\n", argv[2]);
+            return 0;
+        }
+        telemetry_enable(1);
+        /* Says configured, never connected: the task has not tried yet. */
+        cli_out(cli, "\r\nserver %s:%d, link enabled - 'telem' shows whether it "
+                     "connected\r\n", argv[2], n);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "on") == 0) {
+        telemetry_enable(1);
+        cli_out(cli, "\r\nenabled\r\n");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "off") == 0) {
+        telemetry_enable(0);
+        cli_out(cli, "\r\ndisabled\r\n");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "now") == 0) {
+        telemetry_request_snapshot();
+        cli_out(cli, "\r\nsnapshot requested\r\n");
+        return 0;
+    }
+    if (argc != 1) {
+        cli_out(cli, "\r\nUsage: telem [server <ip> <port> [token] | on | off | now]\r\n");
+        return 0;
+    }
+
+    s = telemetry_get_stats(&ip, &port);
+    cli_out(cli, "\r\nschema %s\r\n", OHT_SCHEMA_DIGEST);
+    if (ip == NULL || ip[0] == 0)
+        cli_out(cli, "no server set - 'telem server <ip> <port> [token]'\r\n");
+    else
+        cli_out(cli, "server %s:%u, %s\r\n", ip, port,
+                s->enabled ? "enabled" : "disabled");
+    cli_out(cli, "%s", s->connected ? "connected" : "down");
+    if (s->connected)
+        cli_out(cli, " for %lus, snapshot asked every %lums, achieved %lums\r\n",
+                (unsigned long)(s->up_ms / 1000u), (unsigned long)s->snapshot_ms,
+                (unsigned long)s->snapshot_gap_ms);
+    else
+        cli_out(cli, ", last reason: %s (%s)\r\n", disc_reason_name(s->last_disc_reason),
+                hello_reason_name(s->hello_reason));
+    cli_out(cli, "connects %lu, disconnects %lu, connect failures %lu\r\n",
+            (unsigned long)s->connects, (unsigned long)s->disconnects,
+            (unsigned long)s->connect_fail);
+    cli_out(cli, "tx %lu frames / %lu bytes, %lu refused\r\n",
+            (unsigned long)s->frames_tx, (unsigned long)s->bytes_tx,
+            (unsigned long)s->tx_fail);
+    cli_out(cli, "snapshots %lu, last cost %luus, %lu truncated\r\n",
+            (unsigned long)s->snapshots, (unsigned long)s->snapshot_us,
+            (unsigned long)s->snapshot_trunc);
+    cli_out(cli, "events %lu pushed, %lu dropped\r\n",
+            (unsigned long)s->events_pushed, (unsigned long)s->events_dropped);
+    cli_out(cli, "commands %lu, %lu refused\r\n",
+            (unsigned long)s->cmds_rx, (unsigned long)s->cmds_bad);
+    return 0;
 }
 
 void CLI_Task(void *argument) {

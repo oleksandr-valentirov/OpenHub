@@ -800,7 +800,56 @@ Blocked behind item 3, which is the same wire change.
 
 ### 26. TLS on the northbound interface — `debt`
 
-Nothing is implemented. `open_hub/network/tls.md`.
+Nothing is implemented, and there is now a link to protect: telemetry and
+commands run in the clear over TCP between the hub and `openhub-server`, so
+anything on the LAN can read every device's RSSI and issue `device_remove`.
+
+Two of the page's three open questions are settled. The protocol is OHT over one
+outbound connection, so the hub is a TLS **client** and mbedTLS goes straight
+over the socket — no `altcp_tls`, and therefore no lwIP-2.1.2-against-mbedTLS-3.6
+mismatch to resolve. What is left is the identity question: PSK is far smaller on
+the hub and needs a terminator outside Python's stdlib, which cannot do PSK; a
+pinned self-signed certificate is trivial on the server and costs the hub X.509
+and ECDSA.
+
+`open_hub/network/tls.md`, `open_hub/network/telemetry.md`.
+
+### 38. The northbound link forgets its server on every reset — `debt`
+
+`telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
+`ip static`. Both wait on the same configuration store that `cfg save` / `cfg
+load` stub out. Until then the link cannot come up unattended, which is most of
+what a server is for.
+
+`open_hub/network/telemetry.md`, `open_hub/network/ethernet.md`.
+
+### 39. A device command still cannot say anything the wire has no word for — `debt` `contract`
+
+`dev_app` reaches the firmware end to end and is refused there with
+`not_implemented`: the downlink's `app[6]` is unwritten, which is *item 3* seen
+from the north side. Everything above the radio is built — the argument is
+carried, validated and acked — so agreeing the payload with the WL55 session is
+the only work left, and it lands as one commit in `radio.c` rather than as a new
+path through three layers.
+
+Until then "raise the transmit power" and "run a calibration" are not things the
+server can ask a device to do, whatever a dashboard's buttons suggest.
+
+`open_hub/network/telemetry.md`, `radio/tdma.md` § slot budget.
+
+### 40. A snapshot costs 45 ms, almost all of it waiting on the mailbox — `debt`
+
+`snapshot_us` reads 45 000 with two devices installed. The work is nine
+`hub_ipc_call()` round trips and each one polls for its reply on a 5 ms
+`osDelay`, so the figure is the polling interval times the number of calls and
+has almost nothing to do with CM4. At 64 devices it would be over half a second
+of one task spinning.
+
+The fix is a reply notification rather than a poll, which the doorbell semaphore
+already does for events. Not urgent at two devices; it becomes urgent at the
+first bench with more than about ten.
+
+`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ---
 

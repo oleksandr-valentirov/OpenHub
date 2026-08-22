@@ -11,7 +11,8 @@ CFLAGS = -std=c11 -Wall -Wextra -Werror -O1 -g -I../inc -I vectors
 # Not -MMD: each test is one cc invocation over several sources, every source
 # writes the same .d, and only the last one's headers survive. It looks like
 # dependency tracking and tracks one translation unit.
-VECTORS = vectors/hop_v1.h vectors/wire_v3.h vectors/pair_v2.h vectors/link_v5.h
+VECTORS = vectors/hop_v1.h vectors/wire_v3.h vectors/pair_v2.h vectors/link_v5.h \
+          vectors/oht_v1.h
 
 test_hop: test_hop.c ../src/hop.c ../inc/hop.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_hop.c ../src/hop.c
@@ -25,12 +26,16 @@ test_link: test_link.c ../inc/radio_protocol.h $(VECTORS)
 test_slots: test_slots.c ../inc/radio_slots.h ../inc/radio_protocol.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_slots.c
 
+test_oht: test_oht.c ../src/oht_codec.c ../inc/oht_proto.h ../inc/oht_fields.h $(VECTORS)
+	$(CC) $(CFLAGS) -o $@ test_oht.c ../src/oht_codec.c
+
 .PHONY: check clean
-check: test_hop test_slots test_link test_ipc
+check: test_hop test_slots test_link test_ipc test_oht
 	./test_hop
 	./test_slots
 	./test_link
 	./test_ipc
+	./test_oht
 
 clean:
-	rm -f test_hop test_slots test_link test_ipc
+	rm -f test_hop test_slots test_link test_ipc test_oht
