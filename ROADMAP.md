@@ -931,56 +931,6 @@ to leave northbound under its own name rather than as an age nobody reads.
 
 `open_hub/radio/timebase.md`.
 
-### 51. The uplink sync pairing guard has never refused anything — `defect`
-
-`uplink windows 1476, sync 100, sync unpaired 0`, read from the console. The two
-bounds in `handle_uplink_frame()` have not fired once since they were written, so
-a working guard and a guard that **cannot** fire are the same reading. Every
-number taken through `arrival_sync_us` rests on it.
-
-The good half is a measurement and worth keeping: with zero refusals, every
-arrival that reached the northbound API carried a real edge, and the absences the
-server sees are its own diff rather than an unpaired stamp.
-
-Two things are missing and they are separate.
-
-**The control.** A build with the bounds deliberately narrowed must drive the
-counter, and nothing else proves the guard can move. It costs a flash, so it goes
-in the next one rather than on its own — the same rule the `verification` skill
-states for `timing`, which was verified exactly this way.
-
-**The counter northbound, per device.** `uplink_sync_unpaired` is hub-wide, and
-an event carries only `device:<id>`, so it cannot reach the stream and could not
-attribute a refusal to a device if it did. A per-device counter turns an absent
-`arrival_sync_us` back into two distinguishable states — absent with the counter
-moved is *not measured*, absent with it still is *unchanged by the diff* — which
-is the distinction the field was built for and which the transport currently
-erases. New field id, so the wire digest moves and both cores are reflashed;
-the id is the server session's to allocate.
-
-`open_hub/radio/sync-timestamp.md`, `open_hub/network/telemetry.md`.
-
-### 54. A linker script edit does not relink — `defect`
-
-`touch CM7/custom_m7_flash.ld && cmake --build CM7/build` prints **`ninja: no work
-to do`**, and the same on CM4. The script reaches the link only as the `-T`
-argument inside `rules.ninja`; nothing lists it as a dependency edge, so a change
-to it does not invalidate the ELF.
-
-The failure mode is silence. Editing the memory map, moving a section, changing an
-origin — all of them rebuild cleanly and produce the binary that predates the
-edit, and the flash that follows writes it without complaint. `.shared_mem` and
-the two custom sections in `open_hub/arch/memory-map.md` are exactly the kind of
-change that would be made this way.
-
-Found by editing both scripts for the comment-length rule and noticing that only
-one core relinked, for an unrelated reason. Until it is fixed, **delete the ELF
-before rebuilding after any linker script change** — that is what proved the edits
-here are sound, and the two ELFs came back byte-identical, which is what a
-comment-only edit should produce.
-
-`open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
-
 ---
 
 ## Design agreed but unbuilt
@@ -1066,31 +1016,6 @@ first bench with more than about ten.
 `open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ---
-
-### 47. The firmware does not say which build it is — `debt`
-
-`hello` carries `fw: "openhub-cm7"`, a name. The three digests beside it pin the
-schema and the vector sets, so a board cannot silently disagree with HEAD about a
-*contract* — but none of them names a build, and neither does the console.
-
-So "what is on the board" is answerable only from memory, and memory is what both
-sessions reached for within an hour of each other on 2026-08-22, each about to
-flash while the other was measuring. This side answered it by proving the two
-commits since the last flash were one live feature and one comment-only change —
-`gcc -fpreprocessed -dD -E -P` over both revisions, identical once comments are
-stripped. That works and does not scale: it answers for a tree whose history is
-short and whose author is present.
-
-The cost of not knowing is not a wrong build, it is a **confounded measurement**.
-A flash delivers everything since the last one, so a bench comparison of one
-change silently becomes a comparison of the whole tail, and nothing in the run
-says so.
-
-`git describe --always --dirty` at build time, into `hello` beside the digests
-and into the console banner. The digests stay: they answer a different question,
-and a build id does not replace a contract check.
-
-`open_hub/network/telemetry.md`, `open_hub/testing/on-target.md`.
 
 ### 49. The frame ring cannot say which superframe a sample arrived in — `debt`
 

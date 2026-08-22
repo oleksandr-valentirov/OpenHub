@@ -22,8 +22,7 @@
 #include "calib.h"
 #include "build_id.h"
 
-/* The pairing window's slack, narrowed by a throwaway build so the guard must
- * refuse. The id names the tree, so an override names itself in the id too.
+/* The slack a throwaway build narrows so the guard must refuse.
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
 #ifdef RADIO_SYNC_PAIR_SLACK_US
 #define BUILD_SUFFIX  "+narrow"
