@@ -34,6 +34,20 @@ project(${CMAKE_PROJECT_NAME})
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
+# The build id is refreshed every build; the header changes only when git does.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
+set(BUILD_ID_H ${CMAKE_CURRENT_BINARY_DIR}/build_id.h)
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DOUT=${BUILD_ID_H} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/..
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/build_id.cmake)
+add_custom_target(build_id ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DOUT=${BUILD_ID_H} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/..
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/build_id.cmake
+    BYPRODUCTS ${BUILD_ID_H}
+    COMMENT "build id")
+add_dependencies(${CMAKE_PROJECT_NAME} build_id)
+
 # The STM32Cube H7 firmware package CubeMX references.
 # radio_devices_docs/open_hub/arch/build-and-generation.md
 if(NOT DEFINED CUBE_FW_PATH)
@@ -89,6 +103,7 @@ file(GLOB MBEDTLS_SOURCES ${MBEDTLS_DIR}/library/*.c)
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    ${CMAKE_CURRENT_BINARY_DIR}
     ../Common/inc
     crypto
     ../Common/test/vectors

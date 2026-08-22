@@ -95,6 +95,7 @@ typedef struct ipc_timing {
     uint32_t calib_rejects;
     uint32_t late_over;      /**< beacons that left later than the cost limit */
     uint32_t calib_age_tk;   /**< ticks since the last accepted window */
+    char     build[24];      /**< CM4's own git describe; CM7 has its own */
 } __attribute__((packed)) ipc_timing_t;
 
 /* The radio's pairing state machine, shared so the CLI can name the states. */
@@ -496,6 +497,7 @@ typedef struct ipc_device_report {
     uint8_t  reserved;
     uint32_t arrival_us;       /**< into its superframe, stamped after the decrypt. ROADMAP item 44 */
     uint32_t arrival_sync_us;  /**< the same, off the DIO3 edge; IPC_ARRIVAL_SYNC_NONE if unpaired */
+    uint16_t sync_unpaired;    /**< arrivals whose edge could not be paired to their frame */
     uint8_t  cmd_every;        /**< report_every the last SET_RATE carried, 0 if none */
     uint8_t  cmd_state;        /**< 0 none, 1 still riding downlinks, 2 acked */
     uint16_t cyc_min;          /**< shortest gap between cycles: the observed cadence */

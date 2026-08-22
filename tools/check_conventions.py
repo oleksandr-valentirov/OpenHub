@@ -4,7 +4,7 @@ import ast, io, os, re, subprocess, sys, tokenize, unicodedata
 
 # CubeMX and vendor files: regeneration overwrites them, so the rules cannot hold there.
 GENERATED = re.compile(
-    r"(^|/)(LWIP/|third_party/|build/|\.git/|\.venv/|__pycache__/|\.cache/"
+    r"(^|/)(LWIP/|third_party/|build[-A-Za-z0-9]*/|\.git/|\.venv/|__pycache__/|\.cache/"
     r"|system_stm32h7xx|stm32h7xx_(hal_conf|hal_msp|it|nucleo_conf|hal_timebase)"
     r"|syscalls\.c|sysmem\.c|freertos\.c|FreeRTOSConfig\.h|startup_"
     r"|starm-clang\.cmake|stm32h755xx_[A-Za-z0-9_]*\.ld)")
@@ -51,6 +51,8 @@ def foreign_letters(text):
     on 2026-08-22. Latin and Greek stay, because Greek carries units; so do the
     micro and ohm signs, which are letters by category and symbols by intent.
     """
+    if "\x00" in text:
+        return []
     keep = ("LATIN", "GREEK")
     allow = ("MICRO SIGN", "OHM SIGN", "ANGSTROM SIGN")
     out = []

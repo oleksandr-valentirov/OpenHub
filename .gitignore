@@ -1,6 +1,9 @@
 # --- Build ---
 # build/, CM4/build/, CM7/build/, plus ExternalProject's tmp/, src/, stamp/.
 build/
+build-*/
+CM4/build-*/
+CM7/build-*/
 
 # --- Local tool state ---
 .vscode

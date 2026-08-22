@@ -20,6 +20,15 @@
 #include "hop_v1.h"
 #include "pair_v2.h"
 #include "calib.h"
+#include "build_id.h"
+
+/* The pairing window's slack, narrowed by a throwaway build so the guard
+ * must refuse. radio_devices_docs/open_hub/radio/sync-timestamp.md */
+#ifndef RADIO_SYNC_PAIR_SLACK_US
+#define RADIO_SYNC_PAIR_SLACK_US  RADIO_SLOT_US
+#endif
+/* Truncation would emit a plausible id; the build fails instead. */
+_Static_assert(sizeof(BUILD_ID) <= 24u, "BUILD_ID does not fit ipc_timing_t.build");
 #include "kvstore.h"
 #include "aead.h"
 #include "main.h"
@@ -70,6 +79,7 @@ typedef struct dev_entry {
     int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
     uint32_t arrival_us;        /**< into the superframe the report claimed */
     uint32_t arrival_sync_us;   /**< the same off the DIO3 edge, or IPC_ARRIVAL_SYNC_NONE */
+    uint16_t sync_unpaired;     /**< this device's share of the hub-wide refusals */
     int8_t   rssi_down;         /**< as the device heard the hub's last beacon */
     uint8_t  dl_cmd;            /**< RADIO_CMD_*, queued for this device */
     uint8_t  dl_report_every;
@@ -672,6 +682,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->ack_arg         = e->dl_ack_arg;
     d->arrival_us      = e->arrival_us;
     d->arrival_sync_us = e->arrival_sync_us;
+    d->sync_unpaired   = e->sync_unpaired;
 }
 
 /* A dropped notification and a silent device look alike, so count the drop. */
@@ -778,6 +789,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         t.calib_windows = calib_windows();
         t.calib_rejects = calib_rejects();
         t.calib_age_tk  = calib_age_tk();
+        memcpy(t.build, BUILD_ID, sizeof(BUILD_ID));
         t.late_over     = late_over;
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));
         return;
@@ -1847,9 +1859,13 @@ static void handle_uplink_frame(void) {
         uint32_t since = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
         uint32_t air   = RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES);
 
-        if (since < air || since > air + RADIO_SLOT_US) {
+        if (since < air || since > air + RADIO_SYNC_PAIR_SLACK_US) {
             d->arrival_sync_us = IPC_ARRIVAL_SYNC_NONE;
             up_sync_unpaired++;
+            /* Per device as well: the hub-wide one cannot reach an event, which
+             * carries one device. radio_devices_docs/open_hub/network/telemetry.md */
+            if (d->sync_unpaired != 0xFFFFu)
+                d->sync_unpaired++;
         } else {
             d->arrival_sync_us =
                 timebase_ticks_to_us(sync_edge_tk - sync_edge_base);

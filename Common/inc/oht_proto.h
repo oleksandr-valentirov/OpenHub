@@ -14,6 +14,8 @@
 
 /* 'OHT1' read as a little-endian word; the whole protocol is little-endian. */
 #define OHT_MAGIC          0x3154484FuL
+/* Not bumped for hello.build: it is appended, and a short hello is an older hub.
+ * radio_devices_docs/open_hub/network/telemetry.md */
 #define OHT_VERSION        1u
 /* The transmit buffer, and therefore the real cap the server is told about. */
 #define OHT_MAX_PAYLOAD    4096u
@@ -95,6 +97,7 @@ typedef struct oht_hello {
     char     hop_digest[17];
     uint8_t  reserved2[3];
     uint8_t  token[32];    /**< all zero when no shared secret is configured */
+    char     build[32];    /**< appended, never inserted: a short hello is an older hub */
 } __attribute__((packed)) oht_hello_t;
 
 /** @brief The server's answer, carrying the cadence it wants and its own digest. */
@@ -139,7 +142,7 @@ _Static_assert(sizeof(oht_hdr_t)     == OHT_HDR_LEN,     "the frame header is 8 
 _Static_assert(sizeof(oht_rec_hdr_t) == OHT_REC_HDR_LEN, "the record header is 8 bytes");
 _Static_assert(sizeof(oht_cmd_hdr_t) == 8u,              "the command header is 8 bytes");
 _Static_assert(sizeof(oht_cmd_ack_t) == 8u,              "the command ack is 8 bytes");
-_Static_assert(sizeof(oht_hello_t)   == 130u,            "hello is 130 bytes");
+_Static_assert(sizeof(oht_hello_t)   == 162u,            "hello is 162 bytes");
 _Static_assert(sizeof(oht_hello_ack_t) == 32u,           "hello_ack is 32 bytes");
 
 /**

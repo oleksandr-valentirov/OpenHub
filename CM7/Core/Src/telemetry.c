@@ -14,6 +14,9 @@
 #include "lwip/inet.h"
 
 #include "telemetry.h"
+#include "build_id.h"
+/* Truncation would emit a plausible id; the build fails instead. */
+_Static_assert(sizeof(BUILD_ID) <= 32u, "BUILD_ID does not fit oht_hello_t.build");
 #include "oht_proto.h"
 #include "hubipc.h"
 #include "keystore.h"
@@ -304,6 +307,9 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     /* Absent, never zero: zero would read as arrival exactly on the boundary. */
     if (d->arrival_sync_us != IPC_ARRIVAL_SYNC_NONE)
         OHT_PUT(w, OHT_F_DEVICE_ARRIVAL_SYNC_US, d->arrival_sync_us);
+    /* Always sent: it is what tells an absent stamp from an unchanged one.
+     * radio_devices_docs/open_hub/network/telemetry.md */
+    OHT_PUT(w, OHT_F_DEVICE_SYNC_UNPAIRED, d->sync_unpaired);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_LATCH_DBM, d->rssi_up);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_DOWN_DBM, d->rssi_down);
     OHT_PUT(w, OHT_F_DEVICE_CYC_MIN_MS, d->cyc_min);
@@ -644,6 +650,7 @@ static int say_hello(void) {
     hello.boot_id   = boot_id;
     hello.uptime_ms = osKernelGetTickCount();
     snprintf(hello.fw, sizeof(hello.fw), "openhub-cm7");
+    memcpy(hello.build, BUILD_ID, sizeof(BUILD_ID));
     memcpy(hello.schema_digest, OHT_SCHEMA_DIGEST, sizeof(hello.schema_digest) - 1u);
     memcpy(hello.pair_digest, PAIR_VECTORS_DIGEST, sizeof(hello.pair_digest) - 1u);
     memcpy(hello.hop_digest, HOP_VECTORS_DIGEST, sizeof(hello.hop_digest) - 1u);

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "cli.h"
+#include "build_id.h"
 #include "networking.h"
 #include "hsem_table.h"
 #include "shared_memory.h"
@@ -214,6 +215,9 @@ static int cmd_status(cli_data_t *cli, int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
 
+    /* Which build this is, so a bench comparison is not answered from memory.
+     * radio_devices_docs/open_hub/testing/on-target.md */
+    cli_out(cli, "\r\nbuild CM7 %s\r\n", BUILD_ID);
     count = uxTaskGetSystemState(tasks, CLI_MAX_TASKS, NULL);
     cli_out(cli, "\r\n%-16s %-5s %-4s %s\r\n", "task", "state", "prio", "stack free");
     for (UBaseType_t i = 0; i < count; i++) {
@@ -372,6 +376,9 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
             (unsigned long)(t.late_max_us - t.late_min_us));
     /* The grid steps ticks, not microseconds.
      * radio_devices_docs/open_hub/cli.md */
+
+    /* The two cores are flashed separately and can disagree. */
+    cli_out(cli, "build CM4 %.*s\r\n", (int)sizeof(t.build), t.build);
     cli_out(cli, "clock %+ld ppm vs nominal, grid steps %lu ticks\r\n",
             (long)t.calib_ppm, (unsigned long)t.period_tk);
     cli_out(cli, "calib: %lu windows, %lu rejected%s\r\n",
