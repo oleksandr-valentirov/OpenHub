@@ -931,6 +931,56 @@ to leave northbound under its own name rather than as an age nobody reads.
 
 `open_hub/radio/timebase.md`.
 
+### 54. A linker script edit does not relink — `defect`
+
+`touch CM7/custom_m7_flash.ld && cmake --build CM7/build` prints **`ninja: no work
+to do`**, and the same on CM4. The script reaches the link only as the `-T`
+argument inside `rules.ninja`; nothing lists it as a dependency edge, so a change
+to it does not invalidate the ELF.
+
+The failure mode is silence. Editing the memory map, moving a section, changing an
+origin — all of them rebuild cleanly and produce the binary that predates the
+edit, and the flash that follows writes it without complaint. `.shared_mem` and
+the two custom sections in `open_hub/arch/memory-map.md` are exactly the kind of
+change that would be made this way.
+
+Found by editing both scripts for the comment-length rule and noticing that only
+one core relinked, for an unrelated reason. Until it is fixed, **delete the ELF
+before rebuilding after any linker script change** — that is what proved the edits
+here are sound, and the two ELFs came back byte-identical, which is what a
+comment-only edit should produce.
+
+`open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
+
+### 55. A device setting changed without a reset has no witness — `contract`
+
+`radio power -9` was sent to a board at 16:16 on 2026-08-22 and left **nothing on
+the wire**. It was found from the other side of the antenna, as a 15 dB step in
+the received level, and only because someone was watching for one.
+
+The other two regime boundaries do have witnesses and both are already carried.
+A hub reset moves `boot_id`; a device reset or reflash makes `dev_uptime_s` fall
+back, which is the device's `boot_id` in everything but name and which nothing on
+this side partitions by yet. This one has neither, because the value lives on the
+device and the hub cannot know it.
+
+    boundary                      witness           state
+    hub reset                     boot_id           carried, now per row
+    device reset or reflash       dev_uptime_s      on the wire, unused
+    a setting changed in place    none              needs a field from the device
+
+It matters because it is the boundary most likely to be crossed **during** a
+measurement rather than between two: a reset announces itself by breaking the
+link, and a console command does not. The confounded run of 2026-08-22 crossed all
+three, and this was the one that had to be reconstructed from memory.
+
+The device reporting its own transmit power in the sealed report closes it, and
+that is a contract change — agree it with the device session, whose own item 52
+covers the setting not persisting rather than not being reported. The two are
+different defects with one cause.
+
+`radio/known-issues.md`, `open_hub/network/telemetry.md`.
+
 ---
 
 ## Design agreed but unbuilt
