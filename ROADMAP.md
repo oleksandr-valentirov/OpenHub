@@ -835,14 +835,22 @@ it were the noise floor admitted as a frame level, and the guard was wrong in th
 permissive direction — it could never lose a sample, only admit a bad one, so
 nothing about the readings looked wrong.
 
-Fixed. What is not fixed is that **nobody knows whether it was ever reached.**
-`sync_rssi_sample()` runs from the superloop, whose period has never been
-measured, so the lag is bounded by nothing this side can compute.
+Fixed, and **read 2026-08-22**, which is what this entry was waiting for:
 
-`sync_rssi_lag_max_us` is the instrument and it already exists: `device afcraw`
-prints it. **Read it before quoting any per-slot level out of `afcraw` again.**
-Under 6720 and the window never mattered; near or over it and some fraction of
-those levels are floor readings wearing a frame's name.
+    levels: 179 tried, 0 late, 0 failed, worst lag 658 us
+
+Against a frame that ends 6720 µs after the sync edge, so the window was never
+close to being reached and no level in `afcraw` is a floor reading wearing a
+frame's name. The superloop's period, listed as unmeasured everywhere it mattered,
+is bounded above by that 658 µs — a sample is taken when the superloop notices
+`SyncAddressMatch`, so the lag cannot be shorter than the period that produced it.
+
+**The instrument is still blind in the direction that would hurt.** It records the
+lag of samples that were *taken*; a stall long enough to lose a frame produces no
+sample and no entry, so `0 late` is a statement about arrivals and not about the
+superloop's worst case. What the number does close is a mechanism: a frame held
+unread in the FIFO cannot block the next opportunity 611 ms later, because the
+drain happens three orders of magnitude sooner than that.
 
 **Item 14's −43 dBm against a −96 dBm floor is not in doubt** and should not be
 re-opened by this: 53 dB apart is a frame level by any window. What this touches
