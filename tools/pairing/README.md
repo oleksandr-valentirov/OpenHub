@@ -36,10 +36,25 @@ authenticated. Kept because its bytes were cross-verified by two independent
 implementations and it is the baseline the second set is a change from.
 
 `gen_pair_vectors_v2.py` is **option 4** — two ECDH terms, the static-static one
-authenticating the hub. This is the current spec. It needs real curve arithmetic,
-so `p256.py` is here too, written rather than imported for the same reason the
-generator is: an independent implementation tests the specification, a shared
-library tests neither side's reading of it.
+authenticating the hub. It needs real curve arithmetic, so `p256.py` is here too,
+written rather than imported for the same reason the generator is: an independent
+implementation tests the specification, a shared library tests neither side's
+reading of it.
+
+**Neither of those two is the current spec any more, and both print rather than
+publish.** What they emitted became `pair_v1`, which bound nothing fresh into the
+derivation — a recorded `PAIR_RSP` re-derives the same session key forever. The
+published sets and the generators that write them are:
+
+| Set | Generator | What it pins |
+|---|---|---|
+| `pair_v2` | `gen_pair_v2_vectors.py` | the derivation, with freshness from both ends |
+| `pair_v3` | `gen_pair_v3_vectors.py` | the `PAIR_INIT` frame and its key |
+| `pair_prov` | `gen_pair_prov_vectors.py` | the same exchange under three superframes |
+
+The two above are kept because `pair_v1.txt` is still what `gen_pair_v2_vectors.py`
+reads, and a published input whose provenance has been deleted is a number nobody
+can re-derive.
 
 A property worth knowing: **`pair_z1` is exactly `wire_v3`'s
 `ecdh_shared_x_only`.** The static-static term uses the two long-term keypairs
