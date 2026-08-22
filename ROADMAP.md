@@ -944,6 +944,31 @@ first bench with more than about ten.
 
 ---
 
+### 47. The firmware does not say which build it is — `debt`
+
+`hello` carries `fw: "openhub-cm7"`, a name. The three digests beside it pin the
+schema and the vector sets, so a board cannot silently disagree with HEAD about a
+*contract* — but none of them names a build, and neither does the console.
+
+So "what is on the board" is answerable only from memory, and memory is what both
+sessions reached for within an hour of each other on 2026-08-22, each about to
+flash while the other was measuring. This side answered it by proving the two
+commits since the last flash were one live feature and one comment-only change —
+`gcc -fpreprocessed -dD -E -P` over both revisions, identical once comments are
+stripped. That works and does not scale: it answers for a tree whose history is
+short and whose author is present.
+
+The cost of not knowing is not a wrong build, it is a **confounded measurement**.
+A flash delivers everything since the last one, so a bench comparison of one
+change silently becomes a comparison of the whole tail, and nothing in the run
+says so.
+
+`git describe --always --dirty` at build time, into `hello` beside the digests
+and into the console banner. The digests stay: they answer a different question,
+and a build id does not replace a contract check.
+
+`open_hub/network/telemetry.md`, `open_hub/testing/on-target.md`.
+
 ## Bench debts
 
 ### 27. Cold start is untested — `device`

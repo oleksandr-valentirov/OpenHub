@@ -322,13 +322,22 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
  * level at the SyncAddressMatch edge, and only entries the ring marks
  * `in_frame` carry it. radio_devices_docs/open_hub/network/telemetry.md
  */
+/* The ring records the opportunity, the device owns three of them. ROADMAP item 45
+ * radio_devices_docs/open_hub/network/telemetry.md */
+static int row_is_device(uint8_t opportunity, uint8_t slot) {
+    /* Unplaceable first: 0xFF % RADIO_SLOT_STRIDE is 60, a real device. */
+    if (opportunity == 0xFFu)
+        return 0;
+    return RADIO_SLOT_TO_DEVICE(opportunity) == slot;
+}
+
 static void put_device_air(oht_writer_t *w, const snap_t *s, uint8_t slot) {
     uint8_t i;
 
     if (!s->have_afc)
         return;
     for (i = 0; i < s->afc.n && i < IPC_AFC_RING; i++) {
-        if (s->afc.slot[i] != slot)
+        if (!row_is_device(s->afc.slot[i], slot))
             continue;
         if ((s->afc.in_frame & (1u << i)) == 0u)
             continue;
@@ -347,7 +356,7 @@ static void put_frames(oht_writer_t *w, const snap_t *s, uint8_t slot,
     if (!s->have_afc)
         return;
     for (i = 0; i < s->afc.n && i < IPC_AFC_RING; i++) {
-        if (s->afc.slot[i] != slot)
+        if (!row_is_device(s->afc.slot[i], slot))
             continue;
         oht_rec_begin(w, OHT_OBJ_FRAME, dev_id);
         OHT_PUT(w, OHT_F_FRAME_SEQ, s->afc.total - i);
