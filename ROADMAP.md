@@ -884,9 +884,24 @@ Two of the page's three open questions are settled. The protocol is OHT over one
 outbound connection, so the hub is a TLS **client** and mbedTLS goes straight
 over the socket — no `altcp_tls`, and therefore no lwIP-2.1.2-against-mbedTLS-3.6
 mismatch to resolve. What is left is the identity question: PSK is far smaller on
-the hub and needs a terminator outside Python's stdlib, which cannot do PSK; a
-pinned self-signed certificate is trivial on the server and costs the hub X.509
-and ECDSA.
+the hub, a pinned self-signed certificate is trivial on the server and costs the
+hub X.509 and ECDSA.
+
+**The terminator this item used to need does not exist in either branch, and the
+sentence that said it did was reading a pinned image as a property of Python.**
+The certificate branch is already wired: `config.ssl_context()` is built and
+handed to `asyncio.start_server(ssl=...)` in the server's `hublink.py`, so
+nothing terminates anything. The PSK branch was blocked on the stdlib, and the
+stdlib moved — `set_psk_server_callback` is absent on 3.12, which the server's
+Dockerfile pins, and was added in 3.13. **Verify by raising the base image, not
+by reading this line**: measured here only as absent on 3.12.3.
+
+A proxy in front of the API is a different question with a different answer, and
+one fact belongs beside this item rather than inside it: the REST and websocket
+API carries **no authentication at all** — the token is checked in HELLO and
+nowhere else — so the `device_remove` exposure above is reachable on the API
+surface too, not only on the hub link. Turning authentication on breaks every
+caller at once, which is why it is a decision and not a patch.
 
 `open_hub/network/tls.md`, `open_hub/network/telemetry.md`.
 
