@@ -614,17 +614,50 @@ and a 700 µs aim predicts 72 260. **The band's centre is 72 295** — 35 µs fr
 the aim, 735 µs from the hub's assumption. `UPLINK_AIM_US` belongs in
 `Common/inc/radio_slots.h` and the hub's geometry is the side that is wrong.
 
-**That arithmetic is 25 kbps and the run predates the rate change**, which makes
-the conclusion sound and the number unusable as it stands. The pre-sync term is
-`RADIO_PRE_SYNC_AIR_US`, derived rather than carried, so at 50 kbps it is
-**1 280 µs, not 2 560**. The same physical 700 µs aim now predicts a sync edge at
-**70 980 µs**, and flush-at-slot-start predicts 70 280.
+**That arithmetic is 25 kbps and so is its grid**, which makes the conclusion
+sound and every number in it unusable. The pre-sync term is derived rather than
+carried, so at 50 kbps `RADIO_AIR_START_TO_SYNC_US` is **1 280 µs, not 2 560**;
+the slot offsets moved as well, and slot 1 no longer opens at 69 000 µs. A
+prediction stated against a grid that no longer exists is the shape a stale tool
+default has — it would have produced a confident refusal.
 
-So the re-measurement has a falsifiable prediction rather than an expectation:
-**`device synctime` at 50 kbps must centre near 70 980.** If it centres near
-72 295 again, the offset is not being produced by the aim at all and something
-downstream of the rate is holding it — which would also bear on the boundary-lag
-contradiction in item 31, since both readings subtract the same pre-sync term.
+**Measured from the hub side 2026-08-22, on the current grid.** `arrival_sync_us`
+is the DIO3 edge against `superframe_start_tk`, so it carries no processing term
+at all. Read through the headers rather than restated:
+
+    slot  0 opens  50 000    a 700 us aim predicts a sync edge at  51 980
+    slot  1 opens  59 400                                          61 380
+    slot 65 opens 661 000                                         662 980
+    slot 66 opens 670 400                                         672 380
+
+    0xc4d444aa  51 939 / 51 896 / 662 884   ->  aim 659 / 616 / 604
+    0xdcbac6f5  61 254 / 672 225            ->  aim 574 / 545
+
+Flush at slot start would predict 1 280 of residual and the readings are 1 825 to
+1 939, so **the aim is real and the hub's old assumption is the side that was
+wrong.** Both boards land 40 to 155 µs *early* of the 700 they compile.
+
+The device session's own instrument, sharing no code, no clock and not even the
+same side of the antenna, gives 634 µs sd 4 on `0xc4d444aa` and 586 sd 5 on
+`0xdcbac6f5` over 114 transmissions each. The two agree per board to 3 and 12 µs
+**and reproduce the difference between the boards** — 48 µs their way, 66 µs
+this way. A difference between boards can only have come from the boards.
+
+**The number still does not go in the shared header yet, and the reason is this
+item's own.** Five samples on this side is not a population, and writing a
+figure that two firmwares compile on the strength of five readings would repeat
+`UPLINK_AIM_US = 700` at a different value. The collection is running off
+`/api/stream`; the target is ~20 per board per opportunity, and what lands in
+`Common/inc/radio_slots.h` is then agreed with the device session rather than
+taken here.
+
+Their side has already found what the 700 actually is: `UPLINK_LEAD_US` models
+the ramp and the `SetTx` delay about 100 µs longer than the real path, so the
+frame lands early. **Early eats the guard from the safe side**, which is why
+nothing ever failed and why no counter on either side could see it — the hub's
+uplink window is open across all three opportunities, so an early frame is
+received and recorded nowhere as early. It took an instrument that measures
+*where* a frame sat rather than *whether* it arrived.
 
 `verification` skill § know which artifact each assert pins.
 
