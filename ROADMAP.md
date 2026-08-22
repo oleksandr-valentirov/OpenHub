@@ -486,6 +486,42 @@ band correlation, a channel-dependent slope, a separation between the correction
 of accepted and refused frames — are in the `rfm69` and `verification` skills,
 which is where reasoning belongs.
 
+**2026-08-22: the level column's own control ran by accident, and it passed.**
+This entry's condition was that 31 dB of transmit power must move the printed
+level by about 31 dB. A device-side flash restored a compiled-in default of
++14 dBm — the bench had been running below it and nothing persisted or restored
+the setting — so both boards jumped to maximum at their own first post-flash
+transmission, and the frame ring caught it:
+
+    0xc4d444aa   -72 dBm before 15:48:25   ->  -42 / -40 after   (+31 dB asked)
+    0xdcbac6f5   -48 dBm before 15:52:06   ->  -25       after   (+23 dB asked)
+
+The step lands at **each board's own first transmission** rather than at a shared
+moment, so it is the firmware and not the room. **The level column measures the
+frame**, and the "the column is stale and nothing else is readable" branch of the
+three-way reading above is dead.
+
+That leaves one branch live: `lna_gain` reads **G1 on every one of 120 rows**,
+including all six at -25 dBm, with the level column now known good. Checked on
+this side rather than assumed — `RegLna` is never written by the driver, in
+`rfm69_init` or anywhere else, so `LnaGainSelect` sits at its reset 000 and the
+AGC is nominally in charge; and the read is in `afc_note()` on `PayloadReady`,
+before the FIFO drain and so before `AutoRxRestartOn` restarts the receiver. So
+**the AGC is not backing off under the strongest signal this bench has produced.**
+
+**What is still not established is that the loud end costs frames.** Within one
+board, `0xdcbac6f5` passes CRC on 33 of 50 at -48 dBm and 2 of 6 at -25, which is
+**p = 0.18** — n = 6 and nothing. The comparison that looked significant, the
+-45..-36 band against the -25 band at p = 0.005, is one board against the other
+and says nothing about level. What *is* solid is the other direction on the other
+board: `0xc4d444aa` passes 15 of 30 at -72 dBm and 31 of 34 at -40, **p = 0.0003**,
+so more signal helps until some turnover this data cannot locate.
+
+The next run needs the **received** levels equalised rather than the transmitted
+ones — equal transmit power leaves the 23 dB of siting difference in place, which
+is the confound itself — and the intervention logged, which point 2 above already
+demanded and this run again did not have.
+
 `radio/phy.md`, the `rfm69` skill § the carrier is still moving.
 
 ### 14. `rssi_up` is read from an untriggered latch, and nobody knows what it holds — `defect`
