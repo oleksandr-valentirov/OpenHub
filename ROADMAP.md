@@ -960,6 +960,27 @@ the id is the server session's to allocate.
 
 `open_hub/radio/sync-timestamp.md`, `open_hub/network/telemetry.md`.
 
+### 54. A linker script edit does not relink — `defect`
+
+`touch CM7/custom_m7_flash.ld && cmake --build CM7/build` prints **`ninja: no work
+to do`**, and the same on CM4. The script reaches the link only as the `-T`
+argument inside `rules.ninja`; nothing lists it as a dependency edge, so a change
+to it does not invalidate the ELF.
+
+The failure mode is silence. Editing the memory map, moving a section, changing an
+origin — all of them rebuild cleanly and produce the binary that predates the
+edit, and the flash that follows writes it without complaint. `.shared_mem` and
+the two custom sections in `open_hub/arch/memory-map.md` are exactly the kind of
+change that would be made this way.
+
+Found by editing both scripts for the comment-length rule and noticing that only
+one core relinked, for an unrelated reason. Until it is fixed, **delete the ELF
+before rebuilding after any linker script change** — that is what proved the edits
+here are sound, and the two ELFs came back byte-identical, which is what a
+comment-only edit should produce.
+
+`open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
+
 ---
 
 ## Design agreed but unbuilt

@@ -7,10 +7,10 @@ GENERATED = re.compile(
     r"(^|/)(LWIP/|third_party/|build/|\.git/|\.venv/|__pycache__/|\.cache/"
     r"|system_stm32h7xx|stm32h7xx_(hal_conf|hal_msp|it|nucleo_conf|hal_timebase)"
     r"|syscalls\.c|sysmem\.c|freertos\.c|FreeRTOSConfig\.h|startup_"
-    r"|starm-clang\.cmake)")
+    r"|starm-clang\.cmake|stm32h755xx_[A-Za-z0-9_]*\.ld)")
 # Vector files are emitted by tools/; the generator is the hand-written artifact.
 GENERATED_VEC = re.compile(r"Common/test/vectors/.*\.(txt|h)$")
-PREFIX = {".c": "//", ".h": "//", ".py": "#", ".sh": "#", ".cmake": "#"}
+PREFIX = {".c": "//", ".h": "//", ".py": "#", ".sh": "#", ".cmake": "#", ".ld": "/*"}
 
 def touched_lines():
     """Line numbers added or changed against HEAD, per file. None = whole file."""
@@ -81,11 +81,24 @@ def hash_comment_lines(text):
     except (tokenize.TokenError, IndentationError, SyntaxError):
         return None
 
+def vendor_banner_end(lines):
+    """Last line of a leading ** banner, the shape CubeMX writes atop a linker script."""
+    if not lines or lines[0].strip() != "/*" or not lines[1:2]:
+        return None
+    if not lines[1].strip().startswith("**"):
+        return None
+    for n, l in enumerate(lines[:80], 1):
+        if n > 1 and "*/" in l:
+            return n
+    return None
+
 def handwritten(text):
     """Line numbers a human owns. In a CubeMX file that is the USER CODE regions only."""
     lines = text.split("\n")
     if "USER CODE BEGIN" not in text:
-        return None
+        # A linker script has no markers; the banner on top is still the vendor's.
+        end = vendor_banner_end(lines)
+        return None if end is None else set(range(end + 1, len(lines) + 1))
     own, inside = set(), False
     for n, l in enumerate(lines, 1):
         if "USER CODE BEGIN" in l:
@@ -121,6 +134,8 @@ def marker_col(line, pfx):
             q = c
         elif pfx == "//" and line[i:i + 2] in ("//", "/*"):
             return i
+        elif pfx == "/*" and line[i:i + 2] == "/*":
+            return i
         elif pfx == "#" and c == "#":
             return i
         i += 1
@@ -131,6 +146,8 @@ def trailing_blocks(path, lines, pfx, cols, mine, only):
     out = []
     for n, line in enumerate(lines, 1):
         st = line.strip()
+        # A leading * continues a block in C and opens a wildcard in a linker
+        # script, so only C may skip it.
         if not st or st.startswith(pfx) or (pfx == "//" and st.startswith(("/*", "*"))):
             continue
         col = cols.get(n) if cols is not None else marker_col(line, pfx)
@@ -141,7 +158,7 @@ def trailing_blocks(path, lines, pfx, cols, mine, only):
         if body.startswith("/**<"):
             continue
         j = n
-        while pfx == "//" and body.lstrip().startswith("/*") and "*/" not in body[2:]:
+        while pfx in ("//", "/*") and body.lstrip().startswith("/*") and "*/" not in body[2:]:
             if j >= len(lines):
                 break
             body += " " + lines[j].strip()
@@ -210,7 +227,7 @@ def check(files, only=None):
                                         (st.startswith("/*") or st.startswith("*"))))
             # A /* */ body counts to its close, or a continuation dodges the limit
             # by not opening with a star.
-            if pfx == "//":
+            if pfx in ("//", "/*"):
                 if incomment:
                     iscomment = True
                 if iscomment and "/*" in st and "*/" not in st.split("/*", 1)[1]:
