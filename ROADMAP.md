@@ -1040,12 +1040,30 @@ Recovery cannot be more than a refusal, because the ambiguity lands exactly wher
 the measurement is: over 22 observed inter-arrival gaps, **13 exceeded the hop
 cycle**. A reconstruction would be right 41% of the time and silently wrong the
 rest, which is worse than absent.
-
 The honest fix is an array, and it fits: `IPC_PAYLOAD_MAX` is 96 and
 `sizeof(ipc_afc_raw_t)` is 72, so 24 bytes are free. A `uint32_t` per entry costs
 36 and does not fit; a `uint16_t` costs 18 and does, with CM7 restoring the high
 bits from the counter it already holds. It is a CM4-to-CM7 contract change, so
 both cores are reflashed together.
+
+**And the same gap in a bigger form, found 2026-08-22: a row cannot say which
+regime it came from.** One afternoon put the bench through four — a device
+firmware change, the transmit power that change restored, the level match that
+undid it, and two hub flashes — and every boundary falls **inside** the ring
+rather than between rings. So no before-and-after can be read out of it by either
+session, and both had to partition from memory of what happened when. Twice that
+memory was wrong.
+
+Time is the wrong key for it. A timestamp needs a reader who remembers what
+happened at 17:33; a row that carries its own provenance does not. The two fields
+that would do it already exist and are already sent once per connection —
+`hello.build` names the firmware and `boot_id` names the reset — so what is
+missing is carrying them **per row** rather than per link. `frame.slot` is the
+precedent for how cheap that is: it already encodes the opportunity as
+`base + 65 * k` and nothing had to be added, only documented.
+
+Raised by the server session, which reached the same conclusion from its own side
+and named it better: what belongs beside a row is not the time but the **regime**.
 
 `open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
