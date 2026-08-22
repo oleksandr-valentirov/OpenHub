@@ -13,6 +13,7 @@ import argparse
 import numpy as np
 
 import iqfile
+import phy
 
 
 def spectrogram(x, rate, nfft):
@@ -61,13 +62,96 @@ def air_time_envelope(x, rate, s_slot, e_slot, slot_s, f_rel, bw=60e3, guard=12)
     return float(on[-1] - on[0]) / rate
 
 
+
+
+def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
+           base=None, spacing=None, count=None):
+    """Every burst in the band, with where it sat and which channel that is.
+
+    Split out so airgrid.py measures the same air this tool reports on. Two
+    implementations of one detector are two answers, and the disagreement reads
+    as progress.
+
+    Each burst carries the set of channels lit during it, not only its strongest.
+    Two radios overlapping in time make one interval with one peak, and the
+    quieter one then reads as absent - which is a frequency mismatch that is not
+    there. radio_devices_docs/open_hub/testing/sdr.md
+    """
+    c = phy.constants()
+    base = c["RADIO_CH_BASE_HZ"] if base is None else base
+    spacing = c["RADIO_CH_SPACING_HZ"] if spacing is None else spacing
+    count = c["RADIO_GRID_COUNT"] if count is None else count
+
+    meta = iqfile.read_meta(path)
+    raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
+    x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
+    x -= x.mean()                      # kill the RTL-SDR centre spike
+    rate, centre = meta["rate"], meta["centre"]
+
+    P, freqs = spectrogram(x, rate, nfft)
+    dB = 10 * np.log10(P + 1e-12)
+    # Per-bin medians: the noise floor is not flat across 2.4 MHz.
+    # radio_devices_docs/open_hub/testing/sdr.md
+    floor = np.median(dB, axis=0)
+    excess = dB - floor
+    active = excess.max(axis=1) > snr
+    slot_s = nfft / rate
+
+    # Bins to channels, so a burst names every channel it lit.
+    ch_of_bin = np.round((centre + freqs - base) / spacing).astype(int)
+
+    raw_b, start = [], None
+    for i, act in enumerate(active):
+        if act and start is None:
+            start = i
+        elif not act and start is not None:
+            raw_b.append((start, i))
+            start = None
+    if start is not None:
+        raw_b.append((start, len(active)))
+
+    # An FSK burst arrives as fragments; bridge, then drop what is too short.
+    # radio_devices_docs/open_hub/testing/sdr.md
+    bridge = max(1, int(round(bridge_ms * 1e-3 / slot_s)))
+    merged = []
+    for b in raw_b:
+        if merged and b[0] - merged[-1][1] <= bridge:
+            merged[-1] = (merged[-1][0], b[1])
+        else:
+            merged.append(b)
+    bursts = [b for b in merged if (b[1] - b[0]) * slot_s >= min_ms * 1e-3]
+
+    recs = []
+    for s, e in bursts:
+        band = P[s:e].sum(axis=0)
+        pk = int(np.argmax(band))
+        # centre of mass over the occupied bins, so the two FSK tones average out
+        lo, hi = max(0, pk - 80), min(len(band), pk + 80)
+        w = band[lo:hi]
+        strong = w > w.max() * 0.15
+        f_rel = float(np.sum(freqs[lo:hi][strong] * w[strong]) / np.sum(w[strong]))
+        abs_hz = centre + f_rel
+        idx = int(round((abs_hz - base) / spacing))
+        seg = excess[s:e].max(axis=0)
+        lit = set()
+        for k in range(count):
+            sel = ch_of_bin == k
+            if sel.any() and float(seg[sel].max()) > snr:
+                lit.add(k)
+        recs.append({"lit": lit, "s": s, "e": e, "t_ms": s * slot_s * 1e3,
+                     "air_ms": (e - s) * slot_s * 1e3, "hz": abs_hz, "ch": idx,
+                     "err_hz": abs_hz - (base + idx * spacing),
+                     "f_rel": f_rel, "on_grid": 0 <= idx < count})
+    return {"x": x, "rate": rate, "centre": centre, "slot_s": slot_s,
+            "floor": floor, "bursts": recs, "P": P, "freqs": freqs}
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path")
-    ap.add_argument("--base", type=float, default=865.1e6, help="channel 0 centre, Hz")
-    ap.add_argument("--spacing", type=float, default=100e3)
-    ap.add_argument("--count", type=int, default=29)
+    ap.add_argument("--base", type=float, default=None, help="channel 0 centre, Hz")
+    ap.add_argument("--spacing", type=float, default=None)
+    ap.add_argument("--count", type=int, default=None)
     ap.add_argument("--nfft", type=int, default=2048)
     ap.add_argument("--snr", type=float, default=15.0, help="threshold above the per-bin floor, dB")
     ap.add_argument("--bridge-ms", type=float, default=5.0, help="merge fragments closer than this")
@@ -84,74 +168,32 @@ def main():
                          "than air time does. Combines with --expect-ms.")
     a = ap.parse_args()
 
-    meta = iqfile.read_meta(a.path)
-    raw = np.fromfile(a.path, dtype=np.uint8).astype(np.float32) - 127.5
-    x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
-    x -= x.mean()                      # kill the RTL-SDR centre spike
-    rate, centre = meta["rate"], meta["centre"]
+    d = detect(a.path, a.nfft, a.snr, a.bridge_ms, a.min_ms,
+               a.base, a.spacing, a.count)
+    x, rate, centre = d["x"], d["rate"], d["centre"]
+    slot_s, recs = d["slot_s"], d["bursts"]
+    c = phy.constants()
+    base = c["RADIO_CH_BASE_HZ"] if a.base is None else a.base
     print(f"capture {len(x)/rate:.2f} s at {rate/1e6:.3f} Msps, centred {centre/1e6:.3f} MHz")
     print(f"spectrogram slot {a.nfft/rate*1e3:.3f} ms - air times below are quantised to it")
-
-    P, freqs = spectrogram(x, rate, a.nfft)
-    dB = 10 * np.log10(P + 1e-12)
-    # Per-bin medians: the noise floor is not flat across 2.4 MHz.
-    # radio_devices_docs/open_hub/testing/sdr.md
-    floor = np.median(dB, axis=0)
-    excess = dB - floor
-    rowpeak = excess.max(axis=1)
-    active = rowpeak > a.snr
-    slot_s = a.nfft / rate
-
-    # group adjacent active slices into bursts
-    bursts, start = [], None
-    for i, act in enumerate(active):
-        if act and start is None:
-            start = i
-        elif not act and start is not None:
-            bursts.append((start, i))
-            start = None
-    if start is not None:
-        bursts.append((start, len(active)))
-
-    # An FSK burst arrives as fragments; bridge, then drop what is too short.
-    # radio_devices_docs/open_hub/testing/sdr.md
-    bridge = max(1, int(round(a.bridge_ms * 1e-3 / slot_s)))
-    merged = []
-    for b in bursts:
-        if merged and b[0] - merged[-1][1] <= bridge:
-            merged[-1] = (merged[-1][0], b[1])
-        else:
-            merged.append(b)
-    bursts = [b for b in merged if (b[1] - b[0]) * slot_s >= a.min_ms * 1e-3]
-
-    if not bursts:
+    if not recs:
         raise SystemExit(f"nothing {a.snr:.0f} dB above the per-bin floor")
-
-    print(f"floor {floor.mean():.1f} dB (per-bin), {len(bursts)} burst(s)\n")
+    bursts = [(r["s"], r["e"]) for r in recs]
+    print(f"floor {d['floor'].mean():.1f} dB (per-bin), {len(bursts)} burst(s)\n")
     print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'err kHz':>8}  gap")
     prev, seen, bad = None, [], 0
     chan_of = {}
     frel_of = {}
-    for s, e in bursts:
-        band = P[s:e].sum(axis=0)
-        pk = int(np.argmax(band))
-        # centre of mass over the occupied bins, so the two FSK tones average out
-        lo, hi = max(0, pk - 80), min(len(band), pk + 80)
-        w = band[lo:hi]
-        strong = w > w.max() * 0.15
-        f_rel = float(np.sum(freqs[lo:hi][strong] * w[strong]) / np.sum(w[strong]))
-        abs_hz = centre + f_rel
-        idx = int(round((abs_hz - a.base) / a.spacing))
-        err = abs_hz - (a.base + idx * a.spacing)
-        ok = 0 <= idx < a.count
-        if not ok:
+    for r in recs:
+        s, e, idx = r["s"], r["e"], r["ch"]
+        if not r["on_grid"]:
             bad += 1
         seen.append(idx)
         chan_of[(s, e)] = idx
-        frel_of[(s, e)] = f_rel
+        frel_of[(s, e)] = r["f_rel"]
         gap = "" if prev is None else f"{(s-prev)*slot_s*1e3:8.1f} ms"
-        print(f"{s*slot_s*1e3:10.2f} {(e-s)*slot_s*1e3:9.2f} {abs_hz/1e6:11.4f} "
-              f"{idx:4d}{'!' if not ok else ' '} {err/1e3:8.1f}  {gap}")
+        print(f"{r['t_ms']:10.2f} {r['air_ms']:9.2f} {r['hz']/1e6:11.4f} "
+              f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['err_hz']/1e3:8.1f}  {gap}")
         prev = s
 
     total = sum((e - s) * slot_s for s, e in bursts)

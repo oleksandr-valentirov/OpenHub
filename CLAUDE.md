@@ -101,6 +101,23 @@ the probe, because WL55 device boards share the bus; and **never erase bank 1 fr
 CM7** — it has bricked this board twice and needs an external programmer to
 recover ([`keystore.md`](../radio_devices_docs/open_hub/arch/keystore.md)).
 
+## Cross-check the air, every time
+
+Host tests and firmware counters both sit above the packet engine, so "the
+device stopped sending" and "the hub stopped hearing" produce the same zero.
+One capture separates them, and it belongs to the post-flash routine rather than
+to debugging:
+
+```bash
+cd tools/sdr
+../../.venv/bin/python capture.py air.iq -f 866.56e6 -s 2.4e6 -t 120 -g 30 --label hub
+../../.venv/bin/python airgrid.py air.iq        # non-zero on any failed check
+```
+
+Six checks over the grid in `Common/inc`, read through the compiler rather than
+restated. The `sdr` skill carries what each one costs when it is missing, and
+why 2.4 Msps is the rate.
+
 ## Skills
 
 Deep knowledge lives in skills, not in this file. Load the one that matches the
