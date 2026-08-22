@@ -289,6 +289,8 @@ and the band looks flat and quiet.
   with no second chance at it.
 - The driver returns a **negative** half-dB value. `x2 / 2` is dBm; negating it
   again yields a positive "dBm" that looks plausible and is wrong.
+- **It is input-referred** and does not track `LnaGainSelect` — measured, and the
+  opposite claim stood in this file for months. See the AGC section above.
 
 **The "it must be stale" reading has been proposed once and refuted.** Reading
 the code alone says `rfm69_get_rssi()` triggers nothing, so the value must belong
@@ -314,6 +316,34 @@ than the one asked for. **Read it on `PayloadReady`, before the FIFO drain.**
 then re-derives on idle air and returns to G1, so a later read reports the idle
 value under the frame's name. `afc_note()` reads it in the right place and its
 comment says why.
+
+**`RegRssiValue` is input-referred: it does not follow the LNA setting.** This
+file said the opposite for months — "the part does not compensate RSSI for the LNA
+setting, so a linear front end reads lower, not higher" — and a ladder on 2026-08-22
+refutes it. Pinning G1 through G6, thirty decibels, against a level the
+transmitters held fixed:
+
+    pinned   G1     G2     G3     G4     G6
+    board A  -40.7  -42.2  -42.8  -43.1  -40.2
+    board B  -39.2  -41.7  -42.2  -42.1  -39.3
+
+**2.4 dB of movement for 30 dB of gain**, and not monotone. A reading that tracked
+the gain would have shown -76 at G6.
+
+The pin is real and the control says so from the other column: frames arrive at
+every step, and at G6 the CRC rate on board A falls to 7 of 12 against 11 of 12 at
+G4. The gain costs sensitivity; the reading simply divides it back out.
+
+Two consequences. **A level from this part may be compared across LNA settings**,
+which the old claim forbade. And **backing the gain off is a compression test**:
+a front end in compression comes out of it somewhere in 30 dB and the reading
+moves a long way. At −40 dBm it moved 2.4 dB, so this receiver is linear there.
+
+Restoring the AGC afterwards needs `device dump 0x18`, bits 2:0. Neither instrument
+on the bench can do it: the level barely moves with gain, and the `lna_gain` column
+is `LnaCurrentGain`, the gain *in force*, which reads G1 whether the AGC chose it
+or a pin forced it. **The field that is written and the field that follows from it
+are different witnesses**, and only the first can tell "chosen" from "imposed".
 
 Measured 2026-08-22, 120 frame rows, two devices, levels from −72 to −25 dBm:
 

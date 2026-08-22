@@ -113,8 +113,7 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
 
     meta = iqfile.read_meta(path)
     raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
-    # Per burst, never per file: bursts are under a percent of this bench's
-    # recording, so a clipped burst divides down to a quiet-looking fraction.
+    # Per burst, never per file: a clipped burst divides down by the duty cycle.
     # radio_devices_docs/open_hub/testing/sdr.md
     railed = np.abs(raw) >= 127.0
     x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
@@ -183,8 +182,7 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
                      "snr_db": float(seg.max()),
                      "clip": float(railed[2 * s * nfft:2 * e * nfft].mean()),
                      "f_rel": f_rel, "on_grid": 0 <= idx < count})
-    # The silence is the control: it says the two populations differ, so a
-    # burst figure cannot be dismissed as the file's own noise.
+    # The silence is the control that the two populations differ.
     quiet = np.ones(len(railed), dtype=bool)
     for r in recs:
         quiet[2 * r["s"] * nfft:2 * r["e"] * nfft] = False
