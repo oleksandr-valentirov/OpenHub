@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Cases for check_conventions.py, each one a defect it let through at some point.
+
+Every arm names what it pins, and the suite grades the **exit code** as well as
+the text: a checker that prints a violation and exits zero is the shape that let a
+148-character comment reach a flashed binary on 2026-08-22.
+
+The corpus writes Cyrillic and CJK on purpose, to be caught. Its own literals are
+built from code points so the file stays pure ASCII and the checker does not flag
+the tests that test it - an exemption here would be a hole in the rule.
+"""
+import os, subprocess, sys, tempfile
+
+CYR = "".join(chr(c) for c in (0x442, 0x435, 0x441, 0x442))          # a Cyrillic word
+HAN = chr(0x8A08)                                                     # one CJK ideograph
+MICRO = chr(0xB5)                                                     # a letter by category
+CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check_conventions.py")
+
+# Over the limit on purpose: a short banner cannot fail.
+LD_BANNER = "/*\n" + "".join("**  vendor line %d, padding padding padding\n" % i
+                             for i in range(6)) + "*/\n"
+LONG = "x" * 130
+
+
+def run(root):
+    """Runs the checker over a throwaway repository and returns (exit, text)."""
+    p = subprocess.run([sys.executable, CHECKER], cwd=root,
+                       capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+
+
+def build(files):
+    root = tempfile.mkdtemp(prefix="cconv-")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    for name, body in files.items():
+        path = os.path.join(root, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(name) else None
+        with open(path, "w") as f:
+            f.write(body)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    return root
+
+
+CLEAN_C = "/* a short comment */\nint f(void) { return 0; }\n"
+
+CASES = [
+    ("clean tree is silent", {"a.c": CLEAN_C}, 0, None),
+    ("Cyrillic in .c", {"a.c": "/* " + CYR + " */\n"}, 1, "non-English"),
+    ("Cyrillic in .md", {"a.md": CYR + "\n"}, 1, "non-English"),
+    ("Cyrillic in .ld", {"a.ld": "/* " + CYR + " */\n"}, 1, "non-English"),
+    ("CJK in .md", {"a.md": "be" + HAN + " computed\n"}, 1, "non-English"),
+    ("micro sign is not foreign", {"a.c": "/* 700 " + MICRO + "s */\n"}, 0, None),
+    ("CLAUDE.md is exempt", {"CLAUDE.md": CYR + "\n", "a.c": CLEAN_C}, 0, None),
+    ("long block in .c", {"a.c": "/* " + LONG + " */\n"}, 1, "over 100"),
+    ("long trailing comment", {"a.c": "int x = 1;  /* " + LONG + " */\n"}, 1, "over 100"),
+    ("long block in .ld", {"a.ld": "/* " + LONG + " */\n"}, 1, "over 100"),
+    # The body must span lines, or the case cannot fail.
+    ("multi-line /* */ body in .ld",
+     {"a.ld": "/* the body continues\n   " + LONG + "\n   and closes here */\n"}, 1, "over 100"),
+    ("a doc path does not count",
+     {"a.c": "/* short. radio_devices_docs/open_hub/" + "d" * 120 + ".md */\n"}, 0, None),
+    # The harm is the wildcard absorbed into the comment above it.
+    ("linker wildcard is not a continuation",
+     {"a.ld": "SECTIONS {\n  /* the output section */\n    *(.text .text.* "
+              + " ".join(".rodata.section%d" % i for i in range(12)) + ")\n}\n"}, 0, None),
+    ("vendor ** banner in .ld is not ours", {"a.ld": LD_BANNER}, 0, None),
+    ("a NUL means not prose", {"a.c": CLEAN_C, "b.bin": "\x00" + CYR}, 0, None),
+    ("struct field comment on its own line",
+     {"a.h": "struct s {\n    /* what it is for */\n    int x;\n};\n"}, 1, "own line"),
+    ("Python docstring first line",
+     {"a.py": '"""' + LONG + '"""\n'}, 1, "docstring"),
+]
+
+
+def main():
+    bad = 0
+    for name, files, want_exit, want_text in CASES:
+        root = build(files)
+        code, out = run(root)
+        ok = code == want_exit and (want_text is None or want_text in out)
+        if not ok:
+            bad += 1
+            print("FAIL %-42s exit %d (want %d)%s"
+                  % (name, code, want_exit,
+                     "" if want_text is None else "  looking for %r" % want_text))
+            print("     " + " | ".join(l for l in out.splitlines() if "==" in l))
+        else:
+            print("ok   %s" % name)
+    print("\n%d case(s), %d failed" % (len(CASES), bad))
+    return 1 if bad else 0
+
+
+sys.exit(main())
