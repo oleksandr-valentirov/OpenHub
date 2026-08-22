@@ -17,9 +17,8 @@
 
 /* 2.3 hours between writes, and the most the counter jumps across a reboot.
  * radio_devices_docs/open_hub/arch/keystore.md */
-#ifndef KV_RESERVE_AHEAD                 /* overridable so the write path can be
-                                          * stress-tested at a rate a bench can
-                                          * watch; 4096 is one write per 2.3 h */
+#ifndef KV_RESERVE_AHEAD                 /* overridable so a bench can stress
+                                          * the write path faster */
 #define KV_RESERVE_AHEAD    4096u
 #endif
 
@@ -259,9 +258,7 @@ uint8_t kv_reserve(uint32_t counter) {
             /* Both sectors full, and the refusal is acted on rather than logged.
              * radio_devices_docs/open_hub/arch/keystore.md */
             errors++;
-            exhausted = 1;   /* latch: the caller runs every superloop pass, and
-                              * a retry that cannot succeed hammered the unlock
-                              * path 1.79M times in 45 s. */
+            exhausted = 1;   /* latch: the caller runs every superloop pass */
             return 1;
         }
         active_addr  = (active_addr == KV_ADDR_A) ? KV_ADDR_B : KV_ADDR_A;

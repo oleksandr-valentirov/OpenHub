@@ -73,6 +73,64 @@ def handwritten(text):
             own.add(n)
     return own
 
+def comment_cols(text):
+    """Column of every real # comment, per line. A # inside a string is not one."""
+    try:
+        toks = tokenize.generate_tokens(io.StringIO(text).readline)
+        return {t.start[0]: t.start[1] for t in toks if t.type == tokenize.COMMENT}
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return None
+
+def marker_col(line, pfx):
+    """Column where a comment opens, skipping any marker that sits inside a literal."""
+    i, q, esc = 0, None, False
+    while i < len(line):
+        c = line[i]
+        if q:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == q:
+                q = None
+        elif c in "\"'":
+            q = c
+        elif pfx == "//" and line[i:i + 2] in ("//", "/*"):
+            return i
+        elif pfx == "#" and c == "#":
+            return i
+        i += 1
+    return None
+
+def trailing_blocks(path, lines, pfx, cols, mine, only):
+    """Comments that follow code on the same line. Each is its own block."""
+    out = []
+    for n, line in enumerate(lines, 1):
+        st = line.strip()
+        if not st or st.startswith(pfx) or (pfx == "//" and st.startswith(("/*", "*"))):
+            continue
+        col = cols.get(n) if cols is not None else marker_col(line, pfx)
+        if col is None or not line[:col].strip():
+            continue
+        body = line[col:]
+        # The required member form is Doxygen and is measured with the rest of it.
+        if body.startswith("/**<"):
+            continue
+        j = n
+        while pfx == "//" and body.lstrip().startswith("/*") and "*/" not in body[2:]:
+            if j >= len(lines):
+                break
+            body += " " + lines[j].strip()
+            j += 1
+        if mine is not None and n not in mine:
+            continue
+        if only is not None and only.get(path) is not None and n not in only[path]:
+            continue
+        body = re.sub(r"radio_devices_docs/[A-Za-z0-9_./-]+", "", body).strip()
+        if len(body) > 100:
+            out.append("%s:%d (%d chars)" % (path, n, len(body)))
+    return out
+
 def long_docstrings(path, text, only):
     """A docstring is the Doxygen block of a Python file: its first line is the @brief."""
     out = []
@@ -113,6 +171,8 @@ def check(files, only=None):
         mine = handwritten(text)
         # Shell and CMake are not tokenizable; only Python gets the string check.
         hashes = hash_comment_lines(text) if p.endswith(".py") else None
+        cols = comment_cols(text) if p.endswith(".py") else None
+        long_blocks.extend(trailing_blocks(p, text.split("\n"), pfx, cols, mine, only))
         run, start, incomment = [], 0, False
         for n, line in enumerate(text.split("\n") + [""], 1):
             st = line.strip()

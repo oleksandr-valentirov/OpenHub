@@ -187,9 +187,8 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
 
 /* A cost assertion, not a behavioural one: normal is 1-10 us and a fault is
  * milliseconds. radio_devices_docs/radio/tdma.md */
-#ifndef RADIO_BEACON_LATE_LIMIT_US       /* overridable so the detector can be
-                                          * proved non-vacuous by lowering it
-                                          * below the normal 1-10 us */
+#ifndef RADIO_BEACON_LATE_LIMIT_US       /* lowered to prove the detector
+                                          * non-vacuous */
 #define RADIO_BEACON_LATE_LIMIT_US 500u
 #endif
 
