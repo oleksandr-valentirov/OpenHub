@@ -113,6 +113,9 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
 
     meta = iqfile.read_meta(path)
     raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
+    # A burst at the rails is the receiver's clipping offered as the
+    # transmitter's. radio_devices_docs/open_hub/testing/sdr.md
+    clip = float(np.mean(np.abs(raw) >= 127.0))
     x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
     x -= x.mean()                      # kill the RTL-SDR centre spike
     rate, centre = meta["rate"], meta["centre"]
@@ -176,9 +179,11 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
                      "lit": lit, "s": s, "e": e, "t_ms": s * slot_s * 1e3,
                      "air_ms": (e - s) * slot_s * 1e3, "hz": abs_hz, "ch": idx,
                      "err_hz": abs_hz - (base + idx * spacing),
+                     "snr_db": float(seg.max()),
                      "f_rel": f_rel, "on_grid": 0 <= idx < count})
     return {"x": x, "rate": rate, "centre": centre, "slot_s": slot_s,
-            "floor": floor, "bursts": recs, "P": P, "freqs": freqs}
+            "floor": floor, "bursts": recs, "P": P, "freqs": freqs,
+            "clip": clip}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -214,8 +219,15 @@ def main():
     if not recs:
         raise SystemExit(f"nothing {a.snr:.0f} dB above the per-bin floor")
     bursts = [(r["s"], r["e"]) for r in recs]
-    print(f"floor {d['floor'].mean():.1f} dB (per-bin), {len(bursts)} burst(s)\n")
-    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'com kHz':>8}"
+    print(f"floor {d['floor'].mean():.1f} dB (per-bin), {len(bursts)} burst(s)")
+    # A level read off a clipped capture is the dongle's, whoever transmitted it.
+    if d["clip"] > 1e-4:
+        print(f"WARNING: {100*d['clip']:.3f} % of samples at the ADC rails - "
+              f"no dB column here may be read as a transmitted level. Recapture lower.")
+    else:
+        print(f"{100*d['clip']:.4f} % of samples at the rails")
+    print()
+    print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'dB':>6} {'com kHz':>8}"
           f" {'2tone kHz':>10} {'sep kHz':>8}  gap")
     prev, seen, bad = None, [], 0
     chan_of = {}
@@ -229,7 +241,8 @@ def main():
         frel_of[(s, e)] = r["f_rel"]
         gap = "" if prev is None else f"{(s-prev)*slot_s*1e3:8.1f} ms"
         print(f"{r['t_ms']:10.2f} {r['air_ms']:9.2f} {r['hz']/1e6:11.4f} "
-              f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['err_hz']/1e3:8.1f}"
+              f"{idx:4d}{'!' if not r['on_grid'] else ' '} {r['snr_db']:6.1f}"
+              f" {r['err_hz']/1e3:8.1f}"
               f" {('%10.1f' % (r['tone_err_hz']/1e3)) if r['tone_err_hz'] is not None else '         -'}"
               f" {('%8.1f' % (r['tone_sep_hz']/1e3)) if r['tone_sep_hz'] is not None else '       -'}  {gap}")
         prev = s
