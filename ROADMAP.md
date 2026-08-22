@@ -726,6 +726,14 @@ ring. Both sessions had to partition from memory, and twice that memory was
 wrong. Time is the wrong key; `hello.build` and `boot_id` already exist and are
 sent once per connection, so what is missing is carrying them **per row**.
 
+**`boot_id` is now carried per row, by the server rather than by the hub.**
+`openhub-server` stamps each ring row with the connection's `boot_id` and keys
+deduplication on `(boot, seq)` — its commit `fix(state): seq is per hub run, and
+the ring outlives the run`. `tx_seq` restarts at reset and that ring does not, so
+until then every row of a new run was discarded as a repeat. `build` is not
+stamped, the superframe above is untouched, and no reader outside that server
+gets any of the three.
+
 `open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ---
