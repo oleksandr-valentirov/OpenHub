@@ -200,10 +200,11 @@ uint32_t cfgflash_selftest(void)
     if (cfgflash_program(CFG_JOURNAL_ADDR_A + CFG_SECTOR_BYTES - CFGF_WORD_BYTES,
                          word, 2u * CFGF_WORD_BYTES) != CFGF_ERR_RANGE)
         bad |= CFGF_ST_RANGE;
-    /* Needs something written to overwrite; an erased sector cannot show it. */
-    if (cfgflash_is_erased(CFG_JOURNAL_ADDR_A, CFGF_WORD_BYTES))
+    /* Aimed at the live snapshot, which is where data is whenever a store exists.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    if (cfgflash_is_erased(CFG_JOURNAL_ADDR_B, CFGF_WORD_BYTES))
         bad |= CFGF_ST_NO_POP;
-    else if (cfgflash_program(CFG_JOURNAL_ADDR_A, word,
+    else if (cfgflash_program(CFG_JOURNAL_ADDR_B, word,
                               CFGF_WORD_BYTES) != CFGF_ERR_NOT_ERASED)
         bad |= CFGF_ST_NOT_ERASED;
     /* Distinct conditions must not render as one word. */

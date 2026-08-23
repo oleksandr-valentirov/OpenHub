@@ -133,6 +133,9 @@ cfgflash_err_t cfg_identity_write(const uint8_t priv[CFG_ROOT_KEY_BYTES],
 /** @brief The newest entry for a device. @param dev_id the device @return it, or NULL */
 const cfg_device_t *cfg_find(uint32_t dev_id);
 
+/** @brief One roster entry by index. @param i 0..CFG_DEVICE_MAX-1 @return it, or NULL */
+const cfg_device_t *cfg_at(uint32_t i);
+
 /** @brief Devices the roster holds. @return the count, tombstones excluded by design */
 uint32_t cfg_live_devices(void);
 

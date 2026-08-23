@@ -90,6 +90,7 @@ static int cmd_crypto(cli_data_t *cli, int argc, char **argv);
 static int cmd_erasetest(cli_data_t *cli, int argc, char **argv);
 static int cmd_cfgflash(cli_data_t *cli, int argc, char **argv);
 static int cmd_cfg(cli_data_t *cli, int argc, char **argv);
+static int cfg_identity_gen(cli_data_t *cli);
 static int cmd_timing(cli_data_t *cli, int argc, char **argv);
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
@@ -109,7 +110,7 @@ static const cli_cmd_t commands[] = {
     {"crypto",  0, 0, cmd_crypto,  "",                       "run the crypto self-tests"},
     {"erasetest", 0, 0, cmd_erasetest, "",                "the bank 1 erase measurement"},
     {"cfgflash", 0, 0, cmd_cfgflash, "",                  "the config store's flash guards"},
-    {"cfg",      0, 1, cmd_cfg,      "[identity]",           "the config store, and its migration"},
+    {"cfg",      0, 1, cmd_cfg,      "[identity|gen]",       "the config store and its identity"},
     {"timing",  0, 0, cmd_timing,  "",                       "superframe grid and beacon jitter"},
     {"hopprf",  1, 1, cmd_hopprf,  "<32 hex chars>",         "run the hop PRF on CM4"},
     {"telem",   0, 4, cmd_telemetry, "[server <ip> <port> [token] | on | off | now]",
@@ -327,6 +328,47 @@ static int cmd_ipc(cli_data_t *cli, int argc, char **argv) {
 
 /* The only on-target check available while there is no device to talk to. */
 
+/* A board with no old log to migrate from: draw the identity straight into its
+ * own sector. radio_devices_docs/open_hub/arch/config-store.md */
+static int cfg_identity_gen(cli_data_t *cli) {
+    uint8_t priv[32], pub[32], net[16], got[32];
+    cfg_identity_t back;
+    cfgflash_err_t e;
+
+    if (cfg_identity_read(NULL) == 0) {
+        cli_out(cli, "\r\nError: an identity already exists. Replacing it orphans"
+                     " every paired device.\r\n");
+        return 0;
+    }
+    if (crypto_x25519_keygen(priv, pub) != 0 || crypto_random(net, sizeof(net)) != 0) {
+        memset(priv, 0, sizeof(priv));
+        cli_out(cli, "\r\nError: could not draw a key; nothing written\r\n");
+        return 0;
+    }
+    e = cfg_identity_write(priv, net);
+    memset(priv, 0, sizeof(priv));
+    memset(net, 0, sizeof(net));
+    if (e != CFGF_OK) {
+        cli_out(cli, "\r\nError: %s\r\n", cfgflash_err_str(e));
+        return 0;
+    }
+    /* Witnessed the same way a migration is: from what flash gives back. */
+    if (cfg_identity_read(&back) != 0 ||
+        crypto_x25519_public(back.hub_priv, got) != 0) {
+        cli_out(cli, "\r\nError: written and not readable\r\n");
+        return 0;
+    }
+    memset(back.hub_priv, 0, sizeof(back.hub_priv));
+    cli_out(cli, "\r\nidentity drawn into sector %u\r\n  ",
+            (unsigned)CFG_IDENTITY_SECTOR);
+    for (int i = 0; i < 32; i++)
+        cli_out(cli, "%02x", got[i]);
+    cli_out(cli, "\r\n\r\n%s\r\n", (memcmp(pub, got, 32) == 0)
+            ? "WITNESSED. Reset to open the ring."
+            : "MISMATCH: the scalar did not survive the write.");
+    return 0;
+}
+
 /* Step 2 and 3 of the migration: write the identity, then witness it.
  * radio_devices_docs/open_hub/arch/config-store.md */
 static int cfg_migrate_identity(cli_data_t *cli) {
@@ -392,8 +434,10 @@ static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
 
     if (argc == 2 && strcmp(argv[1], "identity") == 0)
         return cfg_migrate_identity(cli);
+    if (argc == 2 && strcmp(argv[1], "gen") == 0)
+        return cfg_identity_gen(cli);
     if (argc != 1) {
-        cli_out(cli, "\r\ncfg [identity]\r\n");
+        cli_out(cli, "\r\ncfg [identity|gen]\r\n");
         return 0;
     }
 
@@ -1267,29 +1311,37 @@ static const char *ks_state_name(uint8_t st) {
     }
 }
 
+static const char *cfg_state_name(uint8_t st) {
+    switch (st) {
+    case CFG_DEV_ENROLLED:  return "enrolled";
+    case CFG_DEV_PAIRED:    return "paired";
+    default:                return "?";
+    }
+}
+
 static int cmd_device_list(cli_data_t *cli) {
-    uint32_t n = ks_count();
     uint32_t live = 0;
 
     cli_out(cli, "\r\nid        slot state    fingerprint\r\n");
-    for (uint32_t i = 0; i < n; i++) {
-        const ks_record_t *r = ks_at(i);
+    for (uint32_t i = 0; i < CFG_DEVICE_MAX; i++) {
+        const cfg_device_t *r = cfg_at(i);
+        static const uint8_t zero[CFG_PUBKEY_BYTES];
 
-        if (r == NULL || r->state == KS_STATE_DELETED)
+        if (r == NULL || r->state == CFG_DEV_FREE)
             continue;
         live++;
         cli_out(cli, "%08lx  %3u %-8s ", (unsigned long)r->dev_id,
-                (unsigned)r->slot, ks_state_name(r->state));
+                (unsigned)r->slot, cfg_state_name(r->state));
         /* Display only, eight bytes of it; the check above compares the point.
          * radio_devices_docs/open_hub/cli.md */
-        if (!ks_has_pubkey(r)) {
+        if (memcmp(r->pubkey, zero, sizeof(zero)) == 0) {
             /* Not "the hash of nothing": a record with no key has no fingerprint.
              * ADR-0024 */
             cli_out(cli, "(no key yet)\r\n");
             continue;
         }
         {
-            uint8_t fp[KS_FINGERPRINT_BYTES];
+            uint8_t fp[32];
 
             if (mbedtls_sha256(r->pubkey, sizeof(r->pubkey), fp, 0) != 0) {
                 cli_out(cli, "<sha256 failed>\r\n");
@@ -1300,28 +1352,12 @@ static int cmd_device_list(cli_data_t *cli) {
         }
         cli_out(cli, "...\r\n");
     }
-    /* Counts what was printed, not what the cache holds.
-     * radio_devices_docs/open_hub/cli.md */
-    cli_out(cli, "%lu enrolled, flash: %lu writes, %lu errors, %lu slots left\r\n",
-            (unsigned long)live, (unsigned long)ks_writes(),
-            (unsigned long)ks_errors(), (unsigned long)ks_slots_left());
-    /* Three reasons never reach flash, so HAL 0 is not "no failure".
-     * radio_devices_docs/open_hub/arch/keystore.md */
-    if (ks_errors())
-        cli_out(cli, "last refusal: %s (%lu of %lu errors were flash),"
-                     " HAL 0x%08lx\r\n",
-                ks_fail_str(ks_last_fail()),
-                (unsigned long)ks_flash_errors(), (unsigned long)ks_errors(),
-                (unsigned long)ks_last_flash_error());
-    /* Two independent conditions, nested until now.
-     * radio_devices_docs/open_hub/arch/keystore.md */
-    if (ks_slots_left() < KS_SLOTS_LOW)
-        cli_out(cli, "warning: %lu slot(s) left, under the %u a full roster"
-                     " needs; the log never erases\r\n",
-                (unsigned long)ks_slots_left(), (unsigned)KS_SLOTS_LOW);
-    if (ks_stale_format())
-        cli_out(cli, "%lu slot(s) hold records of an older format and are skipped\r\n",
-                (unsigned long)ks_stale_format());
+    /* Counts what was printed. A ring gives an operator nothing to act on.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    cli_out(cli, "%lu of %u devices\r\n", (unsigned long)live,
+            (unsigned)CFG_DEVICE_MAX);
+    if (!cfg_where()->found)
+        cli_out(cli, "no store yet - 'cfg gen' draws an identity, then reset\r\n");
     return 0;
 }
 

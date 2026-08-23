@@ -376,6 +376,11 @@ const cfg_device_t *cfg_find(uint32_t dev_id)
     return NULL;
 }
 
+const cfg_device_t *cfg_at(uint32_t i)
+{
+    return (i < CFG_DEVICE_MAX) ? &image.dev[i] : NULL;
+}
+
 uint32_t cfg_live_devices(void)
 {
     uint32_t n = 0;
