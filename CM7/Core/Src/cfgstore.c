@@ -39,8 +39,8 @@ int cfg_init(void)
     since_snap = scan.deltas;
     next_seq   = scan.seq + 1u;
 
-    /* The one window where 954 ms costs nothing: CM4 released and on bank 2,
-     * scheduler not started. radio_devices_docs/open_hub/arch/config-store.md */
+    /* Where 954 ms is free: CM4 released and on bank 2, scheduler not started.
+     * radio_devices_docs/open_hub/arch/config-store.md */
     if (scan.dirty != CFG_SECTOR_NONE) {
         uint8_t sector = (scan.dirty == CFG_RING_A) ? CFG_JOURNAL_SECTOR_A
                                                     : CFG_JOURNAL_SECTOR_B;
