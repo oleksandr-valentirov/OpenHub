@@ -180,6 +180,11 @@ and LNA gain are flat across k as well, and the receive window is open from
 `worst lag 658 us` bounds the superloop three orders of magnitude below the
 611 ms between opportunities, which kills FIFO blocking as the mechanism.
 
+**This item shares its whole signature with 60 and 63**, which is why the three are
+one knot rather than three investigations: pre-sync in all of them, device to hub in
+all of them, one receiver in common. An arm run against any of them is evidence
+about the other two. `../radio_devices_docs/specs/03-roadmap.md` § K2.
+
 **What is left is placement.** Per-cycle slopes of arrival against k change sign
 between cycles (+480, −107, +357 …), so this is per-cycle placement noise rather
 than a constant clock-scale difference, and the statistic to grade is the
@@ -453,30 +458,71 @@ with one word. `uptime_s` splits them and nothing on this side reads it that way
 
 `radio/known-issues.md`.
 
-### 23. The device's channel filter is 5 kHz too narrow — `contract`
+### 23. The hub's channel filter has never had more than 1 kHz of margin — `blocking` `contract`
 
-`radio_phy.h` carried one `RADIO_RX_BANDWIDTH_HZ` of 125000 with a comment saying
-the device used 117300, and the Carson assert compiled the hub's number on both
-builds — the same shape as an assert tying two definitions one side owns. With
-the carrier error measured, the arithmetic is no longer hypothetical:
+**Retitled 2026-08-23.** This item was about the *device's* filter being 5 kHz too
+narrow. The device's is still short and still loses nothing; what changed is that
+the hub's own filter turns out to be the one with no room, and it is the receiver
+on the losing side of items 30, 60 and 63.
 
-    required at 11230 Hz measured    122460
-    hub  125000                      passes, 2540 Hz of margin
-    device 117300                    short by 5160 Hz
+`rfm69_rx_bandwidth_to_reg` picks **the narrowest encodable setting at least as
+wide as it is asked for**, and this project has always asked for
+`RADIO_RX_BW_MIN_HZ`. So the margin is whatever the encoding rounds up by, and
+nothing has ever chosen it:
 
-The constants are now named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
+    regime                      asked      encoded    slack
+    25 kbps, RegRxBw 0x8A      99 000     100 000    1 000 Hz
+    50 kbps, RegRxBw 0x82     124 000     125 000    1 000 Hz
+
+Both regimes, one kilohertz, by accident of the encoder's step. Against that, the
+carrier error the slack is supposed to cover:
+
+    RADIO_CARRIER_ERR_HZ                   12 000    the allowance
+    hub RegFei, max over arrivals          12 329    already past it
+    device afc, max over arrivals          19 287    item 63's arms
+    required at 19 287                    138 574    13 574 Hz more than the hub has
+
+**The population is censored and that is the whole caveat**: those are the frames
+whose sync word matched. What a missing frame needed is not in the sample and
+cannot be, so this bounds nothing — it establishes only that the allowance is
+being spent by the frames that *succeeded*.
+
+The next encodable step is **166.7 kHz**, which covers 33 333 Hz of carrier error
+for **0.97 dB** of noise bandwidth against roughly 50 dB of margin at bench range.
+`rfm69_set_rx_bandwidth_hz` writes `RegAfcBw` to the same value, so widening moves
+the AFC's acquisition filter with the channel filter — an AFC asked to pull in
+19 kHz through a filter sized for 12 is the mechanism, and one write changes both.
+
+**Two things argue against, and both belong in the pre-registration.**
+
+The cross-direction reading: the device's filter is **7 358 Hz short** of the same
+budget and lost 0 of 19 beacons, while the hub's clears it by 342 Hz and loses four
+frames in five. Both receivers face the same relative offset by symmetry — one
+crystal pair, one difference — so **filter width alone cannot produce that
+asymmetry.** Either something else is also wrong, or one of these numbers does not
+mean what it is being read to mean.
+
+Which is the second: **nobody has checked whether `RegRxBw` is a single-sideband
+or a double-sided figure.** Every margin above assumes double-sided. Nothing in the
+driver, the skill, `radio_phy.h` or `radio_devices_docs/radio/` says which, and the
+answer moves all of it by a factor of two. Settle it with a sweep — narrow the
+setting until reception breaks and read the breakpoint against a known offset —
+not by reading a datasheet sentence about a different part.
+
+**The allowance itself contradicts its own design page** and that is an ADR, not an
+experiment: `phy.md` says the modulation tolerates ±20 ppm at both ends, which is
+40 ppm relative and **34 660 Hz** at 866.5 MHz, against a constant of 12 000 —
+13.8 ppm. Three times over, since the constant was written, sizing both filters.
+166.7 kHz does not reach the page's figure either; it is 2.7 kHz short of it.
+Next free number is ADR-0027.
+
+The constants are named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
 against a shared `RADIO_RX_BW_MIN_HZ`. **Only the hub's is asserted**, because
 asserting the device's fails both builds today and the configuration change is
-the device's to make.
+the device's to make. The device cannot follow the hub's number in any case: the
+SX126x table steps 117 300 to 156 200.
 
-**Measured before it was configured, and the measurement says wait.** Over 19
-cycles the device lost **0 of 19 beacons** on the short filter, and 125000 is not
-available to it — the SX126x table steps 117300 to 156200. The budget also
-predicts the wrong side: the receiver short of it loses nothing while the
-receiver that clears it by 342 Hz fails nearly every frame. What survives is the
-header defect; the second assert waits for a measurement that asks for it.
-
-`radio_devices_docs/radio/phy.md`.
+`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md` § phase 1.
 
 ### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
 
@@ -974,8 +1020,8 @@ store mid-batch. Its four remaining trials are void and are not counted.
 `RADIO_CARRIER_ERR_HZ` is **12 000** and both arms exceed it — in the frames that
 *arrived*. The lost ones are not in that sample, so it bounds nothing on its own,
 but the allowance is demonstrably being spent. The untried arm is
-`RADIO_RX_BW_HUB_HZ`, whose next encodable step is 166.7 kHz for 0.97 dB of noise
-bandwidth against roughly 50 dB of margin.
+`RADIO_RX_BW_HUB_HZ`. **Item 23 carries that arm**, its arithmetic and the two
+readings that argue against it; it is not restated here.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
