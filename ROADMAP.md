@@ -621,15 +621,18 @@ northbound under its own name.
 
 `open_hub/radio/timebase.md`.
 
-### 54. A linker script edit does not relink — `defect`
+### 54. A linker script edit does not relink — `closed 2026-08-23`
 
-`touch CM7/custom_m7_flash.ld && cmake --build CM7/build` prints **`ninja: no work
-to do`**, and the same on CM4. The script reaches the link only as the `-T`
-argument inside `rules.ninja`; nothing lists it as a dependency edge.
+The script reached the link only as the `-T` inside `CMAKE_C_LINK_FLAGS`, set in
+the toolchain file, so nothing listed it as a dependency edge. Fixed with a
+`LINK_DEPENDS` property on each core's target, naming the same path the toolchain
+file interpolates.
 
-The failure mode is silence: editing the memory map, moving a section or changing
-an origin rebuilds cleanly and produces the binary that predates the edit. Until
-it is fixed, **delete the ELF before rebuilding after any linker script change.**
+**Proven by mutation in both directions**, which is the only reason this is closed
+rather than believed: a second build with nothing touched links nothing; `touch
+CM7/custom_m7_flash.ld` links **CM7 only**; `touch CM4/custom_m4_flash.ld` links
+**CM4 only**. A fix that made everything relink always would have passed the
+first check and been worthless.
 
 `open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
 
@@ -654,25 +657,18 @@ covers the setting not persisting rather than not being reported.
 
 `radio/known-issues.md`, `open_hub/network/telemetry.md`.
 
-### 56. `device remove` forgets a device on one core only — `defect`
+### 56. `device remove` forgets a device on one core only — `closed 2026-08-23`
 
-`cmd_device_remove()` calls `ks_forget()` and sends CM4 nothing, under a comment
-saying CM4 "holds no per-device state yet". That stopped being true: CM4 keeps
-`devices[RADIO_MAX_DEVICES]` with each device's keys, slot and downlink state,
-installed over `IPC_REQ_INSTALL_DEVICE`.
+Closed on inspection, not on a new change: it was fixed by `e29571d feat(crypto):
+X25519 replaces P-256, and enrolment needs only the device id` and the entry was
+never retired. `remove_device()` in `CM4/Core/Src/radio.c:1807` zeroes the entry
+the way install leaves it and decrements `device_count`; CM4's handler answers
+`IPC_REQ_REMOVE_DEVICE` with 1 or 0 rather than falling into `default`; and both
+`cmd_device_remove()` and the northbound `OHT_CMD_DEVICE_REMOVE` send it.
 
-`used` is written in exactly one place — set to 1 at install — and **cleared
-nowhere**, so a removed device keeps its slot on the radio until the next reset:
-its uplinks are still accepted, still decrypted and still reported northbound,
-and downlinks still go out to it. The operator is told `removed 0x...`.
-
-`IPC_REQ_REMOVE_DEVICE` exists in the shared enum and CM4's handler answers it
-`IPC_ST_UNKNOWN_REQ` by falling into `default`, so the request is reserved and
-refused rather than missing. The fix is to implement it and to send it, and the
-control is the one the CLI already hints at: remove, then re-enrol, and check
-that CM4 holds one entry rather than two.
-
-Found by a cleanup sweep for requests only one core knows about — not on air.
+**Still owed and deliberately not claimed: the control.** Nobody has run remove,
+re-enrol, and checked CM4 holds one entry rather than two. The code reads right on
+both cores and that is all this closure asserts.
 
 `open_hub/arch/ipc.md`, `open_hub/cli.md`.
 
@@ -1044,7 +1040,7 @@ below the sync word is the SDR, not the hub.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
-### 65. `status 1` means two different faults — `debt`
+### 65. `status 1` means two different faults — `closed 2026-08-23`
 
 `hub_ipc_call` returns **1** both when CM4 replies `IPC_ST_UNKNOWN_REQ` and when
 CM7 cannot take the IPC mutex inside `IPC_REPLY_TIMEOUT_MS`. The CLI prints
@@ -1055,8 +1051,21 @@ Seen on 2026-08-23: `device pair` printed it while `devices`, `timing` and
 `device dump` all answered normally, and the same command succeeded on the next
 attempt. Half an hour went to looking for an enum mismatch that was not there.
 
-A negative return for the local failure would separate them; `-1` is already
-"CM4 did not answer".
+Fixed by giving this core's own failures negative codes — `HUB_IPC_ERR_ARG`,
+`_INIT`, `_BUSY`, `_SEND` — beside the existing `HUB_IPC_NO_REPLY`, which stays
+`-1`. CM4's statuses are 0..3 and are now the only positive returns, so the sign
+carries "which core refused" and the value carries why.
+
+`hub_ipc_str()` renders both, and the CLI prints it instead of a bare number:
+twenty-one call sites lost `status %d` and `CM4 did not answer`, including the
+one that said "CM4 did not answer" for a mutex this core never took. The
+northbound `detail` byte improves for free — a mutex timeout used to travel as 1,
+which a reader would have decoded as `IPC_ST_UNKNOWN_REQ`, and now travels as
+0xFF, which the encoding already reserved for a local failure.
+
+**Not verified on the board.** Nothing here has been flashed, and the fault it
+addresses is intermittent, so a console line naming the mutex is the evidence
+still owed.
 
 `../radio_devices_docs/open_hub/arch/ipc.md`.
 
@@ -1076,11 +1085,34 @@ last flash error 0x00000000
 failed, so it is intermittent rather than a wall, and the failures survive a
 power cycle because the state is in flash.
 
-**`last flash error 0x00000000` is the second defect and the one that blocks
-diagnosis.** The store reports an error and then reports its code as zero, so
-"which HAL error" is unanswerable from the console. A code that reads zero for a
-failure is indistinguishable from no failure ever recorded, which is the class
-this project has already been bitten by.
+**The diagnosis half is fixed, 2026-08-23, and it found more than it was sent
+for.** `last_flash_err` was declared with a comment saying it held
+`HAL_FLASH_GetError()` from the last failure and was **assigned nowhere** — the
+same shape as every other field in this project that nobody writes. It now records
+the HAL code and the stage that refused.
+
+Reading the path to fix it turned up the reason the number was unreadable even
+when it was right: **`errors` counts four unrelated conditions**, and three of them
+never touch flash.
+
+| condition | flash touched | printed as |
+|---|---|---|
+| `HAL_FLASH_Unlock` / `Program` / `Lock` refused | yes | flash write failed |
+| both sectors used | no | flash write failed |
+| the RAM cache is full | **the record landed** | flash write failed |
+| boot found more device ids than the cache fits | no | flash write failed |
+
+The third is a defect in its own right: `append()` writes the record, counts it in
+`writes`, then returns -1 because the cache would not take it, so the caller is told
+the write failed while the record is on flash and will be there after the next boot.
+
+Each now has a name — `ks_last_fail()`, `ks_fail_str()` — and `ks_flash_errors()`
+counts the subset flash actually saw. `device list` and `device add` print the
+reason, then the HAL code, in that order, because a HAL code of 0 is the correct
+answer for three of the four.
+
+**So "5 errors" may never have been five failed writes.** Which of the four it was
+is a question the next boot of this store can answer, and could not before.
 
 The 132 old-format slots are expected — the store steps over them by design and
 they cost a slot each — but they have never been seen beside a write failure and

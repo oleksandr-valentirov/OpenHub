@@ -152,3 +152,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Third-party code keeps its own warnings and is optimised even in Debug.
 # radio_devices_docs/open_hub/security/crypto-architecture.md
 set_source_files_properties(${MBEDTLS_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;-O2")
+
+# The -T lives in CMAKE_C_LINK_FLAGS, so ninja never knew it was an input.
+# radio_devices_docs/open_hub/arch/build-and-generation.md
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+    LINK_DEPENDS "${CMAKE_SOURCE_DIR}/${STM32_LINKER_SCRIPT}")

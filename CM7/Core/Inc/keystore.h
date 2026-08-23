@@ -168,14 +168,50 @@ const ks_record_t *ks_find(uint32_t dev_id);
  */
 int ks_write_torn(void);
 
+/**
+ * Why an append last refused. `errors` counted four unrelated conditions with
+ * one number and three of them never touch flash, so "flash write failed" was
+ * printed for a cache that was full and for a scan that overflowed at boot.
+ * radio_devices_docs/open_hub/arch/keystore.md
+ */
+typedef enum {
+    KS_FAIL_NONE = 0,   /**< nothing has failed since boot */
+    KS_FAIL_NOT_READY,  /**< ks_init() has not run */
+    KS_FAIL_LATCHED,    /**< an earlier write failed and set the latch */
+    KS_FAIL_LOG_FULL,   /**< both sectors used; only an external erase reclaims */
+    KS_FAIL_UNLOCK,     /**< HAL_FLASH_Unlock refused */
+    KS_FAIL_PROGRAM,    /**< HAL_FLASH_Program refused; the HAL code is recorded */
+    KS_FAIL_LOCK,       /**< the write landed and HAL_FLASH_Lock refused */
+    KS_FAIL_CACHE_FULL, /**< flash took the record and the RAM cache would not */
+    KS_FAIL_SCAN_OVER   /**< boot found more device ids on flash than fit */
+} ks_fail_t;
+
 /** @brief Records written since boot. @return count */
 uint32_t ks_writes(void);
 
 /** @brief Writes that failed, counted apart so a full store is not silent. @return count */
 uint32_t ks_errors(void);
 
-/** @brief The last HAL flash error, so a refusal names itself. @return the raw code */
+/**
+ * @brief The last HAL flash error, so a refusal names itself.
+ * @return the raw HAL_FLASH_GetError() code, or 0 if no write reached flash
+ *
+ * **Zero is ambiguous on its own** and must be read beside ks_last_fail():
+ * three of the failure reasons never call into the HAL at all.
+ */
 uint32_t ks_last_flash_error(void);
+
+/** @brief Why the last append refused. @return the reason, KS_FAIL_NONE if none has */
+ks_fail_t ks_last_fail(void);
+
+/** @brief The reason as a word for a console line. @return a static string, never NULL */
+const char *ks_fail_str(ks_fail_t f);
+
+/**
+ * @brief Errors that were a real flash refusal, not a cache or a scan.
+ * @return count; the difference from ks_errors() is the part flash never saw
+ */
+uint32_t ks_flash_errors(void);
 
 /**
  * @brief Slots holding this store's magic at a different version.

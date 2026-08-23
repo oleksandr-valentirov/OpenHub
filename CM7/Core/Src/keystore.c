@@ -56,7 +56,11 @@ static uint8_t     legacy_net_key[16];
 static uint8_t     legacy_net_valid;
 static uint32_t    legacy_net_seq;
 static uint32_t    stale_format;   /* records whose magic is ours and version is not */
+/* Never assigned until now, so it read 0 for a failure and for no failure.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 static uint32_t    last_flash_err;  /* HAL_FLASH_GetError() from the last failure */
+static uint32_t    flash_errors;    /* the subset of `errors` flash actually saw */
+static ks_fail_t   last_fail;
 
 static uint32_t crc32(const void *data, size_t len) {
     const uint8_t *p = data;
@@ -127,13 +131,17 @@ static int slot_erased(const void *p) {
 /* There is deliberately no erase function here.
  * radio_devices_docs/open_hub/arch/keystore.md */
 
-/* Four flash words; a power loss between them leaves a record the scan skips. */
+/* Every exit records why, with the HAL's code.
+ * radio_devices_docs/open_hub/arch/keystore.md */
 static uint8_t write_record(uint32_t addr, const ks_record_t *r) {
     const uint8_t *src = (const uint8_t *)r;
     HAL_StatusTypeDef st = HAL_OK;
 
-    if (HAL_FLASH_Unlock() != HAL_OK)
+    if (HAL_FLASH_Unlock() != HAL_OK) {
+        last_fail      = KS_FAIL_UNLOCK;
+        last_flash_err = HAL_FLASH_GetError();
         return 1;
+    }
     for (unsigned i = 0; i < KS_RECORD_BYTES / KS_FLASH_WORD; i++) {
         st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD,
                                addr + i * KS_FLASH_WORD,
@@ -141,9 +149,20 @@ static uint8_t write_record(uint32_t addr, const ks_record_t *r) {
         if (st != HAL_OK)
             break;
     }
-    if (HAL_FLASH_Lock() != HAL_OK)
+    /* Read before the lock, which is the order that survives a HAL change. */
+    if (st != HAL_OK) {
+        last_fail      = KS_FAIL_PROGRAM;
+        last_flash_err = HAL_FLASH_GetError();
+        (void)HAL_FLASH_Lock();
         return 1;
-    return (st == HAL_OK) ? 0u : 1u;
+    }
+    if (HAL_FLASH_Lock() != HAL_OK) {
+        /* The record landed and the peripheral is left unlocked. */
+        last_fail      = KS_FAIL_LOCK;
+        last_flash_err = HAL_FLASH_GetError();
+        return 1;
+    }
+    return 0;
 }
 
 static ks_record_t *cache_find(uint32_t dev_id) {
@@ -238,7 +257,9 @@ static void scan(void) {
             } else if (cached < KS_MAX_DEVICES) {
                 cache[cached++] = *r;
             } else {
-                errors++;           /* more device ids on flash than fit */
+                /* A boot condition, counted with the write failures. */
+                errors++;
+                last_fail = KS_FAIL_SCAN_OVER;
             }
         }
     }
@@ -326,14 +347,23 @@ static int append(const ks_record_t *src) {
     ks_record_t r __attribute__((aligned(32)));
     uint32_t addr;
 
-    if (!ready || exhausted)
+    if (!ready) {
+        last_fail = KS_FAIL_NOT_READY;
         return -1;
+    }
+    /* The latch, not a fresh refusal: nothing below this point touched flash. */
+    if (exhausted) {
+        if (last_fail == KS_FAIL_NONE)
+            last_fail = KS_FAIL_LATCHED;
+        return -1;
+    }
 
     if (next_slot >= KS_SLOTS) {
         if (!spare_erased) {
             /* Both sectors full; recovery is an external erase of 6 and 7.
              * radio_devices_docs/open_hub/arch/keystore.md */
             errors++;
+            last_fail = KS_FAIL_LOG_FULL;
             exhausted = 1;
             return -1;
         }
@@ -351,6 +381,7 @@ static int append(const ks_record_t *src) {
     addr = active_addr + next_slot * KS_RECORD_BYTES;
     if (write_record(addr, &r) != 0) {
         errors++;
+        flash_errors++;  /* write_record has already named which stage refused */
         exhausted = 1;   /* a flash that refuses one write will refuse the next */
         last_seq--;
         return -1;
@@ -377,7 +408,9 @@ static int append(const ks_record_t *src) {
         } else if (cached < KS_MAX_DEVICES) {
             cache[cached++] = r;
         } else {
+            /* Flash took it; only the cache refused, and it read as flash. */
             errors++;
+            last_fail = KS_FAIL_CACHE_FULL;
             return -1;
         }
     }
@@ -620,6 +653,24 @@ uint32_t ks_count(void) { return cached; }
 uint32_t ks_writes(void) { return writes; }
 uint32_t ks_errors(void) { return errors; }
 uint32_t ks_last_flash_error(void) { return last_flash_err; }
+uint32_t ks_flash_errors(void) { return flash_errors; }
+ks_fail_t ks_last_fail(void) { return last_fail; }
+
+const char *ks_fail_str(ks_fail_t f) {
+    switch (f) {
+    case KS_FAIL_NONE:       return "none";
+    case KS_FAIL_NOT_READY:  return "the store was never initialised";
+    case KS_FAIL_LATCHED:    return "an earlier write failed and latched it shut";
+    case KS_FAIL_LOG_FULL:   return "both sectors are used; only an erase reclaims";
+    case KS_FAIL_UNLOCK:     return "HAL_FLASH_Unlock refused";
+    case KS_FAIL_PROGRAM:    return "HAL_FLASH_Program refused";
+    case KS_FAIL_LOCK:       return "the record landed and HAL_FLASH_Lock refused";
+    case KS_FAIL_CACHE_FULL: return "flash took it; the RAM cache is full";
+    case KS_FAIL_SCAN_OVER:  return "boot found more device ids than the cache fits";
+    }
+    /* A value from a build that knew more reasons than this one. */
+    return "unknown";
+}
 uint32_t ks_stale_format(void) { return stale_format; }
 
 uint8_t ks_exhausted(void) {

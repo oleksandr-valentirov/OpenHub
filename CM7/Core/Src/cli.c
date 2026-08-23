@@ -354,11 +354,11 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
 
     rc = rfm_request(IPC_REQ_GET_TIMING, 0, NULL, 0);
     if (rc < 0) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     if (rc != IPC_ST_OK || rfm_reply.len < sizeof(t)) {
-        cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&t, rfm_reply.payload, sizeof(t));
@@ -424,11 +424,11 @@ static int cmd_hopprf(cli_data_t *cli, int argc, char **argv) {
 
     rc = rfm_request(IPC_REQ_HOP_PRF, 0, in, sizeof(in));
     if (rc < 0) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     if (rc != IPC_ST_OK || rfm_reply.len < 16) {
-        cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
 
@@ -540,7 +540,7 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         rc = rfm_request(IPC_REQ_SET_DEVICE_PARAM, 0, (const uint8_t *)&c,
                          (uint8_t)sizeof(c));
         if (rc != IPC_ST_OK) {
-            cli_out(cli, "\r\nError: no such device, status %d\r\n", rc);
+            cli_out(cli, "\r\nError: no such device: %s\r\n", hub_ipc_str(rc));
             return 0;
         }
         /* Nothing on the wire acknowledges it, so this says queued, not delivered. */
@@ -557,7 +557,7 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         }
         rc = rfm_request(IPC_REQ_SET_REPORT_RATE, (uint8_t)n, NULL, 0);
         if (rc != IPC_ST_OK) {
-            cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
             return 0;
         }
         pairing_set_report_every((uint8_t)n);
@@ -573,11 +573,11 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
 
     rc = rfm_request(IPC_REQ_GET_EXCHANGE, 0, NULL, 0);
     if (rc < 0) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     if (rc != IPC_ST_OK || rfm_reply.len < sizeof(x)) {
-        cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&x, rfm_reply.payload, sizeof(x));
@@ -893,11 +893,11 @@ static int cmd_device_pair(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_PAIR_STATE, 0, NULL, 0);
 
     if (rc < 0) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     if (rc != IPC_ST_OK || rfm_reply.len < sizeof(p)) {
-        cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&p, rfm_reply.payload, sizeof(p));
@@ -998,11 +998,11 @@ static int cmd_device_store(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_STORE, 0, NULL, 0);
 
     if (rc < 0) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     if (rc != IPC_ST_OK || rfm_reply.len < sizeof(k)) {
-        cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&k, rfm_reply.payload, sizeof(k));
@@ -1066,8 +1066,13 @@ static int cmd_device_list(cli_data_t *cli) {
     cli_out(cli, "%lu enrolled, flash: %lu writes, %lu errors, %lu slots left\r\n",
             (unsigned long)live, (unsigned long)ks_writes(),
             (unsigned long)ks_errors(), (unsigned long)ks_slots_left());
+    /* Three reasons never reach flash, so HAL 0 is not "no failure".
+     * radio_devices_docs/open_hub/arch/keystore.md */
     if (ks_errors())
-        cli_out(cli, "last flash error 0x%08lx\r\n",
+        cli_out(cli, "last refusal: %s (%lu of %lu errors were flash),"
+                     " HAL 0x%08lx\r\n",
+                ks_fail_str(ks_last_fail()),
+                (unsigned long)ks_flash_errors(), (unsigned long)ks_errors(),
                 (unsigned long)ks_last_flash_error());
     /* Two independent conditions, nested until now.
      * radio_devices_docs/open_hub/arch/keystore.md */
@@ -1125,13 +1130,19 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
 
     rc = ks_enrol(dev_id, &slot);
     if (rc != 0) {
-        const char *why = "flash write failed - see 'device list'";
+        /* -4 printed "flash write failed" even when flash took the record. */
+        const char *why = (rc == -2) ? "device id 0 is not usable"
+                        : (rc == -3) ? "no free uplink slot"
+                        : (rc == -4) ? ks_fail_str(ks_last_fail())
+                                     : "the store rejected the arguments";
 
-        if (rc == -2) why = "device id 0 is not usable";
-        else if (rc == -3) why = "no free uplink slot";
-        else if (rc == -4 && ks_exhausted())
-            why = "the key store filled during this write; it never erases";
         cli_out(cli, "\r\nError: not enrolled: %s\r\n", why);
+        if (rc == -4)
+            cli_out(cli, "  HAL 0x%08lx, %lu of %lu errors this boot were flash;"
+                         " 'device list' has the rest\r\n",
+                    (unsigned long)ks_last_flash_error(),
+                    (unsigned long)ks_flash_errors(),
+                    (unsigned long)ks_errors());
         return 0;
     }
 
@@ -1139,11 +1150,11 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
     if (rc == IPC_ST_OK)
         pairing_arm_init(dev_id, RADIO_PAIR_WINDOW_MS);
     if (rc < 0) {
-        cli_out(cli, "\r\nenrolled in slot %u, but CM4 did not answer -"
-                     " no pairing window is open\r\n", (unsigned)slot);
+        cli_out(cli, "\r\nenrolled in slot %u, but no window is open: %s\r\n",
+                (unsigned)slot, hub_ipc_str(rc));
     } else if (rc != IPC_ST_OK) {
-        cli_out(cli, "\r\nenrolled in slot %u, but CM4 refused the window,"
-                     " status %d\r\n", (unsigned)slot, rc);
+        cli_out(cli, "\r\nenrolled in slot %u, but the window did not open:"
+                     " %s\r\n", (unsigned)slot, hub_ipc_str(rc));
     } else {
         cli_out(cli, "\r\nenrolled 0x%08lx in slot %u, pairing window open\r\n",
                 (unsigned long)dev_id, (unsigned)slot);
@@ -1175,12 +1186,9 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
                  " appended, so this\r\n"
                  "  spent a slot rather than freeing one. %lu left.\r\n",
             (unsigned long)dev_id, (unsigned long)ks_slots_left());
-    if (rc < 0)
-        cli_out(cli, "  but CM4 did not answer: it may still serve this device"
-                     " until the hub resets\r\n");
-    else if (rc != IPC_ST_OK)
-        cli_out(cli, "  but CM4 refused, status %d: it may still serve this"
-                     " device\r\n", rc);
+    if (rc != IPC_ST_OK)
+        cli_out(cli, "  but %s: it may still serve this device until the hub"
+                     " resets\r\n", hub_ipc_str(rc));
     else
         cli_out(cli, "  radio: %s\r\n",
                 rfm_reply.payload[0] ? "slot released" : "held no entry for it");
@@ -1210,7 +1218,7 @@ static int cmd_device_afcraw(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_AFC_RAW, 0, NULL, 0);
 
     if (rc < 0 || rfm_reply.len < sizeof(r)) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&r, rfm_reply.payload, sizeof(r));
@@ -1254,7 +1262,7 @@ static int cmd_device_latency(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_EVT_LAT, 0, NULL, 0);
 
     if (rc < 0 || rfm_reply.len < sizeof(l)) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&l, rfm_reply.payload, sizeof(l));
@@ -1296,7 +1304,7 @@ static int cmd_device_afc(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_AFC, 0, NULL, 0);
 
     if (rc < 0 || rfm_reply.len < sizeof(a)) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&a, rfm_reply.payload, sizeof(a));
@@ -1340,7 +1348,7 @@ static int cmd_device_syncstats(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_SYNCSTATS, 0, NULL, 0);
 
     if (rc < 0 || rfm_reply.len < sizeof(s)) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&s, rfm_reply.payload, sizeof(s));
@@ -1390,7 +1398,7 @@ static int cmd_device_synctime(cli_data_t *cli) {
     int rc = rfm_request(IPC_REQ_GET_SYNCTIME, 0, NULL, 0);
 
     if (rc < 0 || rfm_reply.len < sizeof(s)) {
-        cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+        cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         return 0;
     }
     memcpy(&s, rfm_reply.payload, sizeof(s));
@@ -1750,7 +1758,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     if (strcmp(argv[1], "torncounter") == 0 && argc == 2) {
         rc = rfm_request(IPC_REQ_KV_TORN, 0, NULL, 0);
         if (rc < 0)
-            cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         else if (rc != IPC_ST_OK || rfm_reply.payload[0] == 0)
             cli_out(cli, "\r\nError: CM4 would not write it\r\n");
         else
@@ -1783,9 +1791,9 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         }
         rc = rfm_request(IPC_REQ_QUIESCE, (uint8_t)value, NULL, 0);
         if (rc < 0)
-            cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         else if (rc != IPC_ST_OK)
-            cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         else
             cli_out(cli, "\r\n%s\r\n",
                     rfm_reply.payload[0] ? "queued"
@@ -1808,9 +1816,9 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
             rc = rfm_request(ops[i].type, (uint8_t)value, NULL, 0);
 
         if (rc < 0)
-            cli_out(cli, "\r\nError: CM4 did not answer\r\n");
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         else if (rc != IPC_ST_OK)
-            cli_out(cli, "\r\nError: CM4 rejected it, status %d\r\n", rc);
+            cli_out(cli, "\r\nError: %s\r\n", hub_ipc_str(rc));
         else if (ops[i].type == IPC_REQ_READ_REG)
             cli_out(cli, "\r\n0x%02x 0x%02x\r\n", (unsigned)value, rfm_reply.payload[0]);
         else
