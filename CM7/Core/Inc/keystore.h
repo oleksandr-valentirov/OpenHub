@@ -183,8 +183,21 @@ typedef enum {
     KS_FAIL_PROGRAM,    /**< HAL_FLASH_Program refused; the HAL code is recorded */
     KS_FAIL_LOCK,       /**< the write landed and HAL_FLASH_Lock refused */
     KS_FAIL_CACHE_FULL, /**< flash took the record and the RAM cache would not */
-    KS_FAIL_SCAN_OVER   /**< boot found more device ids on flash than fit */
+    KS_FAIL_SCAN_OVER,  /**< boot found more device ids on flash than fit */
+    KS_FAIL_RETIRED     /**< the configuration store owns these sectors now */
 } ks_fail_t;
+
+/**
+ * @brief Stops this store reading or writing, because the ring owns its sectors.
+ *
+ * Called once the configuration store is live. Without it this log would find an
+ * erased sector 6 at the next boot and append into the ring's spare.
+ * radio_devices_docs/open_hub/arch/config-store.md
+ */
+void ks_retire(void);
+
+/** @brief Whether this store has been retired. @retval 1 it has */
+int ks_retired(void);
 
 /** @brief Records written since boot. @return count */
 uint32_t ks_writes(void);

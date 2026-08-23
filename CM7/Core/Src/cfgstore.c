@@ -22,6 +22,13 @@ static uint8_t        boot_sem_free;
 /* Which store answered last; a fallback can cover a broken new path.
  * radio_devices_docs/open_hub/arch/config-store.md */
 static cfg_src_t      key_source = CFG_SRC_NONE;
+static uint8_t        opened;
+static uint32_t       open_carried;
+static uint32_t       open_erase_ms;
+static cfgflash_err_t open_erase = CFGF_OK;
+static cfgflash_err_t open_err   = CFGF_OK;
+
+static void open_ring(void);
 
 static const void *ring_ptr(uint8_t ring)
 {
@@ -55,7 +62,97 @@ int cfg_init(void)
             boot_erased = 1;
         }
     }
+    /* An identity to anchor a store, and no store: open one. True exactly once
+     * per board. radio_devices_docs/open_hub/arch/config-store.md */
+    if (rc != 0 && cfg_identity_read(NULL) == 0) {
+        open_ring();
+        if (opened)
+            rc = 0;
+    }
+
+    /* The old log shares these sectors and must stop touching them.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    if (rc == 0)
+        ks_retire();
     return rc;
+}
+
+/* §10 step 1: the live roster out of the old log; the cache excludes tombstones.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+static uint32_t carry_roster(void)
+{
+    uint32_t n = 0;
+
+    for (uint32_t i = 0; i < ks_count() && n < CFG_DEVICE_MAX; i++) {
+        const ks_record_t *r = ks_at(i);
+        cfg_device_t *e;
+
+        if (r == NULL || r->type != KS_TYPE_DEVICE ||
+            r->state == KS_STATE_DELETED || r->state == KS_STATE_FREE)
+            continue;
+        e = &image.dev[n++];
+        memset(e, 0, sizeof(*e));
+        e->dev_id       = r->dev_id;
+        e->key_gen      = r->key_gen;
+        e->rotate_epoch = r->rotate_epoch;
+        e->rx_floor     = r->rx_floor;
+        e->tx_floor     = r->tx_floor;
+        e->slot         = r->slot;
+        e->state        = (r->state == KS_STATE_PAIRED) ? CFG_DEV_PAIRED
+                                                        : CFG_DEV_ENROLLED;
+        memcpy(e->pubkey, r->pubkey, CFG_PUBKEY_BYTES);
+        memcpy(e->root_key, r->root_key, CFG_ROOT_KEY_BYTES);
+        memcpy(e->session_key, r->session_key, CFG_SESSION_BYTES);
+        memcpy(e->last_nonce, r->last_nonce, CFG_NONCE_BYTES);
+        cfg_entry_seal(e, CFG_T_DEV);
+    }
+    return n;
+}
+
+/* Ring B, so ring A stays readable until a later boot reclaims it.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+static void open_ring(void)
+{
+    if (!cfgflash_is_erased(CFG_JOURNAL_ADDR_B, CFG_SNAP_BYTES)) {
+        open_erase = cfgflash_erase(CFG_JOURNAL_SECTOR_B, &open_erase_ms);
+        if (open_erase != CFGF_OK)
+            return;
+    }
+    open_carried = carry_roster();
+    cfg_record_seal(&image, CFG_T_SNAPSHOT, CFG_SNAP_SLOTS, 1u);
+    open_err = cfgflash_program(CFG_JOURNAL_ADDR_B, &image, sizeof(image));
+    if (open_err != CFGF_OK)
+        return;
+
+    scan.found     = 1;
+    scan.ring      = CFG_RING_B;
+    scan.snap_slot = 0;
+    scan.snap_seq  = 1u;
+    scan.next_slot = CFG_SNAP_SLOTS;
+    scan.deltas    = 0;
+    since_snap     = 0;
+    next_seq       = 2u;
+    opened         = 1;
+    /* Ring A is the ring left behind now, and the next boot reclaims it. */
+    if (!cfg_slot_erased((const void *)CFG_JOURNAL_ADDR_A))
+        scan.dirty = CFG_RING_A;
+}
+
+cfgflash_err_t cfg_open_result(uint32_t *carried, uint32_t *erase_ms,
+                               cfgflash_err_t *erase_rc)
+{
+    if (carried != NULL)
+        *carried = open_carried;
+    if (erase_ms != NULL)
+        *erase_ms = open_erase_ms;
+    if (erase_rc != NULL)
+        *erase_rc = open_erase;
+    return opened ? CFGF_OK : open_err;
+}
+
+int cfg_ring_was_opened(void)
+{
+    return opened;
 }
 
 cfgflash_err_t cfg_boot_erase(uint32_t *ms_out, uint8_t *ran)
@@ -268,6 +365,113 @@ cfgflash_err_t cfg_put_device(const cfg_device_t *dev)
     cfg_record_seal(&rec, CFG_T_DEV, 1u, next_seq);
     image_put_device(dev);
     return append(&rec, CFG_T_DEV);
+}
+
+const cfg_device_t *cfg_find(uint32_t dev_id)
+{
+    for (uint32_t i = 0; i < CFG_DEVICE_MAX; i++) {
+        if (image.dev[i].state != CFG_DEV_FREE && image.dev[i].dev_id == dev_id)
+            return &image.dev[i];
+    }
+    return NULL;
+}
+
+uint32_t cfg_live_devices(void)
+{
+    uint32_t n = 0;
+
+    for (uint32_t i = 0; i < CFG_DEVICE_MAX; i++)
+        if (image.dev[i].state != CFG_DEV_FREE)
+            n++;
+    return n;
+}
+
+/* Counted over the image, which is the whole roster - the old store's cache was
+ * not. radio_devices_docs/open_hub/arch/config-store.md */
+static int lowest_free_slot(uint32_t skip_dev_id, uint8_t *out)
+{
+    for (uint32_t s = 0; s < CFG_DEVICE_MAX && s < RADIO_DEVICE_MAX; s++) {
+        uint32_t i;
+
+        for (i = 0; i < CFG_DEVICE_MAX; i++) {
+            const cfg_device_t *e = &image.dev[i];
+
+            if (e->state == CFG_DEV_FREE || e->dev_id == skip_dev_id)
+                continue;
+            if (e->slot == (uint8_t)s)
+                break;
+        }
+        if (i == CFG_DEVICE_MAX) {
+            *out = (uint8_t)s;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+cfgflash_err_t cfg_enrol(uint32_t dev_id, uint8_t *slot_out)
+{
+    const cfg_device_t *have = cfg_find(dev_id);
+    cfg_device_t d;
+    uint8_t slot;
+
+    if (dev_id == 0u)
+        return CFGF_ERR_ALIGN;
+    if (have != NULL) {
+        d    = *have;
+        slot = d.slot;
+        d.key_gen++;
+        memset(d.root_key, 0, sizeof(d.root_key));
+        memset(d.session_key, 0, sizeof(d.session_key));
+    } else {
+        if (cfg_live_devices() >= CFG_DEVICE_MAX ||
+            lowest_free_slot(dev_id, &slot) != 0)
+            return CFGF_ERR_RANGE;
+        memset(&d, 0, sizeof(d));
+        d.dev_id  = dev_id;
+        d.slot    = slot;
+        d.key_gen = 1u;
+    }
+    d.state = CFG_DEV_ENROLLED;
+    if (slot_out != NULL)
+        *slot_out = slot;
+    return cfg_put_device(&d);
+}
+
+cfgflash_err_t cfg_forget(uint32_t dev_id)
+{
+    const cfg_device_t *have = cfg_find(dev_id);
+    cfg_device_t d;
+
+    if (have == NULL)
+        return CFGF_ERR_RANGE;
+    d = *have;
+    /* A removal frees the entry rather than spending one.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    memset(&d.pubkey, 0, sizeof(d.pubkey));
+    memset(&d.root_key, 0, sizeof(d.root_key));
+    memset(&d.session_key, 0, sizeof(d.session_key));
+    d.state = CFG_DEV_FREE;
+    return cfg_put_device(&d);
+}
+
+cfgflash_err_t cfg_pair_complete(uint32_t dev_id, const uint8_t session[16],
+                                 const uint8_t nonce[8], uint32_t rotate_epoch,
+                                 const uint8_t pubkey[CFG_PUBKEY_BYTES])
+{
+    const cfg_device_t *have = cfg_find(dev_id);
+    cfg_device_t d;
+
+    if (have == NULL)
+        return CFGF_ERR_RANGE;
+    d = *have;
+    d.state        = CFG_DEV_PAIRED;
+    d.rotate_epoch = rotate_epoch;
+    d.rx_floor     = 0;
+    memcpy(d.session_key, session, CFG_SESSION_BYTES);
+    memcpy(d.last_nonce, nonce, CFG_NONCE_BYTES);
+    memcpy(d.pubkey, pubkey, CFG_PUBKEY_BYTES);
+    return cfg_put_device(&d);
 }
 
 cfgflash_err_t cfg_put_config(const cfg_config_t *cfg)

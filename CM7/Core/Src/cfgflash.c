@@ -79,17 +79,26 @@ cfgflash_err_t cfgflash_erase(uint8_t sector, uint32_t *ms_out)
     if (itcm_bytes == 0u && cfgflash_init() == 0u)
         return CFGF_ERR_NO_ITCM;
 
+    /* DWT, not HAL_GetTick(): masked interrupts stop the tick, so 954 ms read 1.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
     /* Cleans first: a bare invalidate discards this function's own stack. */
     SCB_DisableDCache();
-    t0 = HAL_GetTick();
     prim = __get_PRIMASK();
     __disable_irq();
+    t0 = DWT->CYCCNT;
     sr = erase_from_itcm(sector, &spins);
+    t0 = DWT->CYCCNT - t0;
     __set_PRIMASK(prim);
     SCB_EnableDCache();
 
-    if (ms_out != NULL)
-        *ms_out = HAL_GetTick() - t0;
+    if (ms_out != NULL) {
+        uint32_t khz = SystemCoreClock / 1000u;
+
+        *ms_out = khz ? (t0 / khz) : 0u;
+    }
     /* EOP alone. Any error bit means the sector is not to be trusted. */
     if ((sr & ~(uint32_t)FLASH_SR_EOP) != 0u)
         return CFGF_ERR_PROGRAM;

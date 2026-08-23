@@ -20,6 +20,7 @@ _Static_assert(sizeof(BUILD_ID) <= 32u, "BUILD_ID does not fit oht_hello_t.build
 #include "oht_proto.h"
 #include "hubipc.h"
 #include "keystore.h"
+#include "cfgstoreapi.h"
 #include "pairing.h"
 #include "radio_protocol.h"
 #include "radio_slots.h"
@@ -559,7 +560,7 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
         /* An id and nothing else; the device's key arrives in PAIR_REQ. ADR-0024 */
         if (!arg_u32(body, len, 0x8000u, &u32v) || u32v == 0u)
             return OHT_RES_BAD_ARGS;
-        if (ks_enrol(u32v, &slot) != 0)
+        if (cfg_enrol(u32v, &slot) != CFGF_OK)
             return OHT_RES_BUSY;
         rc = hub_ipc_call(IPC_REQ_ADD_DEVICE, 0, &u32v, sizeof(u32v), &reply);
         *detail = slot;
@@ -574,7 +575,7 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
 
         if (!arg_u32(body, len, 0x8000u, &u32v) || u32v == 0u)
             return OHT_RES_BAD_ARGS;
-        if (ks_forget(u32v) != 0)
+        if (cfg_forget(u32v) != CFGF_OK)
             return OHT_RES_NO_SUCH_DEVICE;
         /* Half a removal; the radio has its own entry.
          * radio_devices_docs/open_hub/arch/ipc.md */

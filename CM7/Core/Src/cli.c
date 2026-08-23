@@ -424,6 +424,21 @@ static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "  ring to erase at boot: %s\r\n",
             (w->dirty == CFG_SECTOR_NONE) ? "none"
                                           : (w->dirty == CFG_RING_A) ? "A" : "B");
+    if (cfg_ring_was_opened()) {
+        uint32_t carried = 0, ems = 0;
+        cfgflash_err_t erc = CFGF_OK;
+
+        (void)cfg_open_result(&carried, &ems, &erc);
+        cli_out(cli, "  OPENED this boot: %lu device(s) carried from the old log"
+                     "%s\r\n", (unsigned long)carried,
+                ems ? "" : ", no erase needed");
+        if (ems)
+            cli_out(cli, "                    ring B erased in %lu ms (%s)\r\n",
+                    (unsigned long)ems, cfgflash_err_str(erc));
+    }
+    cli_out(cli, "old log  %s\r\n", ks_retired()
+            ? "retired - it can no longer read or write these sectors"
+            : "STILL LIVE, and it shares sectors 6 and 7 with this store");
     cli_out(cli, "roster   %lu of %u\r\n", (unsigned long)live,
             (unsigned)CFG_DEVICE_MAX);
     cli_out(cli, "identity %s\r\n", (cfg_identity_read(&id) == 0)
@@ -1370,13 +1385,22 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         return 0;
     }
 
-    rc = ks_enrol(dev_id, &slot);
+    {
+        cfgflash_err_t e = cfg_enrol(dev_id, &slot);
+
+        rc = (e == CFGF_OK) ? 0 : -1;
+        if (e != CFGF_OK) {
+            /* The reason the store gave, not one word for every refusal.
+             * radio_devices_docs/open_hub/arch/config-store.md */
+            cli_out(cli, "\r\nError: not enrolled: %s\r\n",
+                    (e == CFGF_ERR_ALIGN) ? "device id 0 is not usable"
+                    : (e == CFGF_ERR_RANGE) ? "no free uplink slot, or the roster is full"
+                                            : cfgflash_err_str(e));
+            return 0;
+        }
+    }
     if (rc != 0) {
-        /* -4 printed "flash write failed" even when flash took the record. */
-        const char *why = (rc == -2) ? "device id 0 is not usable"
-                        : (rc == -3) ? "no free uplink slot"
-                        : (rc == -4) ? ks_fail_str(ks_last_fail())
-                                     : "the store rejected the arguments";
+        const char *why = "unreachable";
 
         cli_out(cli, "\r\nError: not enrolled: %s\r\n", why);
         if (rc == -4)
@@ -1417,17 +1441,19 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nError: device id must be hex\r\n");
         return 0;
     }
-    if (ks_forget(dev_id) != 0) {
+    if (cfg_forget(dev_id) != CFGF_OK) {
         cli_out(cli, "\r\nError: not enrolled, or flash write failed\r\n");
         return 0;
     }
     /* The store forgetting is half of it; the radio has its own entry.
      * radio_devices_docs/open_hub/arch/ipc.md */
     rc = rfm_request(IPC_REQ_REMOVE_DEVICE, 0, (const uint8_t *)&dev_id, sizeof(dev_id));
-    cli_out(cli, "\r\nremoved 0x%08lx from the key store - a tombstone was"
-                 " appended, so this\r\n"
-                 "  spent a slot rather than freeing one. %lu left.\r\n",
-            (unsigned long)dev_id, (unsigned long)ks_slots_left());
+    /* A ring frees the entry; the old log's tombstone vocabulary is retired.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    cli_out(cli, "\r\nremoved 0x%08lx - its entry and its uplink slot are free."
+                 " %lu of %u devices left.\r\n",
+            (unsigned long)dev_id, (unsigned long)cfg_live_devices(),
+            (unsigned)CFG_DEVICE_MAX);
     if (rc != IPC_ST_OK)
         cli_out(cli, "  but %s: it may still serve this device until the hub"
                      " resets\r\n", hub_ipc_str(rc));

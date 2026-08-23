@@ -42,6 +42,19 @@ cfgflash_err_t cfg_boot_erase(uint32_t *ms_out, uint8_t *ran);
  */
 int cfg_boot_erase_was_legal(void);
 
+/**
+ * @brief What opening the ring did, if this boot was the one that opened it.
+ * @param carried   receives devices carried out of the old log, or NULL
+ * @param erase_ms  receives how long the ring's erase took, or NULL
+ * @param erase_rc  receives that erase's result, or NULL
+ * @return CFGF_OK when a ring was opened, else why it was not
+ */
+cfgflash_err_t cfg_open_result(uint32_t *carried, uint32_t *erase_ms,
+                               cfgflash_err_t *erase_rc);
+
+/** @brief Whether this boot wrote the first checkpoint. @retval 1 it did */
+int cfg_ring_was_opened(void);
+
 /** @brief The reconstructed image. @return the RAM copy, never NULL */
 const cfg_snapshot_t *cfg_image(void);
 
@@ -116,6 +129,42 @@ int cfg_net_key_get(uint8_t key[CFG_SESSION_BYTES]);
  */
 cfgflash_err_t cfg_identity_write(const uint8_t priv[CFG_ROOT_KEY_BYTES],
                                   const uint8_t net[CFG_SESSION_BYTES]);
+
+/** @brief The newest entry for a device. @param dev_id the device @return it, or NULL */
+const cfg_device_t *cfg_find(uint32_t dev_id);
+
+/** @brief Devices the roster holds. @return the count, tombstones excluded by design */
+uint32_t cfg_live_devices(void);
+
+/**
+ * @brief Enrols a device at the lowest free uplink slot.
+ * @param dev_id    the device
+ * @param slot_out  receives the slot assigned; no operator ever picks one
+ * @return CFGF_OK, or why it refused
+ *
+ * Re-enrolling an id keeps its slot, drops its keys and bumps key_gen.
+ */
+cfgflash_err_t cfg_enrol(uint32_t dev_id, uint8_t *slot_out);
+
+/**
+ * @brief Removes a device, freeing its entry and its slot.
+ * @param dev_id  the device
+ * @return CFGF_OK, or why it refused
+ */
+cfgflash_err_t cfg_forget(uint32_t dev_id);
+
+/**
+ * @brief Completes a pairing against an already-enrolled device.
+ * @param dev_id        the device that paired
+ * @param session       the session key, stored rather than re-derived
+ * @param nonce         the last accepted nonce
+ * @param rotate_epoch  the epoch the key belongs to
+ * @param pubkey        the device's key as PAIR_REQ carried it
+ * @return CFGF_OK, or why it refused
+ */
+cfgflash_err_t cfg_pair_complete(uint32_t dev_id, const uint8_t session[16],
+                                 const uint8_t nonce[8], uint32_t rotate_epoch,
+                                 const uint8_t pubkey[CFG_PUBKEY_BYTES]);
 
 /**
  * @brief Appends one device entry as a delta, or a checkpoint when one is due.

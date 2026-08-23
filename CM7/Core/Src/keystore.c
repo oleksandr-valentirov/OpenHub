@@ -61,6 +61,7 @@ static uint32_t    stale_format;   /* records whose magic is ours and version is
 static uint32_t    last_flash_err;  /* HAL_FLASH_GetError() from the last failure */
 static uint32_t    flash_errors;    /* the subset of `errors` flash actually saw */
 static ks_fail_t   last_fail;
+static uint8_t     retired;
 
 static uint32_t crc32(const void *data, size_t len) {
     const uint8_t *p = data;
@@ -388,6 +389,14 @@ static int append(const ks_record_t *src) {
     ks_record_t r __attribute__((aligned(32)));
     uint32_t addr;
 
+    /* The ring owns sectors 6 and 7 now, and an append here would land inside
+     * it. radio_devices_docs/open_hub/arch/config-store.md */
+    if (retired) {
+        last_fail = KS_FAIL_RETIRED;
+        errors++;
+        return -1;
+    }
+
     if (!ready) {
         last_fail = KS_FAIL_NOT_READY;
         return -1;
@@ -699,6 +708,19 @@ uint32_t ks_cached(void) { return cached; }
 uint8_t ks_cache_full(void) { return (uint8_t)(cached >= KS_MAX_DEVICES); }
 ks_fail_t ks_last_fail(void) { return last_fail; }
 
+void ks_retire(void) {
+    retired = 1;
+    /* The cache describes flash erased under it, so it would report ghosts.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    cached = 0;
+    hub_key_valid = 0;
+    net_key_valid = 0;
+    legacy_hub_valid = 0;
+    legacy_net_valid = 0;
+}
+
+int ks_retired(void) { return retired; }
+
 const char *ks_fail_str(ks_fail_t f) {
     switch (f) {
     case KS_FAIL_NONE:       return "none";
@@ -710,6 +732,7 @@ const char *ks_fail_str(ks_fail_t f) {
     case KS_FAIL_LOCK:       return "the record landed and HAL_FLASH_Lock refused";
     case KS_FAIL_CACHE_FULL: return "flash took it; the RAM cache is full";
     case KS_FAIL_SCAN_OVER:  return "boot found more device ids than the cache fits";
+    case KS_FAIL_RETIRED:    return "retired: the configuration store owns these sectors";
     }
     /* A value from a build that knew more reasons than this one. */
     return "unknown";

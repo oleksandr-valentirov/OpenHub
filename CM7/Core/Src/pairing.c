@@ -210,7 +210,7 @@ static void serve_pair_conf(const ipc_msg_t *m) {
         goto refuse;
     }
 
-    if (ks_pair_complete(e.dev_id, pending.out.key_session,
+    if (cfg_pair_complete(e.dev_id, pending.out.key_session,
                          pending.dev_nonce, pairing_epoch_now(),
                          pending.dev_pub) != 0) {
         stats.store_failed++;
