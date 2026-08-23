@@ -543,34 +543,37 @@ population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
 
-### 70. Where an erase is allowed to run has two answers and needs one — `blocking` `debt`
+### 70. The boot erase path has never executed — `defect`
 
-§8 puts the boot erase **before `osKernelStart()`**; §7 says it runs only **after
-`HSEM_ID_0` is released**; CM7 releases that semaphore in `StartDefaultTask`, after
-the scheduler. **Both cannot hold**, and the specification said both.
+**The decision it was opened for is made.** An erase is allowed at boot, and the
+boot order moved so that is legal: CM7 releases `HSEM_ID_0` in `main()` after
+`ipc_init()`, and the store's boot work runs below the release and above the
+scheduler. The three things CM4 waits on are all above that line, checked rather
+than assumed, and lwIP was never one of them.
 
-Nothing had run the sequence, which is why nobody noticed: a wrap needs 576
-changes, so the first store to schedule a boot erase does not exist yet.
+It removes the coupling instead of managing it: with the release before the erase,
+CM4 never waits on one, so the watchdog hazard cannot arise from this path at all.
 
-`cfgflash_erase()` refuses in both of the states the question is about -
-`CFGF_ERR_CM4_HELD` while the semaphore is taken, `CFGF_ERR_SCHEDULER` while the
-scheduler runs - so this cannot be resolved by accident. Three options are costed
-on the page; the cheapest changes no boot order at all and erases the spare lazily
-at the first wrap, which is what CM4's `kv_init()` already does.
+**What is left is that the path has never run.** A wrap needs 576 changes, so
+nothing has ever scheduled a boot erase, and `boot erase: nothing was owed` is the
+only reading available. That sentence reads identically whether the path works or
+is unreachable, which is why the reachability half is instrumented separately:
 
-**It does not, by itself, block the migration** — that was written here first and
-is wrong in a way worth correcting rather than deleting. §8's erase is automatic and
-happens at a wrap; §10's erase of sector 6 is a one-off an operator triggers and
-need not happen at boot at all. What stops the migration is this store's **own**
-guard: a console command runs under the scheduler, so `cfgflash_erase()` returns
-`CFGF_ERR_SCHEDULER`.
+```
+boot erase: nothing was owed, and it was legal there
+```
 
-The two meet at one question — *where is an erase allowed to run* — and one answer
-settles both, which is the reason to decide it once. Everything before the erasing
-steps is done: the identity is in sector 5 and witnessed.
+`cfg_boot_erase_was_legal()` is that half — HSEM_ID_0 free where the boot work
+runs — and it is the post-condition of the boot-order change rather than a
+restatement of it.
 
-`../radio_devices_docs/open_hub/arch/config-store.md` § 8a.
+**The first thing that will exercise it is the migration**, whose order improves
+by having a boot erase available: write the first snapshot into the *other* ring,
+leave the old log readable, and let the next boot reclaim it. At no point is there
+no readable copy, which §10's original erase-then-write order could not say.
 
+`../radio_devices_docs/open_hub/arch/config-store.md` § 8a,
+`../radio_devices_docs/open_hub/arch/dual-core.md` § why the release moved.
 ---
 
 ## Defects
