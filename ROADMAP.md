@@ -783,10 +783,19 @@ something arithmetic should cover.
 
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
-One exchange holds the join channel for **~214 300 us** to the confirmation, and
-`RADIO_JOIN_LEN_US` is 116 000 with `RADIO_JOIN_RX_US` at 100 000. Measured and
-summed on 2026-08-23; the two compute terms are ~60 000 us on CM7 and ~82 000 us
-on the device, both for two X25519.
+One exchange holds the join channel for **~270 000 us** end to end, and
+`RADIO_JOIN_LEN_US` is 116 000 with `RADIO_JOIN_RX_US` at 100 000. Only 116 400 us
+remain in the superframe after `RADIO_JOIN_OFFSET_US` and the end guard, so the
+exchange is **2.2x the region and 2.2x all the room there is**.
+
+Measured 2026-08-23 by the device, all three spans from one clock: invitation to
+request 43 772 us, request to response **108 275 us**, response to confirmation
+96 068 us. An earlier estimate of 214 300 counted the curve and not the machinery
+and was 20% low.
+
+~37 200 us of the hub's 108 275 is neither air nor arithmetic - it is the FIFO
+read, the IPC to CM7 and `pairTask` being scheduled. Item 40 measured 45 ms of
+mailbox on a different path, which is the second witness.
 
 It shows as `req 7 -> rsp 7 -> conf 3 -> accept 3`: every request answered, four
 of seven exchanges dying between the response and the confirmation, and a fresh
@@ -798,7 +807,13 @@ starts at the **next** superframe boundary and the exchange starts 126 ms before
 one, so the response goes out before the clear air begins. `RADIO_QUIESCE_MIN_GAP`
 then refuses back-to-back enrolments outright — `pairings that got no clear air`.
 
-The region cannot simply grow: only 116 400 us remain between
-`RADIO_JOIN_OFFSET_US` and the end guard. This needs a decision, not a constant.
+The region cannot simply grow. Three options are derived on the page below, and
+**A is the one to take**: arm the quiesce from the *invitation* rather than from
+the request, so the clear air starts before the exchange does, and stop
+`RADIO_QUIESCE_MIN_GAP` refusing back-to-back enrolments. It costs no slots.
+B moves `RADIO_JOIN_OFFSET_US` to 1 718 000 and spends 16 uplink slots.
+C - the 37 200 us of mailbox - is worth doing anyway and cannot fix this alone.
+
+This needs a decision record, not a constant. Next free number is ADR-0026.
 
 `../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.
