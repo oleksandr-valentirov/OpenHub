@@ -9,6 +9,18 @@ line here shrinks to a pointer.
 **Cite a tag or a commit message, never a bare SHA.** A rewrite orphans a hash
 silently and neither the writer nor the reader is told.
 
+**Cite this repository's own evidence, not another queue's item number.** A number
+in a foreign queue moves when that queue is cleaned, and a number is not a
+sentence, so nothing anywhere disagrees when it goes stale. Name the file, the
+symbol, the commit or the ADR instead. The `device` items below are the exception
+and are hints rather than identifiers.
+
+**Cleaned 2026-08-23**: four closed entries retired, their reasoning left on
+`open_hub/arch/build-and-generation.md`, `open_hub/arch/ipc.md` and
+`open_hub/arch/keystore.md`; the front-end experiment the device session had been
+carrying moved to `open_hub/radio/configuration.md`; and every item re-filed under
+the heading its tag names.
+
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
 behind on its page; the entry here just goes.
@@ -51,8 +63,11 @@ reading would change what gets built:
   no transmit outside the grid; instead delivery *and* hub-side processing within
   1 s, which the grid as built does not yet meet.
 
-Five of the nine clauses are done and verified on air and four are partial. What
-is left is below.
+Five of the nine clauses are done and verified on air, three are partial and one —
+*both survive a reboot and restore the link* — has been exercised and failed. What
+is left is below. The system-level statement of the same thing, with the evidence
+behind each clause, is
+[`specs/01-requirements.md`](../radio_devices_docs/specs/01-requirements.md) § 3.1.
 
 ---
 
@@ -135,28 +150,6 @@ finally went right.
 
 `open_hub/testing/on-target.md`. Never erase bank 1 from CM7.
 
-### 29. A device that keeps its counter cannot transmit for up to 33 minutes — `blocking` `device` `contract`
-
-The mirror of item 5 and worse: that one is a device that **lost** its counter
-and cannot find the hub; this is one that **kept** it and may not speak. Found
-2026-08-21 by the device session on its own board — `STORE_COUNTER_STEP` 1000,
-the reserved mark pushed to ~644552 while the hub was at 644181, every genuine
-beacon refused as a replay 368 superframes "in the past".
-
-Two faults sit in it. **The durable mark gates the wrong thing** — it answers
-*which counters may I seal with* and was also answering *what time is it*; the
-device session's fix splits beacon replay from nonce safety. **Splitting them
-does not remove the outage**: nothing may be sealed below the reserved mark, so
-at a step of 1000 that is **up to 33 minutes of silence after any reset**, by
-design, announced nowhere.
-
-**The hub's half is to stop reading this as a fault.** `devices` shows `never`
-for a device that has not reported, which covers a device that is gone, one that
-is deaf and one that is serving its reservation with one word — and the hub is
-the only place an operator looks.
-
-`radio/known-issues.md`.
-
 ### 30. Two thirds of the device's frames never arrive, and the loss grows with offset into the superframe — `blocking` `defect`
 
 Counted by both sides over one agreed superframe range, sf 647403..647694, with
@@ -200,76 +193,319 @@ if either board reaches fewer than 8 cycles.
 
 `radio/phy.md`, `open_hub/radio/configuration.md`.
 
----
+### 23. The hub's channel filter has never had more than 1 kHz of margin — `blocking` `contract`
 
-## Defects
+**Retitled 2026-08-23.** This item was about the *device's* filter being 5 kHz too
+narrow. The device's is still short and still loses nothing; what changed is that
+the hub's own filter turns out to be the one with no room, and it is the receiver
+on the losing side of items 30, 60 and 63.
 
-### 7. A join beacon shares every invitation's superframe while nothing is paired — `defect`
+`rfm69_rx_bandwidth_to_reg` picks **the narrowest encodable setting at least as
+wide as it is asked for**, and this project has always asked for
+`RADIO_RX_BW_MIN_HZ`. So the margin is whatever the encoding rounds up by, and
+nothing has ever chosen it:
 
-`PAIR_INIT` targets round up to `RADIO_PAIR_INIT_EVERY` (4) and the join beacon
-runs every 2, so **every** invitation lands on a beacon superframe. The
-`device_count != 0` branch of `join_region_service()` suppresses the beacon
-there; the `device_count == 0` branch — a hub that has never paired anything,
-which is the first-pairing case — does not. Both are keyed at `join_offset_tk`
-about 8 ms apart.
+    regime                      asked      encoded    slack
+    25 kbps, RegRxBw 0x8A      99 000     100 000    1 000 Hz
+    50 kbps, RegRxBw 0x82     124 000     125 000    1 000 Hz
 
-By name the fault ADR-0021 records: the device heard 15 beacons and no
-invitations until the beacon was suppressed. **Found by reading, not on air**, so
-what it costs a receiver is unmeasured.
+Both regimes, one kilohertz, by accident of the encoder's step. Against that, the
+carrier error the slack is supposed to cover:
 
-`CM4/Core/Src/radio.c:1700`.
+    RADIO_CARRIER_ERR_HZ                   12 000    the allowance
+    hub RegFei, max over arrivals          12 329    already past it
+    device afc, max over arrivals          19 287    item 63's arms
+    required at 19 287                    138 574    13 574 Hz more than the hub has
 
-### 8. The LSE measurement is unexplained at the window level — `defect`
+**The population is censored and that is the whole caveat**: those are the frames
+whose sync word matched. What a missing frame needed is not in the sample and
+cannot be, so this bounds nothing — it establishes only that the allowance is
+being spent by the frames that *succeeded*.
 
-The mean is sound — it matched a host-clock measurement to 51 ppm over ten
-minutes — but a single 7.8 ms window carries ~350 ppm of noise that a sixteenfold
-longer window barely reduced. That should be impossible: the accumulated span
-telescopes to two timestamps. Averaged over ~32 s it does not block the grid.
-`RCC_BDCR.LSEDRV` is at its lowest reset default and is the untested lever.
+The next encodable step is **166.7 kHz**, which covers 33 333 Hz of carrier error
+for **0.97 dB** of noise bandwidth against roughly 50 dB of margin at bench range.
+`rfm69_set_rx_bandwidth_hz` writes `RegAfcBw` to the same value, so widening moves
+the AFC's acquisition filter with the channel filter — an AFC asked to pull in
+19 kHz through a filter sized for 12 is the mechanism, and one write changes both.
 
-`open_hub/radio/timebase.md`.
+**Two things argue against, and both belong in the pre-registration.**
 
-### 9. Every timing figure assumes HSE is the ST-Link MCO — `debt`
+The cross-direction reading: the device's filter is **7 358 Hz short** of the same
+budget and lost 0 of 19 beacons, while the hub's clears it by 342 Hz and loses four
+frames in five. Both receivers face the same relative offset by symmetry — one
+crystal pair, one difference — so **filter width alone cannot produce that
+asymmetry.** Either something else is also wrong, or one of these numbers does not
+mean what it is being read to mean.
 
-X3 is unfitted. If an HSE crystal is ever soldered on, re-measure — the method
-needs no instruments, just `timing` and a host clock.
+Which is the second: **nobody has checked whether `RegRxBw` is a single-sideband
+or a double-sided figure.** Every margin above assumes double-sided. Nothing in the
+driver, the skill, `radio_phy.h` or `radio_devices_docs/radio/` says which, and the
+answer moves all of it by a factor of two. Settle it with a sweep — narrow the
+setting until reception breaks and read the breakpoint against a known offset —
+not by reading a datasheet sentence about a different part.
 
-`open_hub/radio/timebase.md`.
+**The allowance itself contradicts its own design page** and that is an ADR, not an
+experiment: `phy.md` says the modulation tolerates ±20 ppm at both ends, which is
+40 ppm relative and **34 660 Hz** at 866.5 MHz, against a constant of 12 000 —
+13.8 ppm. Three times over, since the constant was written, sizing both filters.
+166.7 kHz does not reach the page's figure either; it is 2.7 kHz short of it. The
+next free ADR number is in the workspace `CLAUDE.md` and nowhere else.
 
-### 10. No in-firmware duty-cycle governor — `debt` `contract`
+The constants are named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
+against a shared `RADIO_RX_BW_MIN_HZ`. **Only the hub's is asserted**, because
+asserting the device's fails both builds today and the configuration change is
+the device's to make. The device cannot follow the hub's number in any case: the
+SX126x table steps 117 300 to 156 200.
 
-The hub trusts its schedule rather than counting its own air time, so any
-slot-timing change must be re-measured with the SDR.
+`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md` § phase 1.
 
-**k = 3 promotes this from tidiness.** A device using all three opportunities
-every superframe sits at **1.200 %** at 50 kbps, so the deadline caps the
-sustained event rate as well as costing capacity — and nothing in either firmware
-would refuse, every individual frame being legal. The device's bound is a budget
-over the regulator's hour (36 s of air), not an integer per superframe.
+### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
-The SDR cannot referee it either: `--expect-ms` selects our bursts by air time,
-and halving the frame while tripling the count invalidates that selection, so the
-instrument needs re-validating at the chosen rate before it can gate anything.
+One exchange holds the join channel for **~270 000 us** end to end, and
+`RADIO_JOIN_LEN_US` is 116 000 with `RADIO_JOIN_RX_US` at 100 000. Only 116 400 us
+remain in the superframe after `RADIO_JOIN_OFFSET_US` and the end guard, so the
+exchange is **2.2x the region and 2.2x all the room there is**.
 
-`RADIO_DUTY_PPM` now derives the figures from `RADIO_UPLINK_AIR_US`, because a
-budget held in frames is a budget a wire change edits silently.
+Measured 2026-08-23 by the device, all three spans from one clock: invitation to
+request 43 772 us, request to response **108 275 us**, response to confirmation
+96 068 us. An earlier estimate of 214 300 counted the curve and not the machinery
+and was 20% low.
 
-`radio/phy.md` § duty cycle, § the device's budget.
+~37 200 us of the hub's 108 275 is neither air nor arithmetic - it is the FIFO
+read, the IPC to CM7 and `pairTask` being scheduled. Item 40 measured 45 ms of
+mailbox on a different path, which is the second witness.
 
-### 11. A zero timebase scale would wedge the grid, and only luck forbids it — `debt`
+It shows as `req 7 -> rsp 7 -> conf 3 -> accept 3`: every request answered, four
+of seven exchanges dying between the response and the confirmation, and a fresh
+enrolment succeeding 1 of 5 once any device is already paired against 1 of 1 when
+none is.
 
-`superframe_due()` in `CM4/Core/Src/radio.c` steps the boundary by
-`superframe_tk` in a `while` loop, so a zero step is an unterminated loop with a
-runaway counter, and `timebase_ticks_to_us` divides by the same scale. The device
-session hit exactly this on 2026-08-21.
+`begin_quiesce()` is the mechanism meant to buy the air and cannot: a quiesce
+starts at the **next** superframe boundary and the exchange starts 126 ms before
+one, so the response goes out before the clear air begins. `RADIO_QUIESCE_MIN_GAP`
+then refuses back-to-back enrolments outright — `pairings that got no clear air`.
 
-It cannot fire here, and **the reason is two derivations away from the value**:
-`calib.c` rejects any capture window outside ±2 % of nominal. Nothing between
-`timebase_set_scale`, which takes any `uint32_t`, and the loop that trusts it
-would notice a zero. The fix is to make the bad value unrepresentable at the
-setter rather than checked at the use.
+**A was withdrawn on measurement, both halves.** The quiesce is already armed at
+the request and already takes effect at the boundary the exchange's tail lives
+in; `quiesce_lost` was 1 of 7, so six exchanges had their clear air and failed
+anyway. And `RADIO_QUIESCE_MIN_GAP` is enforced by the device too, so relaxing it
+here would suspend a grid the devices still believed was running. One real defect
+came out of A and is fixed: a valid PAIR_REQ was discarded when `begin_quiesce()`
+refused, which made that attempt certain to fail rather than merely unlikely.
 
-`open_hub/radio/timebase.md`, and the `verification` skill § failure-path sweep.
+**This item is a margin, not the cause of the current failures.** Counted on both
+ends over one closed window: device sent 4 requests, hub saw 3; hub answered 3,
+device heard 2; device confirmed 2, heard 1 accept - loss on all three legs with
+**zero CRC errors**, which is a receiver not listening rather than a damaged
+link. Item 60 carries that.
+
+B moves `RADIO_JOIN_OFFSET_US` to 1 718 000 and spends 16 uplink slots.
+C - the 37 200 us of mailbox - is worth doing anyway and cannot fix this alone.
+The decision record it needed is
+[ADR-0026](../radio_devices_docs/radio/decisions/0026-one-turn-per-join-region.md),
+accepted 2026-08-23 and built on both this side and the device; what it did not
+close is the pre-sync loss, which is why items 60 and 63 outlived it.
+
+`../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.
+
+### 60. The hub registers a PAIR_CONF about two times in five - `blocking` `defect`
+
+**This item said "has never registered one". That was wrong**, and it was wrong
+in the way a small sample is: the claim rested on `conf 0` after one or two
+confirmations had been radiated, which at the rate measured since is a coin
+landing the same way twice. Ten controlled enrolments on 2026-08-23, each from an
+erased store and a fresh device identity:
+
+| | device radiated | hub registered |
+|---|---|---|
+| confirmations | 12 | **5** |
+| enrolments completed | - | **5 of 10** |
+
+Against the WL55-to-WL55 control's 4 of 4 the difference is suggestive and not
+established: Fisher one-sided **p = 0.13**. What *is* established is that the
+fault is **intermittent**, and nothing about it changed between the runs that
+produced "never" and these - no receive-path code has moved.
+
+**The confirmation usually produces no sync word at all.** That is the finding
+that replaces "lost below the parser", which came from the one window that
+happened to hold a CRC error. In the failing trials the hub's window counters
+read `sync 1, frames 1` or `sync 2, frames 2` - one sync per *request*, and none
+for the confirmation that followed. When it is heard it arrives at **-42 to -43
+dBm**, the same level as the request beside it.
+
+So the receiver is not listening when the confirmation lands, and this is not a
+link, level, CRC or FIFO problem. Where to look, in order:
+
+- `join_rx_deadline` is `rfm_micros() + RADIO_JOIN_RX_US`, **100 000 us**, set
+  when the window opens. The device's own response-to-confirmation turnaround is
+  **105 000 us**. The second half of the exchange cannot fit the window it starts
+  in, and `join_region_service` puts the part in standby the moment the deadline
+  passes, whatever the exchange is doing.
+- `frame_tx` returns the part to RX after transmitting the response, so the hub
+  does keep listening past the deadline - until the next `join_region_service`
+  pass closes the window underneath it. Which of the two happens first is a race,
+  and a race is what a rate near half looks like.
+- With `device_count == 0` the window instead runs to the superframe boundary
+  less the end guard, so the same exchange meets a **60 ms** blind gap plus a
+  beacon transmission if it crosses a boundary.
+
+The fix is not a longer constant: it is that an exchange in flight must hold the
+window open until it resolves or times out.
+
+Two things this rules out, both measured: the front end (item 59's page carries
+the -42 dBm figure and the SX126x's -44 dBm on the same frames) and the budget.
+
+`../radio_devices_docs/radio/pairing.md` § the WL55-to-WL55 control.
+
+### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
+
+Item 60's twin and a separate leg: the confirmation is lost while the hub
+**waits**, this one while the hub has just transmitted the invitation and
+returned to receive. Item 59 named it and item 60 carried it, whose title is
+about PAIR_CONF, so it had no entry of its own until now.
+
+Six trials on 2026-08-23 under ADR-0026, cumulative `join reqs seen` differenced
+per trial against the device's own `req sent`:
+
+| trial | device sent | hub registered | sync | crc err | frames |
+|---|---|---|---|---|---|
+| 1 | 3 | 1 | 1 | 0 | 1 |
+| 2 | 3 | 1 | 2 | 0 | 2 |
+| 3 | 1 | 1 | 2 | 0 | 2 |
+| 4 | 1 | 1 | 2 | 0 | 2 |
+| 5 | 2 | 2 | 4 | 1 | 3 |
+| 6 | 4 | **0** | 1 | 1 | 0 |
+
+**14 radiated, 6 registered.** Retries covered it in four trials and not in the
+sixth, which is why that trial's exchange is excluded from ADR-0026's denominator.
+
+`sync == frames + crc_err` in **all six**, so nothing is lost between the sync
+detector and the parser, and `dropped 0` says nothing was refused above it. The
+loss is entirely that no sync word matched.
+
+The device placed every request correctly: `invite -> request 43 880 us` in the
+failing trial against 43 864..43 880 in the successful ones.
+
+**The receiver was on.** A `RegOpMode` read off the part at
+`RADIO_PAIR_INIT` air + `RADIO_PAIR_REQ_LEAD_US` into the region, once per join
+window. Over both arms below it found the receiver out of RX in **0 of 902**
+windows and in **0 of 210** that carried an invitation. Mutation-proven: built
+against `RFM69_MODE_SLEEP` the same counter reads 30 of 30 the other way, so a
+zero from it means something. "The window never opened" is refuted, not merely
+unobserved.
+
+Thirty-six further trials on 2026-08-23, in two pre-registered arms:
+
+| | requests radiated | registered | enrolments |
+|---|---|---|---|
+| A — as built | 69 | **34** | 6 of 20 |
+| B — the join window's RSSI sampler suppressed | 15 | **7** | 4 of 6 |
+
+**p = 0.54.** The sampler was the leading hypothesis and it is dead: the hub
+triggers `RssiStart` on every superloop pass and spends 500 us of each ~630 us
+pass timing out, so the part is inside a manual measurement about 80% of the time
+and a 1.28 ms preamble cannot avoid one. Removing it changed nothing. The AFC
+spread, pre-registered as the second measure, did not narrow either.
+
+Arm B is six trials and not the ten pre-registered, because the roster cache filled
+mid-batch. Its four remaining trials are void and are not counted.
+
+**What stopped it was the roster cache, not a broken store**, and it is repaired:
+dropping tombstones returned 63 of the 64 entries and the boot scan reports 0
+errors. What does not change is the shape — the log still reclaims nothing, so a
+batch that draws a fresh identity per trial **spends an entry it never gets back**,
+and **this experiment's design is what exhausted the instrument.** The rule that
+follows is `release` rather than an erase, so a node keeps its id and re-enrols
+under an entry the cache already holds. ADR-0027 is what removes the ceiling.
+
+**What the arms did not kill is the carrier.** `device afc` over each arm:
+
+| arm | frames | min | max | last |
+|---|---|---|---|---|
+| A | 48 | -12 330 | **19 287** | 13 061 |
+| B | 15 | -10 132 | **17 089** | 8 666 |
+
+`RADIO_CARRIER_ERR_HZ` is **12 000** and both arms exceed it — in the frames that
+*arrived*. The lost ones are not in that sample, so it bounds nothing on its own,
+but the allowance is demonstrably being spent. The untried arm is
+`RADIO_RX_BW_HUB_HZ`. **Item 23 carries that arm**, its arithmetic and the two
+readings that argue against it; it is not restated here.
+
+`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
+
+### 67. CM4 arms a watchdog and then waits on CM7 without refreshing it — `blocking` `defect`
+
+`CM4/Core/Src/main.c` runs `MX_IWDG2_Init()` — 512 ms, and as short as ~348 ms
+with the LSI at its ±50% tolerance — and then:
+
+```c
+while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}   /* no refresh in this loop */
+```
+
+CM7 releases that semaphore in `StartDefaultTask`, **after `osKernelStart()` and
+after `MX_LWIP_Init()`**. So CM4's boot budget for CM7 is a watchdog period that
+nothing enforces, nothing measures and nothing declares.
+
+**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms.
+Held before the release, it outlasts IWDG2, the system resets, the erase is cut
+mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` — which
+`ks_init()` then reads at every boot, hard-faulting a board with a perfectly good
+image. Reproduced deliberately on sector 3 on 2026-08-23 and then removed by
+releasing the semaphore first; the controlled pair is in
+`radio_devices_docs/open_hub/arch/config-store.md` § what was measured.
+
+Two things are wrong and they are separable:
+
+- **The wait does not refresh.** Any CM7 boot path that grows past the period
+  resets the system, and the cause reads as a hardware fault rather than a timeout.
+- **The budget is undeclared.** Nothing says how long CM7 may take, so nobody
+  adding work to CM7's boot can know they have spent it. `MX_LWIP_Init()` is
+  already inside it.
+
+The fix is not a longer period. The wait refreshes, and the budget becomes a
+constant both sides can be asserted against.
+
+`radio_devices_docs/open_hub/arch/keystore.md`, `bench/runs/2026-08-23-3/`.
+
+### 68. Six devices share one uplink slot on flash — `blocking` `defect`
+
+Exposed 2026-08-23 by fixing the roster cache, and it was there the whole time.
+
+`lowest_free_slot()` picks the lowest slot no **cached** live device holds. While
+the cache was full of tombstones the live devices were not in it, so every
+enrolment saw one device at slot 0 and answered **slot 1**. Six of them did:
+
+```
+b7e33ff6    0 enrolled
+3cfde754    1 enrolled
+527b51e7    1 enrolled
+48e4c4fb    1 enrolled
+22cdec51    1 enrolled      <- node A's identity
+a18892ec    1 enrolled
+3c7a11d9    1 enrolled
+```
+
+**The slot is written into the record**, so this is on flash and permanent for
+those records. It is not a display artefact.
+
+**Two things were wrong at once and only one of them is fixed.** `device list`
+reported `1 enrolled` while the store held seven, because the cache had no room
+for them. That cache defect is fixed — `scan()` no longer holds an entry for a
+device whose newest record is a removal, and reads the older sector first so scan
+order is seq order. The colliding slots are the damage that happened while it was
+open, and they are on flash.
+
+**It matters to CM4, not only to tidiness.** `install_device()` does
+`d = &devices[k->slot]`, so all six map to `devices[1]` and overwrite one another.
+Any pairing that lands on one of them serves a roster entry another device also
+believes is its own.
+
+None of the six carries a key — all read `(no key yet)` — so nothing is paired and
+nothing is lost by removing them. The repair is `device remove` on all seven and
+`device add` for whichever are wanted, which now assigns slots against a cache
+that holds the whole roster. It costs one flash slot per removal out of 1731.
+
+`../radio_devices_docs/open_hub/arch/keystore.md`.
 
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
@@ -330,6 +566,41 @@ population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
 
+---
+
+## Defects
+
+### 7. A join beacon still shares the first invitation's superframe — `defect`
+
+`PAIR_INIT` targets round up to `RADIO_PAIR_INIT_EVERY` (4) and the join beacon
+runs every `JOIN_BEACON_EVERY` (2), so **every** invitation lands on a beacon
+superframe. Both are keyed at `join_offset_tk`, about 8 ms apart.
+
+**Half guarded, and the unguarded half is the case that matters.** In
+`join_region_service()` the paired branch now refuses the beacon when
+`pi_superframe == frame_counter` or the region is owned by an exchange. The
+`device_count == 0` branch — a hub that has never paired anything, which *is* the
+first-pairing case — instead defers the beacon as `join_beacon_pending`, and that
+pending flag is cleared only by `pair_region_owned()`, which is false until a
+request has already arrived. So on the invitation superframe itself the beacon
+still goes out.
+
+By name the fault ADR-0021 records: the device heard 15 beacons and no invitations
+until the beacon was suppressed. **Found by reading, not on air**, so what it costs
+a receiver is still unmeasured.
+
+`CM4/Core/Src/radio.c` -> `join_region_service`, the `device_count == 0` branch.
+
+### 8. The LSE measurement is unexplained at the window level — `defect`
+
+The mean is sound — it matched a host-clock measurement to 51 ppm over ten
+minutes — but a single 7.8 ms window carries ~350 ppm of noise that a sixteenfold
+longer window barely reduced. That should be impossible: the accumulated span
+telescopes to two timestamps. Averaged over ~32 s it does not block the grid.
+`RCC_BDCR.LSEDRV` is at its lowest reset default and is the untested lever.
+
+`open_hub/radio/timebase.md`.
+
 ### 14. `rssi_up` is read from an untriggered latch — `defect`
 
 `handle_uplink_frame()` takes the level with `rfm69_get_rssi()`, which reads
@@ -349,6 +620,289 @@ before the frame handler runs, so the fix is to stash it for the frame just
 delivered rather than to read again.
 
 `CM4/Core/Src/radio.c:1378`, `:1625`, `open_hub/radio/configuration.md`.
+
+### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
+
+Neither `BEACON_BOUNDARY_LAG_US` nor `UPLINK_AIM_US` appears anywhere in
+`radio_devices_docs/radio/`. **Silence cannot go stale**, which is why the
+contract page never disagreed with either side and nobody found this by reading.
+
+The hub measures superframe boundary to first bit directly: **358..366 µs over
+529 beacons**. The device compiles **260 ± 5 µs**, applied as
+`at_us - BEACON_BOUNDARY_LAG_US` where `start_us` has already subtracted
+`RADIO_PRE_SYNC_US`. So the device's constant covers the hub's term **plus** its
+own detect-to-timestamp residual, and a residual cannot be negative — **the
+device's number must be larger than the hub's and it is 100 µs smaller.**
+
+**Adopting either number would be the worst outcome available.** The discriminator
+is agreed and cheap: the device forges a beacon on its own boundary while the hub
+reports the lag it computes, to be run in the same boot as item 30's window so it
+does not become another two-window fraction.
+
+The pre-sync term is the suspect this side can contribute to: `RADIO_PRE_SYNC_AIR_US`
+halved with the rate, 2 560 µs to 1 280, so any lag reading taken before the rate
+change and compared with one after is out by a preamble and a sync word.
+
+Raised by the device session. Device items 9 and 12.
+
+### 37. The sync-RSSI window is fixed, and the instrument is still blind one way — `defect`
+
+`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs from the sync edge where
+the frame ends at 6720, so samples in the gap were the noise floor admitted as a
+frame level. Fixed by `fix(cm4): the sync-RSSI window was measured from the wrong
+instant`, and read on 2026-08-22:
+
+    levels: 179 tried, 0 late, 0 failed, worst lag 658 us
+
+No level in `afcraw` is a floor reading wearing a frame's name, and the
+superloop's period — listed as unmeasured everywhere it mattered — is bounded
+above by that 658 µs.
+
+**What remains is the direction that would hurt.** The instrument records the lag
+of samples that were *taken*; a stall long enough to lose a frame produces no
+sample, so `0 late` is a statement about arrivals and not about the superloop's
+worst case.
+
+`open_hub/radio/configuration.md`.
+
+### 50. Nothing refuses to run on an undisciplined timebase — `defect`
+
+`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`**, and
+`CM4/Core/Src/timebase.c` starts at the nominal `scale_q24 = 1u << 24`. So a hub
+whose LSE never delivers a window runs the TDMA grid on a scale that is
+measurably wrong and says so to nobody.
+
+Measurably is the word — the disciplined scale on this bench sits **3452 ppm**
+off nominal over 2082 accepted windows:
+
+    2 s superframe   x 3452 ppm = 6.9 ms of placement error
+    RADIO_SLOT_US 9400 us        guard 1400 us
+
+Three ways in, none loud: `calib_init()` returns after `FIRST_WINDOW_US`;
+`started` stays 0 if `span_max > htim16.Init.Period` or `HAL_TIM_IC_Start()`
+fails; and `ready` is **sticky**, so one window at boot and a dead crystal
+afterwards leaves it 1 forever. `calib_age_tk()` computes the number that would
+name all three and **nothing acts on it** — the decorative shape.
+
+The fix is not refusing to boot: a hub that cannot discipline its timebase can
+still pair, answer a server and be debugged. What it cannot do is hold a grid, so
+the refusal belongs where the grid starts, and the condition has to leave
+northbound under its own name.
+
+`open_hub/radio/timebase.md`.
+
+### 64. The join region's level instrument almost never completes — `defect`
+
+`rfm69_measure_rssi` triggers and waits `RSSI_TIMEOUT_US` = 500 us for RssiDone.
+Measured 2026-08-23 over 31 join windows with nothing on air: **76 successes from
+about 95 000 calls**, and **0 from 534** inside the span where a request's payload
+would be. Both are the same 0.08%; the span is not special.
+
+So every `rx level: peak/floor` this project has quoted for the join region rests
+on about 75 samples, which is why peak reads -84 to -85 dBm in every trial
+including the ones that paired. **It measures the band, not the frame**, and it
+cannot say at what level a missed request arrived.
+
+The part evaluates RSSI continuously while the receiver waits for a preamble, so
+a manual trigger is mostly ignored — `OpenHub/.claude/skills/rfm69` already says
+the receiver "parks until a signal arrives". Until this is fixed the level witness
+below the sync word is the SDR, not the hub.
+
+`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
+
+---
+
+## Debts
+
+### 11. A zero timebase scale would wedge the grid, and only luck forbids it — `debt`
+
+`superframe_due()` in `CM4/Core/Src/radio.c` steps the boundary by
+`superframe_tk` in a `while` loop, so a zero step is an unterminated loop with a
+runaway counter, and `timebase_ticks_to_us` divides by the same scale. The device
+session hit exactly this on 2026-08-21.
+
+It cannot fire here, and **the reason is two derivations away from the value**:
+`calib.c` rejects any capture window outside ±2 % of nominal. Nothing between
+`timebase_set_scale`, which takes any `uint32_t`, and the loop that trusts it
+would notice a zero. The fix is to make the bad value unrepresentable at the
+setter rather than checked at the use.
+
+`open_hub/radio/timebase.md`, and the `verification` skill § failure-path sweep.
+
+### 9. Every timing figure assumes HSE is the ST-Link MCO — `debt`
+
+X3 is unfitted. If an HSE crystal is ever soldered on, re-measure — the method
+needs no instruments, just `timing` and a host clock.
+
+`open_hub/radio/timebase.md`.
+
+### 10. No in-firmware duty-cycle governor — `debt` `contract`
+
+The hub trusts its schedule rather than counting its own air time, so any
+slot-timing change must be re-measured with the SDR.
+
+**k = 3 promotes this from tidiness.** A device using all three opportunities
+every superframe sits at **1.200 %** at 50 kbps, so the deadline caps the
+sustained event rate as well as costing capacity — and nothing in either firmware
+would refuse, every individual frame being legal. The device's bound is a budget
+over the regulator's hour (36 s of air), not an integer per superframe.
+
+The SDR cannot referee it either: `--expect-ms` selects our bursts by air time,
+and halving the frame while tripling the count invalidates that selection, so the
+instrument needs re-validating at the chosen rate before it can gate anything.
+
+`RADIO_DUTY_PPM` now derives the figures from `RADIO_UPLINK_AIR_US`, because a
+budget held in frames is a budget a wire change edits silently.
+
+`radio/phy.md` § duty cycle, § the device's budget.
+
+### 33. Half rate is no longer forced by duty cycle — `debt` `contract`
+
+`RADIO_DOWNLINK_EVERY` is 2 because beacon + downlink + join beacon every
+superframe came to over 1 % at 25 kbps. At 50 kbps the three are **16.0 ms,
+0.800 %**, and fit.
+
+**Nothing is wrong today** — the value stands and its assert passes. What changed
+is that it is now a choice rather than a requirement, so a proposal to raise the
+downlink rate has to be refused or accepted on its own merits. Listed so the next
+reader does not re-derive the old refusal from a page that no longer says it.
+
+`radio/phy.md` § duty cycle.
+
+### 36. The downlink nonce guard has never refused anything — `debt`
+
+`dl_nonce_is_new()` is the per-device floor that makes the downlink's nonce
+uniqueness explicit instead of a side effect of `dl_served`'s scheduling. No path
+reaches it today, so it is a guard for the day that scheduling variable is
+removed as the optimisation it resembles.
+
+**A counter that has only ever read 0 is indistinguishable from one that cannot
+read anything else.** `device dlnonce` is the control shipped with it: it asks
+the live predicate for its verdict at the last sealed superframe, one past it and
+one before, and the three must read 0/1/0. Unread until a boot.
+
+`radio/crypto/wire-crypto.md`.
+
+### 40. A snapshot costs 45 ms, almost all of it waiting on the mailbox — `debt`
+
+`snapshot_us` reads 45 000 with two devices installed. The work is nine
+`hub_ipc_call()` round trips and each polls for its reply on a 5 ms `osDelay`, so
+the figure is the polling interval times the number of calls and has almost
+nothing to do with CM4. At 64 devices it would be over half a second of one task
+spinning.
+
+The fix is a reply notification rather than a poll, which the doorbell semaphore
+already does for events. It becomes urgent at the first bench with more than
+about ten devices.
+
+`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
+
+### 49. A frame-ring row cannot say which superframe or which regime it came from — `debt`
+
+`ipc_afc_raw_t` carries `grid`, `slot`, `gain`, `rssi` and `afc` per sample and
+**no superframe**, so a northbound row cannot be joined against the device's own
+transmit log by arrival. Packing the counter at snapshot time does not fix it:
+that number is when CM7 assembled the snapshot.
+
+`grid` is a partial witness already on the wire — it is a bijection onto
+`superframe mod 28`, so it can **refuse** a claimed superframe with no new field.
+Not built. Reconstruction cannot be more than a refusal: over 22 observed
+inter-arrival gaps, **13 exceeded the hop cycle**, so a guess would be right 41 %
+of the time and silently wrong the rest.
+
+The honest fix fits: `IPC_PAYLOAD_MAX` is 96 and `sizeof(ipc_afc_raw_t)` is 72,
+so a `uint16_t` per entry costs 18 of the 24 free bytes with CM7 restoring the
+high bits. A CM4-to-CM7 contract change, so both cores reflash together.
+
+**The same gap in a bigger form:** one afternoon put the bench through four
+regimes — a device firmware change, the transmit power it restored, the level
+match that undid it, and two hub flashes — and every boundary falls *inside* the
+ring. Both sessions had to partition from memory, and twice that memory was
+wrong. Time is the wrong key; `hello.build` and `boot_id` already exist and are
+sent once per connection, so what is missing is carrying them **per row**.
+
+**`boot_id` is now carried per row, by the server rather than by the hub.**
+`openhub-server` stamps each ring row with the connection's `boot_id` and keys
+deduplication on `(boot, seq)` — its commit `fix(state): seq is per hub run, and
+the ring outlives the run`. `tx_seq` restarts at reset and that ring does not, so
+until then every row of a new run was discarded as a repeat. `build` is not
+stamped, the superframe above is untouched, and no reader outside that server
+gets any of the three.
+
+`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
+
+### 57. Duty cycle cannot be attributed to one transmitter — `debt`
+
+`dutycycle.py` scans the whole captured band, and the 1% limit is **per
+transmitter**. A wideband capture holds the hub, both devices and the foreign
+traffic seen on grid channels 9, 10, 16, 17 and 18, so its total is a ceiling for
+any one of them and cannot be compared against a per-transmitter prediction.
+
+Everything needed already exists elsewhere: `airgrid.py` classifies each burst by
+grid position — beacon, downlink, `uplink<n>` — and C6 already measures mean air
+time per position against `phy.air_us(payload)`. What is missing is summing that
+per transmitter over the capture duration.
+
+Until it exists, the regression's duty-cycle check runs on a single-transmitter
+capture with the other side holding transmit, which spends a bench agreement on
+something arithmetic should cover.
+
+`specs/06-regression.md` §6.1.
+
+### 61. Enrolment mode SECRET has no MAC primitive any more — `debt`
+
+`crypto_pair_init_mac` was HMAC-SHA256/96 over the invitation's cleartext, keyed
+by a K_init that `crypto_pair_init_key` derived from Z1. ADR-0024 replaced that
+with mode OPEN and an all-zero MAC, and the keying half went with it. The MAC
+half stayed: declared, defined, **called by nothing and covered by no test**, with
+a comment still citing ADR-0021. It was removed on 2026-08-23.
+
+`RADIO_ENROL_MODE_SECRET` is still reserved in the protocol header. Building it
+needs a MAC keyed by a **provisioned** secret, which is a different key from the
+one the deleted function took, so this is a note about what is owed rather than
+about a function to restore.
+
+Half a mechanism is worse than none: the surviving half took a 32-byte key with
+no derivation left to produce it, and the next reader would have keyed it with
+whatever was to hand.
+
+`../radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md`.
+
+### 62. The frame cipher's self-test is unreadable exactly when it matters — `debt`
+
+`aead_selftest` is reported by one line inside `devices`, printed **only when it
+is nonzero**, and placed after the per-device list. With eighteen records enrolled
+the CLI's response buffer truncated the output four lines earlier, so the result
+was not absent — it was unreachable, and silence was indistinguishable from a
+pass, from a truncation and from a command that never ran.
+
+Found on 2026-08-23 while confirming the self-test still passed after it was
+repointed from pair_v2's vectors to pair_v4's. Emptying the keystore made it
+readable, which is the wrong way round: a keystore with devices in it is the
+normal case.
+
+It wants its own line, printed pass or fail, ahead of anything unbounded.
+
+`../radio_devices_docs/open_hub/security/self-tests.md`.
+
+### 69. Two failure renderers give distinct words and nothing tests that they do — `debt`
+
+`ks_fail_str()` and `hub_ipc_str()` exist because four store conditions shared one
+number and two IPC failures shared another. Both now name their case — and **a
+build that returned one string for every code would print a plausible sentence and
+pass every check there is.**
+
+Neither body needs the HAL or CMSIS; the files they sit in do. Split them into
+pure translation units and one host test covers both. It is the cheap half of the
+lesson the store cost a day for: an instrument that cannot separate its own cases
+belongs with the other prerequisites, not after them.
+
+`../radio_devices_docs/open_hub/arch/ipc.md`,
+`../radio_devices_docs/open_hub/arch/keystore.md`.
+
+---
+
+## Contract debts
 
 ### 15. The data beacon is unauthenticated — `contract`
 
@@ -395,12 +949,16 @@ re-pairing every device.
 
 ### 19. Two clauses of ADR-0021 were agreed and never built — `contract`
 
-- **`PAIR_REQ` still carries `pubkey[33]` and is still 57 bytes**, not 24. The
-  size is asserted, charged and pinned in three places, all agreeing on 57.
-  Buys 10.6 ms of device air for a coordinated wire change.
-- **The broadcast join beacon is still transmitted.** The decision removes it;
-  the implementation only suppresses it on invitation superframes — and item 7
-  is that even this is incomplete.
+- **`PAIR_REQ` still carries a public key and is still 56 bytes**, not 24. ADR-0025
+  took the field from `pubkey[33]` to `pubkey[32]` when X25519 replaced P-256, so
+  the frame is one byte shorter than when this entry was written and is nowhere
+  near what the decision asked for. The size is asserted in `radio_protocol.h`
+  twice, against `sizeof(radio_pair_req_t) == 56` and against
+  `RADIO_PAIR_REQ_BYTES`. Buys about 10 ms of device air for a coordinated wire
+  change.
+- **The broadcast join beacon is still transmitted.** The decision removes it; the
+  implementation only suppresses it on superframes an exchange owns — and item 7 is
+  that even this is incomplete.
 
 `radio/joining.md` § what ADR-0021 left unbuilt.
 
@@ -458,183 +1016,21 @@ with one word. `uptime_s` splits them and nothing on this side reads it that way
 
 `radio/known-issues.md`.
 
-### 23. The hub's channel filter has never had more than 1 kHz of margin — `blocking` `contract`
+### 29. `never` renders three different device states with one word — `contract`
 
-**Retitled 2026-08-23.** This item was about the *device's* filter being 5 kHz too
-narrow. The device's is still short and still loses nothing; what changed is that
-the hub's own filter turns out to be the one with no room, and it is the receiver
-on the losing side of items 30, 60 and 63.
+**Rescoped 2026-08-23: the device's half is gone.**
+[ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)
+removed the durable counter reservation, so a device that keeps its counter is no
+longer silent for up to 33 minutes after a reset — an opened downlink supplies its
+transmit floor and the hub needed no change at all for it.
 
-`rfm69_rx_bandwidth_to_reg` picks **the narrowest encodable setting at least as
-wide as it is asked for**, and this project has always asked for
-`RADIO_RX_BW_MIN_HZ`. So the margin is whatever the encoding rounds up by, and
-nothing has ever chosen it:
+What remains is this side's, and it was always the harder half. `devices` shows
+**`never`** for a device that has not reported, and that one word covers a device
+that is *gone*, one that is *deaf*, and one that is *between resets and has not yet
+opened a downlink* — the hub being the only place an operator looks. `uptime_s`
+splits them and nothing here reads it that way (item 22).
 
-    regime                      asked      encoded    slack
-    25 kbps, RegRxBw 0x8A      99 000     100 000    1 000 Hz
-    50 kbps, RegRxBw 0x82     124 000     125 000    1 000 Hz
-
-Both regimes, one kilohertz, by accident of the encoder's step. Against that, the
-carrier error the slack is supposed to cover:
-
-    RADIO_CARRIER_ERR_HZ                   12 000    the allowance
-    hub RegFei, max over arrivals          12 329    already past it
-    device afc, max over arrivals          19 287    item 63's arms
-    required at 19 287                    138 574    13 574 Hz more than the hub has
-
-**The population is censored and that is the whole caveat**: those are the frames
-whose sync word matched. What a missing frame needed is not in the sample and
-cannot be, so this bounds nothing — it establishes only that the allowance is
-being spent by the frames that *succeeded*.
-
-The next encodable step is **166.7 kHz**, which covers 33 333 Hz of carrier error
-for **0.97 dB** of noise bandwidth against roughly 50 dB of margin at bench range.
-`rfm69_set_rx_bandwidth_hz` writes `RegAfcBw` to the same value, so widening moves
-the AFC's acquisition filter with the channel filter — an AFC asked to pull in
-19 kHz through a filter sized for 12 is the mechanism, and one write changes both.
-
-**Two things argue against, and both belong in the pre-registration.**
-
-The cross-direction reading: the device's filter is **7 358 Hz short** of the same
-budget and lost 0 of 19 beacons, while the hub's clears it by 342 Hz and loses four
-frames in five. Both receivers face the same relative offset by symmetry — one
-crystal pair, one difference — so **filter width alone cannot produce that
-asymmetry.** Either something else is also wrong, or one of these numbers does not
-mean what it is being read to mean.
-
-Which is the second: **nobody has checked whether `RegRxBw` is a single-sideband
-or a double-sided figure.** Every margin above assumes double-sided. Nothing in the
-driver, the skill, `radio_phy.h` or `radio_devices_docs/radio/` says which, and the
-answer moves all of it by a factor of two. Settle it with a sweep — narrow the
-setting until reception breaks and read the breakpoint against a known offset —
-not by reading a datasheet sentence about a different part.
-
-**The allowance itself contradicts its own design page** and that is an ADR, not an
-experiment: `phy.md` says the modulation tolerates ±20 ppm at both ends, which is
-40 ppm relative and **34 660 Hz** at 866.5 MHz, against a constant of 12 000 —
-13.8 ppm. Three times over, since the constant was written, sizing both filters.
-166.7 kHz does not reach the page's figure either; it is 2.7 kHz short of it.
-Next free number is ADR-0027.
-
-The constants are named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
-against a shared `RADIO_RX_BW_MIN_HZ`. **Only the hub's is asserted**, because
-asserting the device's fails both builds today and the configuration change is
-the device's to make. The device cannot follow the hub's number in any case: the
-SX126x table steps 117 300 to 156 200.
-
-`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md` § phase 1.
-
-### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
-
-Neither `BEACON_BOUNDARY_LAG_US` nor `UPLINK_AIM_US` appears anywhere in
-`radio_devices_docs/radio/`. **Silence cannot go stale**, which is why the
-contract page never disagreed with either side and nobody found this by reading.
-
-The hub measures superframe boundary to first bit directly: **358..366 µs over
-529 beacons**. The device compiles **260 ± 5 µs**, applied as
-`at_us - BEACON_BOUNDARY_LAG_US` where `start_us` has already subtracted
-`RADIO_PRE_SYNC_US`. So the device's constant covers the hub's term **plus** its
-own detect-to-timestamp residual, and a residual cannot be negative — **the
-device's number must be larger than the hub's and it is 100 µs smaller.**
-
-**Adopting either number would be the worst outcome available.** The discriminator
-is agreed and cheap: the device forges a beacon on its own boundary while the hub
-reports the lag it computes, to be run in the same boot as item 30's window so it
-does not become another two-window fraction.
-
-The pre-sync term is the suspect this side can contribute to: `RADIO_PRE_SYNC_AIR_US`
-halved with the rate, 2 560 µs to 1 280, so any lag reading taken before the rate
-change and compared with one after is out by a preamble and a sync word.
-
-Raised by the device session. Device items 9 and 12.
-
-### 33. Half rate is no longer forced by duty cycle — `debt` `contract`
-
-`RADIO_DOWNLINK_EVERY` is 2 because beacon + downlink + join beacon every
-superframe came to over 1 % at 25 kbps. At 50 kbps the three are **16.0 ms,
-0.800 %**, and fit.
-
-**Nothing is wrong today** — the value stands and its assert passes. What changed
-is that it is now a choice rather than a requirement, so a proposal to raise the
-downlink rate has to be refused or accepted on its own merits. Listed so the next
-reader does not re-derive the old refusal from a page that no longer says it.
-
-`radio/phy.md` § duty cycle.
-
-### 36. The downlink nonce guard has never refused anything — `debt`
-
-`dl_nonce_is_new()` is the per-device floor that makes the downlink's nonce
-uniqueness explicit instead of a side effect of `dl_served`'s scheduling. No path
-reaches it today, so it is a guard for the day that scheduling variable is
-removed as the optimisation it resembles.
-
-**A counter that has only ever read 0 is indistinguishable from one that cannot
-read anything else.** `device dlnonce` is the control shipped with it: it asks
-the live predicate for its verdict at the last sealed superframe, one past it and
-one before, and the three must read 0/1/0. Unread until a boot.
-
-`radio/crypto/wire-crypto.md`.
-
-### 37. The sync-RSSI window is fixed, and the instrument is still blind one way — `defect`
-
-`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs from the sync edge where
-the frame ends at 6720, so samples in the gap were the noise floor admitted as a
-frame level. Fixed by `fix(cm4): the sync-RSSI window was measured from the wrong
-instant`, and read on 2026-08-22:
-
-    levels: 179 tried, 0 late, 0 failed, worst lag 658 us
-
-No level in `afcraw` is a floor reading wearing a frame's name, and the
-superloop's period — listed as unmeasured everywhere it mattered — is bounded
-above by that 658 µs.
-
-**What remains is the direction that would hurt.** The instrument records the lag
-of samples that were *taken*; a stall long enough to lose a frame produces no
-sample, so `0 late` is a statement about arrivals and not about the superloop's
-worst case.
-
-`open_hub/radio/configuration.md`.
-
-### 50. Nothing refuses to run on an undisciplined timebase — `defect`
-
-`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`**, and
-`CM4/Core/Src/timebase.c` starts at the nominal `scale_q24 = 1u << 24`. So a hub
-whose LSE never delivers a window runs the TDMA grid on a scale that is
-measurably wrong and says so to nobody.
-
-Measurably is the word — the disciplined scale on this bench sits **3452 ppm**
-off nominal over 2082 accepted windows:
-
-    2 s superframe   x 3452 ppm = 6.9 ms of placement error
-    RADIO_SLOT_US 9400 us        guard 1400 us
-
-Three ways in, none loud: `calib_init()` returns after `FIRST_WINDOW_US`;
-`started` stays 0 if `span_max > htim16.Init.Period` or `HAL_TIM_IC_Start()`
-fails; and `ready` is **sticky**, so one window at boot and a dead crystal
-afterwards leaves it 1 forever. `calib_age_tk()` computes the number that would
-name all three and **nothing acts on it** — the decorative shape.
-
-The fix is not refusing to boot: a hub that cannot discipline its timebase can
-still pair, answer a server and be debugged. What it cannot do is hold a grid, so
-the refusal belongs where the grid starts, and the condition has to leave
-northbound under its own name.
-
-`open_hub/radio/timebase.md`.
-
-### 54. A linker script edit does not relink — `closed 2026-08-23`
-
-The script reached the link only as the `-T` inside `CMAKE_C_LINK_FLAGS`, set in
-the toolchain file, so nothing listed it as a dependency edge. Fixed with a
-`LINK_DEPENDS` property on each core's target, naming the same path the toolchain
-file interpolates.
-
-**Proven by mutation in both directions**, which is the only reason this is closed
-rather than believed, and re-run as TR-H-1 of `bench/runs/2026-08-23-3`: a second build with nothing touched links nothing; `touch
-CM7/custom_m7_flash.ld` links **CM7 only**; `touch CM4/custom_m4_flash.ld` links
-**CM4 only**. A fix that made everything relink always would have passed the
-first check and been worthless.
-
-`open_hub/arch/build-and-generation.md`, `open_hub/arch/memory-map.md`.
+`radio/known-issues.md`, `open_hub/network/telemetry.md`.
 
 ### 55. A device setting changed without a reset has no witness — `contract`
 
@@ -656,21 +1052,6 @@ that is a contract change — agree it with the device session, whose item 52
 covers the setting not persisting rather than not being reported.
 
 `radio/known-issues.md`, `open_hub/network/telemetry.md`.
-
-### 56. `device remove` forgets a device on one core only — `closed 2026-08-23`
-
-Closed on inspection, not on a new change: it was fixed by `e29571d feat(crypto):
-X25519 replaces P-256, and enrolment needs only the device id` and the entry was
-never retired. `remove_device()` in `CM4/Core/Src/radio.c:1807` zeroes the entry
-the way install leaves it and decrements `device_count`; CM4's handler answers
-`IPC_REQ_REMOVE_DEVICE` with 1 or 0 rather than falling into `default`; and both
-`cmd_device_remove()` and the northbound `OHT_CMD_DEVICE_REMOVE` send it.
-
-**Still owed and deliberately not claimed: the control.** Nobody has run remove,
-re-enrol, and checked CM4 holds one entry rather than two. The code reads right on
-both cores and that is all this closure asserts.
-
-`open_hub/arch/ipc.md`, `open_hub/cli.md`.
 
 ---
 
@@ -713,10 +1094,19 @@ not a patch.
 ### 38. The northbound link forgets its server on every reset — `debt`
 
 `telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
-`ip static`. Both wait on a configuration store that does not exist; the `cfg`
-command that stubbed it out was removed on 2026-08-22, so nothing on the console
-advertises it any more. Until the store is built the link cannot come up
-unattended, which is most of what a server is for.
+`ip static`. Both wait on a configuration store; the `cfg` command that stubbed it
+out was removed on 2026-08-22, so nothing on the console advertises it any more.
+Until the store is built the link cannot come up unattended, which is most of what
+a server is for.
+
+**The store is now specified rather than absent.**
+[ADR-0027](../radio_devices_docs/open_hub/decisions/0027-config-store-is-a-ring-of-checkpoints.md)
+is accepted and unbuilt: a journal of fixed-size typed records wrapping between two
+sectors, with periodic checkpoints and small deltas between them. The one thing
+that gated it is measured — CM7 erases a bank 1 sector in 954 ms, from ITCM, with
+no error bit, **once `HSEM_ID_0` is released first** (item 67). Building it closes
+this item, retires the 64-id ceiling behind item 68, and is the largest single
+piece of unbuilt design in this queue.
 
 `open_hub/network/telemetry.md`, `open_hub/network/ethernet.md`.
 
@@ -729,54 +1119,6 @@ with the WL55 session is the only work left and it lands as one commit in
 `radio.c`.
 
 `open_hub/network/telemetry.md`, `radio/tdma.md` § slot budget.
-
-### 40. A snapshot costs 45 ms, almost all of it waiting on the mailbox — `debt`
-
-`snapshot_us` reads 45 000 with two devices installed. The work is nine
-`hub_ipc_call()` round trips and each polls for its reply on a 5 ms `osDelay`, so
-the figure is the polling interval times the number of calls and has almost
-nothing to do with CM4. At 64 devices it would be over half a second of one task
-spinning.
-
-The fix is a reply notification rather than a poll, which the doorbell semaphore
-already does for events. It becomes urgent at the first bench with more than
-about ten devices.
-
-`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
-
-### 49. A frame-ring row cannot say which superframe or which regime it came from — `debt`
-
-`ipc_afc_raw_t` carries `grid`, `slot`, `gain`, `rssi` and `afc` per sample and
-**no superframe**, so a northbound row cannot be joined against the device's own
-transmit log by arrival. Packing the counter at snapshot time does not fix it:
-that number is when CM7 assembled the snapshot.
-
-`grid` is a partial witness already on the wire — it is a bijection onto
-`superframe mod 28`, so it can **refuse** a claimed superframe with no new field.
-Not built. Reconstruction cannot be more than a refusal: over 22 observed
-inter-arrival gaps, **13 exceeded the hop cycle**, so a guess would be right 41 %
-of the time and silently wrong the rest.
-
-The honest fix fits: `IPC_PAYLOAD_MAX` is 96 and `sizeof(ipc_afc_raw_t)` is 72,
-so a `uint16_t` per entry costs 18 of the 24 free bytes with CM7 restoring the
-high bits. A CM4-to-CM7 contract change, so both cores reflash together.
-
-**The same gap in a bigger form:** one afternoon put the bench through four
-regimes — a device firmware change, the transmit power it restored, the level
-match that undid it, and two hub flashes — and every boundary falls *inside* the
-ring. Both sessions had to partition from memory, and twice that memory was
-wrong. Time is the wrong key; `hello.build` and `boot_id` already exist and are
-sent once per connection, so what is missing is carrying them **per row**.
-
-**`boot_id` is now carried per row, by the server rather than by the hub.**
-`openhub-server` stamps each ring row with the connection's `boot_id` and keys
-deduplication on `(boot, seq)` — its commit `fix(state): seq is per hub run, and
-the ring outlives the run`. `tx_seq` restarts at reset and that ring does not, so
-until then every row of a new run was discarded as a repeat. `build` is not
-stamped, the superframe above is untouched, and no reader outside that server
-gets any of the three.
-
-`open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
 ---
 
@@ -804,477 +1146,3 @@ not assuming.
   reset spends the one honest test of it on nobody watching.
 
 `open_hub/testing/sdr.md`.
-
-### 57. Duty cycle cannot be attributed to one transmitter — `debt`
-
-`dutycycle.py` scans the whole captured band, and the 1% limit is **per
-transmitter**. A wideband capture holds the hub, both devices and the foreign
-traffic seen on grid channels 9, 10, 16, 17 and 18, so its total is a ceiling for
-any one of them and cannot be compared against a per-transmitter prediction.
-
-Everything needed already exists elsewhere: `airgrid.py` classifies each burst by
-grid position — beacon, downlink, `uplink<n>` — and C6 already measures mean air
-time per position against `phy.air_us(payload)`. What is missing is summing that
-per transmitter over the capture duration.
-
-Until it exists, the regression's duty-cycle check runs on a single-transmitter
-capture with the other side holding transmit, which spends a bench agreement on
-something arithmetic should cover.
-
-`specs/06-regression.md` §6.1.
-
-### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
-
-One exchange holds the join channel for **~270 000 us** end to end, and
-`RADIO_JOIN_LEN_US` is 116 000 with `RADIO_JOIN_RX_US` at 100 000. Only 116 400 us
-remain in the superframe after `RADIO_JOIN_OFFSET_US` and the end guard, so the
-exchange is **2.2x the region and 2.2x all the room there is**.
-
-Measured 2026-08-23 by the device, all three spans from one clock: invitation to
-request 43 772 us, request to response **108 275 us**, response to confirmation
-96 068 us. An earlier estimate of 214 300 counted the curve and not the machinery
-and was 20% low.
-
-~37 200 us of the hub's 108 275 is neither air nor arithmetic - it is the FIFO
-read, the IPC to CM7 and `pairTask` being scheduled. Item 40 measured 45 ms of
-mailbox on a different path, which is the second witness.
-
-It shows as `req 7 -> rsp 7 -> conf 3 -> accept 3`: every request answered, four
-of seven exchanges dying between the response and the confirmation, and a fresh
-enrolment succeeding 1 of 5 once any device is already paired against 1 of 1 when
-none is.
-
-`begin_quiesce()` is the mechanism meant to buy the air and cannot: a quiesce
-starts at the **next** superframe boundary and the exchange starts 126 ms before
-one, so the response goes out before the clear air begins. `RADIO_QUIESCE_MIN_GAP`
-then refuses back-to-back enrolments outright — `pairings that got no clear air`.
-
-**A was withdrawn on measurement, both halves.** The quiesce is already armed at
-the request and already takes effect at the boundary the exchange's tail lives
-in; `quiesce_lost` was 1 of 7, so six exchanges had their clear air and failed
-anyway. And `RADIO_QUIESCE_MIN_GAP` is enforced by the device too, so relaxing it
-here would suspend a grid the devices still believed was running. One real defect
-came out of A and is fixed: a valid PAIR_REQ was discarded when `begin_quiesce()`
-refused, which made that attempt certain to fail rather than merely unlikely.
-
-**This item is a margin, not the cause of the current failures.** Counted on both
-ends over one closed window: device sent 4 requests, hub saw 3; hub answered 3,
-device heard 2; device confirmed 2, heard 1 accept - loss on all three legs with
-**zero CRC errors**, which is a receiver not listening rather than a damaged
-link. Item 60 carries that.
-
-B moves `RADIO_JOIN_OFFSET_US` to 1 718 000 and spends 16 uplink slots.
-C - the 37 200 us of mailbox - is worth doing anyway and cannot fix this alone.
-Still needs a decision record. Next free number is ADR-0026.
-
-`../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.
-
-### 60. The hub registers a PAIR_CONF about two times in five - `blocking` `defect`
-
-**This item said "has never registered one". That was wrong**, and it was wrong
-in the way a small sample is: the claim rested on `conf 0` after one or two
-confirmations had been radiated, which at the rate measured since is a coin
-landing the same way twice. Ten controlled enrolments on 2026-08-23, each from an
-erased store and a fresh device identity:
-
-| | device radiated | hub registered |
-|---|---|---|
-| confirmations | 12 | **5** |
-| enrolments completed | - | **5 of 10** |
-
-Against the WL55-to-WL55 control's 4 of 4 the difference is suggestive and not
-established: Fisher one-sided **p = 0.13**. What *is* established is that the
-fault is **intermittent**, and nothing about it changed between the runs that
-produced "never" and these - no receive-path code has moved.
-
-**The confirmation usually produces no sync word at all.** That is the finding
-that replaces "lost below the parser", which came from the one window that
-happened to hold a CRC error. In the failing trials the hub's window counters
-read `sync 1, frames 1` or `sync 2, frames 2` - one sync per *request*, and none
-for the confirmation that followed. When it is heard it arrives at **-42 to -43
-dBm**, the same level as the request beside it.
-
-So the receiver is not listening when the confirmation lands, and this is not a
-link, level, CRC or FIFO problem. Where to look, in order:
-
-- `join_rx_deadline` is `rfm_micros() + RADIO_JOIN_RX_US`, **100 000 us**, set
-  when the window opens. The device's own response-to-confirmation turnaround is
-  **105 000 us**. The second half of the exchange cannot fit the window it starts
-  in, and `join_region_service` puts the part in standby the moment the deadline
-  passes, whatever the exchange is doing.
-- `frame_tx` returns the part to RX after transmitting the response, so the hub
-  does keep listening past the deadline - until the next `join_region_service`
-  pass closes the window underneath it. Which of the two happens first is a race,
-  and a race is what a rate near half looks like.
-- With `device_count == 0` the window instead runs to the superframe boundary
-  less the end guard, so the same exchange meets a **60 ms** blind gap plus a
-  beacon transmission if it crosses a boundary.
-
-The fix is not a longer constant: it is that an exchange in flight must hold the
-window open until it resolves or times out.
-
-Two things this rules out, both measured: the front end (item 59's page carries
-the -42 dBm figure and the SX126x's -44 dBm on the same frames) and the budget.
-
-`../radio_devices_docs/radio/pairing.md` § the WL55-to-WL55 control.
-### 61. Enrolment mode SECRET has no MAC primitive any more — `debt`
-
-`crypto_pair_init_mac` was HMAC-SHA256/96 over the invitation's cleartext, keyed
-by a K_init that `crypto_pair_init_key` derived from Z1. ADR-0024 replaced that
-with mode OPEN and an all-zero MAC, and the keying half went with it. The MAC
-half stayed: declared, defined, **called by nothing and covered by no test**, with
-a comment still citing ADR-0021. It was removed on 2026-08-23.
-
-`RADIO_ENROL_MODE_SECRET` is still reserved in the protocol header. Building it
-needs a MAC keyed by a **provisioned** secret, which is a different key from the
-one the deleted function took, so this is a note about what is owed rather than
-about a function to restore.
-
-Half a mechanism is worse than none: the surviving half took a 32-byte key with
-no derivation left to produce it, and the next reader would have keyed it with
-whatever was to hand.
-
-`../radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md`.
-
-### 62. The frame cipher's self-test is unreadable exactly when it matters — `debt`
-
-`aead_selftest` is reported by one line inside `devices`, printed **only when it
-is nonzero**, and placed after the per-device list. With eighteen records enrolled
-the CLI's response buffer truncated the output four lines earlier, so the result
-was not absent — it was unreachable, and silence was indistinguishable from a
-pass, from a truncation and from a command that never ran.
-
-Found on 2026-08-23 while confirming the self-test still passed after it was
-repointed from pair_v2's vectors to pair_v4's. Emptying the keystore made it
-readable, which is the wrong way round: a keystore with devices in it is the
-normal case.
-
-It wants its own line, printed pass or fail, ahead of anything unbounded.
-
-`../radio_devices_docs/open_hub/security/self-tests.md`.
-
-### 67. CM4 arms a watchdog and then waits on CM7 without refreshing it — `blocking` `defect`
-
-`CM4/Core/Src/main.c` runs `MX_IWDG2_Init()` — 512 ms, and as short as ~348 ms
-with the LSI at its ±50% tolerance — and then:
-
-```c
-while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}   /* no refresh in this loop */
-```
-
-CM7 releases that semaphore in `StartDefaultTask`, **after `osKernelStart()` and
-after `MX_LWIP_Init()`**. So CM4's boot budget for CM7 is a watchdog period that
-nothing enforces, nothing measures and nothing declares.
-
-**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms.
-Held before the release, it outlasts IWDG2, the system resets, the erase is cut
-mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` — which
-`ks_init()` then reads at every boot, hard-faulting a board with a perfectly good
-image. Reproduced deliberately on sector 3 on 2026-08-23 and then removed by
-releasing the semaphore first; the controlled pair is in
-`radio_devices_docs/open_hub/arch/config-store.md` § what was measured.
-
-Two things are wrong and they are separable:
-
-- **The wait does not refresh.** Any CM7 boot path that grows past the period
-  resets the system, and the cause reads as a hardware fault rather than a timeout.
-- **The budget is undeclared.** Nothing says how long CM7 may take, so nobody
-  adding work to CM7's boot can know they have spent it. `MX_LWIP_Init()` is
-  already inside it.
-
-The fix is not a longer period. The wait refreshes, and the budget becomes a
-constant both sides can be asserted against.
-
-`radio_devices_docs/open_hub/arch/keystore.md`, `bench/runs/2026-08-23-3/`.
-
-### 68. Six devices share one uplink slot on flash — `blocking` `defect`
-
-Exposed 2026-08-23 by fixing item 66, and it was there the whole time.
-
-`lowest_free_slot()` picks the lowest slot no **cached** live device holds. While
-the cache was full of tombstones the live devices were not in it, so every
-enrolment saw one device at slot 0 and answered **slot 1**. Six of them did:
-
-```
-b7e33ff6    0 enrolled
-3cfde754    1 enrolled
-527b51e7    1 enrolled
-48e4c4fb    1 enrolled
-22cdec51    1 enrolled      <- node A's identity
-a18892ec    1 enrolled
-3c7a11d9    1 enrolled
-```
-
-**The slot is written into the record**, so this is on flash and permanent for
-those records. It is not a display artefact.
-
-**Two things were wrong at once and only one of them is fixed.** `device list`
-reported `1 enrolled` while the store held seven, because the cache had no room
-for them — that is item 66 and it is closed. The colliding slots are the damage
-that happened while it was open.
-
-**It matters to CM4, not only to tidiness.** `install_device()` does
-`d = &devices[k->slot]`, so all six map to `devices[1]` and overwrite one another.
-Any pairing that lands on one of them serves a roster entry another device also
-believes is its own.
-
-None of the six carries a key — all read `(no key yet)` — so nothing is paired and
-nothing is lost by removing them. The repair is `device remove` on all seven and
-`device add` for whichever are wanted, which now assigns slots against a cache
-that holds the whole roster. It costs one flash slot per removal out of 1731.
-
-`../radio_devices_docs/open_hub/arch/keystore.md`.
-
-### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
-
-Item 60's twin and a separate leg: the confirmation is lost while the hub
-**waits**, this one while the hub has just transmitted the invitation and
-returned to receive. Item 59 named it and item 60 carried it, whose title is
-about PAIR_CONF, so it had no entry of its own until now.
-
-Six trials on 2026-08-23 under ADR-0026, cumulative `join reqs seen` differenced
-per trial against the device's own `req sent`:
-
-| trial | device sent | hub registered | sync | crc err | frames |
-|---|---|---|---|---|---|
-| 1 | 3 | 1 | 1 | 0 | 1 |
-| 2 | 3 | 1 | 2 | 0 | 2 |
-| 3 | 1 | 1 | 2 | 0 | 2 |
-| 4 | 1 | 1 | 2 | 0 | 2 |
-| 5 | 2 | 2 | 4 | 1 | 3 |
-| 6 | 4 | **0** | 1 | 1 | 0 |
-
-**14 radiated, 6 registered.** Retries covered it in four trials and not in the
-sixth, which is why that trial's exchange is excluded from ADR-0026's denominator.
-
-`sync == frames + crc_err` in **all six**, so nothing is lost between the sync
-detector and the parser, and `dropped 0` says nothing was refused above it. The
-loss is entirely that no sync word matched.
-
-The device placed every request correctly: `invite -> request 43 880 us` in the
-failing trial against 43 864..43 880 in the successful ones.
-
-**The receiver was on.** A `RegOpMode` read off the part at
-`RADIO_PAIR_INIT` air + `RADIO_PAIR_REQ_LEAD_US` into the region, once per join
-window. Over both arms below it found the receiver out of RX in **0 of 902**
-windows and in **0 of 210** that carried an invitation. Mutation-proven: built
-against `RFM69_MODE_SLEEP` the same counter reads 30 of 30 the other way, so a
-zero from it means something. "The window never opened" is refuted, not merely
-unobserved.
-
-Thirty-six further trials on 2026-08-23, in two pre-registered arms:
-
-| | requests radiated | registered | enrolments |
-|---|---|---|---|
-| A — as built | 69 | **34** | 6 of 20 |
-| B — the join window's RSSI sampler suppressed | 15 | **7** | 4 of 6 |
-
-**p = 0.54.** The sampler was the leading hypothesis and it is dead: the hub
-triggers `RssiStart` on every superloop pass and spends 500 us of each ~630 us
-pass timing out, so the part is inside a manual measurement about 80% of the time
-and a 1.28 ms preamble cannot avoid one. Removing it changed nothing. The AFC
-spread, pre-registered as the second measure, did not narrow either.
-
-Arm B is six trials and not the ten pre-registered, because item 66 stopped the
-store mid-batch. Its four remaining trials are void and are not counted.
-
-**What stopped it is now known** and was not a broken store: the hub's RAM cache
-holds one entry per distinct id ever written and the batch had filled it. Every
-batch that draws a fresh identity per trial spends a cache entry it never gets
-back, so **this experiment's design is what exhausted the instrument** — worth
-knowing before the next batch of twenty is planned.
-
-**What the arms did not kill is the carrier.** `device afc` over each arm:
-
-| arm | frames | min | max | last |
-|---|---|---|---|---|
-| A | 48 | -12 330 | **19 287** | 13 061 |
-| B | 15 | -10 132 | **17 089** | 8 666 |
-
-`RADIO_CARRIER_ERR_HZ` is **12 000** and both arms exceed it — in the frames that
-*arrived*. The lost ones are not in that sample, so it bounds nothing on its own,
-but the allowance is demonstrably being spent. The untried arm is
-`RADIO_RX_BW_HUB_HZ`. **Item 23 carries that arm**, its arithmetic and the two
-readings that argue against it; it is not restated here.
-
-`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
-
-### 64. The join region's level instrument almost never completes — `defect`
-
-`rfm69_measure_rssi` triggers and waits `RSSI_TIMEOUT_US` = 500 us for RssiDone.
-Measured 2026-08-23 over 31 join windows with nothing on air: **76 successes from
-about 95 000 calls**, and **0 from 534** inside the span where a request's payload
-would be. Both are the same 0.08%; the span is not special.
-
-So every `rx level: peak/floor` this project has quoted for the join region rests
-on about 75 samples, which is why peak reads -84 to -85 dBm in every trial
-including the ones that paired. **It measures the band, not the frame**, and it
-cannot say at what level a missed request arrived.
-
-The part evaluates RSSI continuously while the receiver waits for a preamble, so
-a manual trigger is mostly ignored — `OpenHub/.claude/skills/rfm69` already says
-the receiver "parks until a signal arrives". Until this is fixed the level witness
-below the sync word is the SDR, not the hub.
-
-`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
-
-### 65. `status 1` means two different faults — `closed 2026-08-23`
-
-`hub_ipc_call` returns **1** both when CM4 replies `IPC_ST_UNKNOWN_REQ` and when
-CM7 cannot take the IPC mutex inside `IPC_REPLY_TIMEOUT_MS`. The CLI prints
-"Error: CM4 rejected it, status 1" for both, so a mutex CM7 never acquired is
-reported as a request CM4 refused.
-
-Seen on 2026-08-23: `device pair` printed it while `devices`, `timing` and
-`device dump` all answered normally, and the same command succeeded on the next
-attempt. Half an hour went to looking for an enum mismatch that was not there.
-
-Fixed by giving this core's own failures negative codes — `HUB_IPC_ERR_ARG`,
-`_INIT`, `_BUSY`, `_SEND` — beside the existing `HUB_IPC_NO_REPLY`, which stays
-`-1`. CM4's statuses are 0..3 and are now the only positive returns, so the sign
-carries "which core refused" and the value carries why.
-
-`hub_ipc_str()` renders both, and the CLI prints it instead of a bare number:
-twenty-one call sites lost `status %d` and `CM4 did not answer`, including the
-one that said "CM4 did not answer" for a mutex this core never took. The
-northbound `detail` byte improves for free — a mutex timeout used to travel as 1,
-which a reader would have decoded as `IPC_ST_UNKNOWN_REQ`, and now travels as
-0xFF, which the encoding already reserved for a local failure.
-
-**Verified on the board 2026-08-23**, and by the fault itself rather than by a
-contrivance. Cleaning the roster, two commands in one batch hit the mutex:
-
-```
-enrolled in slot 1, but no window is open: another CM7 caller held the mailbox
-removed 0xfef91007 ... but another CM7 caller held the mailbox: it may still
-  serve this device until the hub resets
-```
-
-Under the old code both would have read `CM4 rejected it, status 1` —
-indistinguishable from `IPC_ST_UNKNOWN_REQ`, which is the half hour this item was
-opened for. The run recorded it as `not measured` because nothing had failed yet;
-it fired an hour later, unprompted.
-
-What the fix does **not** cover is the renderer itself: nothing tests that
-`hub_ipc_str()` gives distinct words, and a build returning one string for every
-code would print a plausible sentence. That is the phase 1 refactor into pure
-translation units, in `radio_devices_docs/specs/03-roadmap.md`.
-
-`../radio_devices_docs/open_hub/arch/ipc.md`.
-
-### 66. The store holds 64 distinct device ids and the cache fits 64 — `closed 2026-08-23`
-
-**Retitled and re-scoped 2026-08-23 after it was measured.** This item said the
-store had stopped accepting writes and could not say why. **The store was never
-broken.** It has accepted every write it was ever given, including the ones it
-reported as failures.
-
-Measured on the board in run `bench/runs/2026-08-23-3`, three readings in one boot:
-
-```
-1  device list          0 writes, 6 errors, 1735 slots left
-                        last refusal: boot found more device ids than the cache
-                        fits (0 of 6 errors were flash), HAL 0x00000000
-2  device add <new id>  Error: not enrolled: flash took it; the RAM cache is full
-3  device list          1 writes, 7 errors, 1734 slots left
-```
-
-Nothing writes to the store at boot, so **`writes = 0` in reading 1 is
-structural** — and `errors` was already 6. Every one came from the scan and none
-of them was flash. The `HAL 0x00000000` that blocked diagnosis for a day was the
-correct answer: no write had reached flash to have an error.
-
-**Four independent readings agree.** The named reason; the counters moving the way
-that reason requires and no other (`writes` +1, `flash_errors` unchanged, slots
-−1); `device add` of an id **already cached** succeeding on the same store in the
-same boot, which no misprint can produce; and the scan's error count tracking
-*distinct ids on flash minus 64* one for one across a reflash.
-
-**What is actually wrong.** The cache holds one entry per **distinct id ever
-written**, capped at `KS_MAX_DEVICES` = 64, and this store has 64 — drawn by a day
-of enrolment batches that each took a fresh identity. The roster holds **one**
-device. `append()` was writing the record, counting it in `writes`, and then
-returning -1 because the cache would not take it, so the operator was told the
-write failed while the record sat on flash. `device add` now refuses before it
-writes (`f584daa`), which stops the store bleeding a slot per attempt.
-
-**The erase of bank 1 sectors 6 and 7 is not needed, and the hub's long-term key
-was never at risk.** That decision is withdrawn.
-
-**Closed by not caching tombstones.** `scan()` no longer holds a cache entry for a
-device whose newest record is a removal, and it reads the **older sector first** so
-that scan order is seq order — without that, a tombstone can arrive before the
-record it retires and a dead id is cached as live.
-
-Measured on the board, on the full store, which is the only fixture where this
-check has a population at all:
-
-| | before | after |
-|---|---|---|
-| `errors` at boot | 7 | **0** |
-| roster `device list` shows | 1 | **7** |
-| `device add` of a new id | refused | **enrolled in slot 2** |
-
-The roster line is the finding: the store held **seven** live devices and reported
-one, because the cache had no room. What that cost while it was open is item 68.
-
-A side effect worth naming: `OHT_CMD_PAIR_WINDOW` checked only `ks_find() == NULL`,
-so a removed device passed it and armed a window. With tombstones out of the cache
-that path returns `NO_SUCH_DEVICE` correctly.
-
-**The options below are kept because the wall they answer is only postponed.** The
-log still reclaims nothing, so the next 64 fresh identities refill it; ADR-0027 is
-what removes it:
-
-- *Drop deleted entries from the cache.* **63 of the 64 entries are tombstones**
-  — `device list` prints one live device — so this reclaims almost all of it, and
-  the entries are RAM rebuilt by `scan()` from flash, so it is a scan rule and not
-  a flash operation.
-
-  **The objection first written here was checked and does not hold.** It said a
-  restarted `key_gen` is a replay question because CM4 scopes its floor to it.
-  Traced: `key_gen` is **not on the air wire at all** — it appears in `ipc.h` and in
-  each side's own store and nowhere else. CM4 assigns `d->key_gen` in
-  `install_device()` and **never compares it**, and seeds `d->rx_floor` from the
-  live `frame_counter`, which is monotonic and independent of it. `kvstore.c`'s
-  `key_gen` and `rx_floor` fields are declared, documented as scoping each other,
-  and **read by nothing**. The device's `key_gen` is displayed and reported and
-  never compared against the hub's. The two counters never meet.
-
-  So the real cost is a **debt, not a hazard**: the comment *"named, so a stale
-  floor is detectable"* describes a guard that was designed and never wired, and
-  dropping the continuity removes the history that guard would have used. `tx_floor`
-  likewise has no reader outside the keystore. Both are fields durable before they
-  are written.
-- *Compact the log* — read the live records and the hub key, erase, re-append.
-  **Available since 2026-08-23**: CM7 erases a bank 1 sector in 954 ms with no error
-  bit, from ITCM, once `HSEM_ID_0` is released first (item 67). What is still true
-  is that no console route exports the hub's private scalar, only one that generates
-  one — so a compaction must carry the key forward in RAM, not rely on re-creating it.
-- *External erase of sectors 6 and 7, then `device hubkey gen`.* Costs the hub a
-  new identity. On this bench, where the one enrolled device holds no key, that
-  costs nothing — but it is still the owner's call, and it is now a cheap choice
-  rather than a damaging one.
-
-**How the four conditions came to share one number**, kept because the shape
-recurs. `last_flash_err` was declared with a comment saying it held
-`HAL_FLASH_GetError()` and was **assigned nowhere**, so it read 0 for a failure and
-for no failure alike. And `errors` counted four unrelated conditions:
-
-| condition | flash touched | printed as |
-|---|---|---|
-| `HAL_FLASH_Unlock` / `Program` / `Lock` refused | yes | flash write failed |
-| both sectors used | no | flash write failed |
-| the RAM cache is full | **the record landed** | flash write failed |
-| boot found more device ids than the cache fits | no | flash write failed |
-
-Each has a name now — `ks_last_fail()`, `ks_fail_str()` — and `ks_flash_errors()`
-counts the subset flash saw. The console prints the reason **before** the HAL code,
-because a HAL code of zero is correct for three of the four.
-
-The 132 old-format slots are expected: the store steps over them by design and they
-cost a slot each. They are not implicated — they hold no device id, so they do not
-reach the cache.
-
-`../radio_devices_docs/open_hub/arch/keystore.md`,
-`bench/runs/2026-08-23-3/RESULTS.md`.
