@@ -1104,17 +1104,20 @@ out was removed on 2026-08-22, so nothing on the console advertises it any more.
 Until the store is built the link cannot come up unattended, which is most of what
 a server is for.
 
-**The store is now specified rather than absent.**
+**The store is being built.**
 [ADR-0027](../radio_devices_docs/open_hub/decisions/0027-config-store-is-a-ring-of-checkpoints.md)
-is accepted and unbuilt: a journal of fixed-size typed records wrapping between two
-sectors, with periodic checkpoints and small deltas between them. The one thing
-that gated it is measured — CM7 erases a bank 1 sector in 954 ms, from ITCM, with
-no error bit, **once `HSEM_ID_0` is released first** (item 67). Building it closes
-this item, retires the 64-id ceiling behind item 68, and is the largest single
-piece of unbuilt design in this queue.
+is a journal of fixed-size typed records wrapping between two sectors, with
+periodic checkpoints and small deltas between them. As of 2026-08-23 the format and
+the ring's arithmetic are written and tested on the host — `Common/inc/cfgstore.h`,
+`Common/src/cfgjournal.c`, `Common/test/test_cfg.c` — and what is left is the part
+that needs the board: the ITCM erase, programming, the boot and write wiring, the
+console, and the migration.
 
-`open_hub/network/telemetry.md`, `open_hub/network/ethernet.md`.
+Closing this closes REQ-N-5, retires the 64-id ceiling behind item 68, and takes
+`slots left`, `stale format` and *a removal spends a slot* out of the vocabulary.
 
+`open_hub/arch/config-store.md`, `open_hub/network/telemetry.md`,
+`open_hub/network/ethernet.md`.
 ### 39. A device command still cannot say anything the wire has no word for — `debt` `contract`
 
 `dev_app` reaches the firmware end to end and is refused there with

@@ -32,13 +32,17 @@ test_slots: test_slots.c ../inc/radio_slots.h ../inc/radio_protocol.h $(VECTORS)
 test_oht: test_oht.c ../src/oht_codec.c ../inc/oht_proto.h ../inc/oht_fields.h $(VECTORS)
 	$(CC) $(CFLAGS) -o $@ test_oht.c ../src/oht_codec.c
 
+test_cfg: test_cfg.c ../src/cfgjournal.c ../inc/cfgjournal.h ../inc/cfgstore.h
+	$(CC) $(CFLAGS) -o $@ test_cfg.c ../src/cfgjournal.c
+
 .PHONY: check clean
-check: test_hop test_slots test_link test_ipc test_oht
+check: test_hop test_slots test_link test_ipc test_oht test_cfg
 	./test_hop
 	./test_slots
 	./test_link
 	./test_ipc
 	./test_oht
+	./test_cfg
 
 clean:
-	rm -f test_hop test_slots test_link test_ipc test_oht
+	rm -f test_hop test_slots test_link test_ipc test_oht test_cfg

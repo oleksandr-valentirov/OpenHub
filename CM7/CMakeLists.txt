@@ -124,6 +124,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Common/src/rng.c
     ../Common/src/ipc.c
     ../Common/src/oht_codec.c
+    ../Common/src/cfgjournal.c
     crypto/entropy_hw.c
     crypto/crypto.c
     crypto/mbedtls_alloc.c

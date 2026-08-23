@@ -46,3 +46,4 @@ Common/test/test_slots
 Common/test/test_link
 Common/test/test_ipc
 Common/test/test_oht
+Common/test/test_cfg
