@@ -680,6 +680,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             (x.state == RADIO_EX_WAIT_RSP)  ? "waiting on CM7 (derive)" :
             (x.state == RADIO_EX_SENT_RSP)  ? "sent PAIR_RSP" :
             (x.state == RADIO_EX_WAIT_KEYS) ? "waiting on CM7 (confirm)" :
+            (x.state == RADIO_EX_RSP_DUE)   ? "PAIR_RSP staged for the next region" :
+            (x.state == RADIO_EX_ACCEPT_DUE)? "PAIR_ACCEPT staged for the next region" :
                                               "accepted",
             x.report_every);
     cli_out(cli, "req %lu -> rsp %lu -> conf %lu -> accept %lu, %lu paired\r\n",

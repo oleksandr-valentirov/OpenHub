@@ -59,8 +59,12 @@ _Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 /* RegDioMapping1 DIO3 field, packet mode: SyncAddress. Unconfirmed on this part. */
 #define RFM69_DIO3_SYNC_ADDRESS  2u
 
+/* A staged turn waits a superframe; this outlasts it. ADR-0026 */
+#define EX_REGION_TIMEOUT_US  (SUPERFRAME_US + RADIO_JOIN_REGION_US)
+
 /* How long a half-finished exchange may hold the machine.
  * radio_devices_docs/radio/pairing.md */
+
 #define EX_CM7_TIMEOUT_US   2000000u
 #define EX_DEV_TIMEOUT_US   3000000u
 
@@ -108,6 +112,7 @@ static int superframe_due(void);
 static void on_superframe(void);
 static void join_region_service(void);
 static uint8_t begin_quiesce(uint8_t superframes);
+static int  join_window_holds(uint8_t payload_b);
 static void handle_join_frame(void);
 static int  frame_selftest(void);
 static void ex_reset(void);
@@ -197,6 +202,9 @@ static radio_exchange_state_t ex_state = RADIO_EX_IDLE;
 static uint16_t ex_seq;
 static uint32_t ex_dev_id;
 static uint32_t ex_deadline;
+static uint32_t ex_req_frame;           /* the region the request arrived in */
+static uint32_t ex_due_frame;           /* the region the staged turn belongs to */
+static uint32_t ex_deferred;            /* grants moved to the next region */
 static uint8_t  ex_retry;
 static uint8_t  ex_waiting;             /* an event reply is outstanding */
 static ipc_pair_rsp_evt_t ex_rsp;
@@ -1565,6 +1573,8 @@ static int rx_frame_ready(uint8_t flags2, uint8_t grid) {
 
 static void ex_reset(void) {
     ex_state   = RADIO_EX_IDLE;
+    ex_due_frame = 0;
+    ex_req_frame = 0;
     ex_dev_id  = 0;
     ex_waiting = 0;
     /* Dropped with the exchange it belongs to, so the next one cannot read it. */
@@ -1768,7 +1778,10 @@ static void exchange_service(void) {
         if (ex_state == RADIO_EX_WAIT_RSP) {
             if (reply.len < sizeof(ex_rsp)) { ex_cm7_refused++; ex_reset(); return; }
             memcpy(&ex_rsp, reply.payload, sizeof(ex_rsp));
-            send_pair_rsp();
+            /* One turn per region; the derive had a whole superframe. ADR-0026 */
+            ex_state     = RADIO_EX_RSP_DUE;
+            ex_due_frame = ex_req_frame + 1u;
+            ex_deadline  = rfm_micros() + timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
             return;
         }
         if (ex_state == RADIO_EX_WAIT_KEYS) {
@@ -1777,7 +1790,17 @@ static void exchange_service(void) {
             /* Installed before the grant is transmitted, never after. */
             if (install_device(&ex_keys) != 0) { ex_reset(); return; }
             ex_paired++;
-            send_pair_accept();
+            /* Late is a frame nobody hears; the next region is one the device
+             * still accepts. ADR-0026 */
+            if (join_window_holds(RADIO_PAIR_ACCEPT_BYTES)) {
+                send_pair_accept();
+            } else {
+                ex_state     = RADIO_EX_ACCEPT_DUE;
+                ex_due_frame = frame_counter + 1u;
+                ex_deferred++;
+                ex_deadline  = rfm_micros() +
+                               timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
+            }
             return;
         }
     }
@@ -1917,11 +1940,53 @@ static void handle_uplink_frame(void) {
     uplink_notify(d);
 }
 
+/* Whether this many bytes still fit the window. ADR-0026 */
+static int join_window_holds(uint8_t payload_b) {
+    uint32_t off, need;
+
+    if (!grid_started)
+        return 0;
+    off  = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);
+    need = RADIO_AIR_START_TO_END_US(payload_b);
+    if (off < RADIO_JOIN_OFFSET_US)
+        return 0;
+    return (off - RADIO_JOIN_OFFSET_US) + need < RADIO_JOIN_RX_US;
+}
+
+/* 1 while a staged turn is due in this region. */
+static int pair_turn_due(void) {
+    return (ex_state == RADIO_EX_RSP_DUE || ex_state == RADIO_EX_ACCEPT_DUE) &&
+           (int32_t)(frame_counter - ex_due_frame) >= 0;
+}
+
+/* 1 while the exchange owns this region, transmitting in it or listening in it.
+ * radio_devices_docs/radio/decisions/0026-one-turn-per-join-region.md */
+static int pair_region_owned(void) {
+    if (ex_state == RADIO_EX_IDLE || ex_state == RADIO_EX_ACCEPTED)
+        return 0;
+    return (uint32_t)(frame_counter - ex_req_frame) < RADIO_PAIR_REGIONS;
+}
+
+/* The staged turn, at the offset a joining device listens on. ADR-0026 */
+static void pair_turn_service(void) {
+    if (!pair_turn_due() || !grid_started)
+        return;
+    if (!timebase_elapsed(superframe_start_tk + join_offset_tk))
+        return;
+    if (ex_state == RADIO_EX_RSP_DUE)
+        send_pair_rsp();
+    else
+        send_pair_accept();
+}
+
 /* Keyed on the join channel at the superframe CM7 named. ADR-0021 */
 static void pair_init_service(void) {
     if (pi_superframe == 0u || pi_len == 0u)
         return;
     if (!grid_started || pair_state != RADIO_PAIR_LISTEN)
+        return;
+    /* An exchange in flight owns its regions; a new invitation waits. ADR-0026 */
+    if (pair_region_owned())
         return;
 
     if ((int32_t)(frame_counter - pi_superframe) > 0) {
@@ -2231,10 +2296,8 @@ static void handle_join_frame(void) {
             return;
         }
 
-        /* Asked for, not required: an open window and the named device already
-         * bound the cost. radio_devices_docs/radio/pairing.md */
-        if (begin_quiesce(RADIO_PAIR_QUIESCE_SUPERFRAMES) == 0)
-            quiesce_lost++;
+        /* No quiesce: every turn is inside the region the schedule reserves.
+         * ADR-0026 */
 
         e.dev_id     = req.dev_id;
         e.superframe = req.superframe;
@@ -2246,11 +2309,12 @@ static void handle_join_frame(void) {
             return;
         }
         ex_reqs_forwarded++;
-        ex_dev_id   = req.dev_id;
-        ex_waiting  = 1;
-        ex_state    = RADIO_EX_WAIT_RSP;
-        ex_retry    = 0;
-        ex_deadline = rfm_micros() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
+        ex_dev_id    = req.dev_id;
+        ex_waiting   = 1;
+        ex_state     = RADIO_EX_WAIT_RSP;
+        ex_retry     = 0;
+        ex_req_frame = frame_counter;
+        ex_deadline  = rfm_micros() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
     }
 }
 
@@ -2292,7 +2356,7 @@ static void join_region_service(void) {
                 return;
             join_beacon_pending = ((frame_counter % JOIN_BEACON_EVERY) == 0u);
         } else if ((frame_counter % JOIN_BEACON_EVERY) == 0u &&
-                   pi_superframe != frame_counter) {
+                   pi_superframe != frame_counter && !pair_region_owned()) {
             RFM_send_join_beacon();
         } else if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) {
             return;
@@ -2308,6 +2372,9 @@ static void join_region_service(void) {
         join_phase = 1;
         return;
     }
+
+    if (join_beacon_pending && pair_region_owned())
+        join_beacon_pending = 0;        /* the region belongs to the exchange */
 
     if (join_beacon_pending &&
         timebase_elapsed(superframe_start_tk + join_offset_tk)) {
@@ -2371,6 +2438,8 @@ void RFM_Routine(void) {
         on_superframe();
 
     join_region_service();
+    /* Before the invitation: a staged turn owns the region it was scheduled in. */
+    pair_turn_service();
     pair_init_service();
     exchange_service();
     downlink_service();

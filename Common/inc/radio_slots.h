@@ -191,6 +191,12 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
 /* Invitation, response, grant. ADR-0026 */
 #define RADIO_PAIR_REGIONS      3u
 
+/* Regions past the invitation the device holds its confirmation for. ADR-0026 */
+#define RADIO_PAIR_CONF_REGION  2u
+
+_Static_assert(RADIO_PAIR_CONF_REGION < RADIO_PAIR_REGIONS,
+               "the confirmation is scheduled outside the exchange");
+
 /* How far past its request a device still accepts a grant. ADR-0026 */
 #define RADIO_PAIR_ACCEPT_WINDOW_SF  8u
 

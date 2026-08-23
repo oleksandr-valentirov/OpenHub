@@ -111,7 +111,10 @@ typedef enum radio_exchange_state {
     RADIO_EX_WAIT_RSP,    /**< PAIR_REQ forwarded; CM7 is doing the curve work */
     RADIO_EX_SENT_RSP,    /**< PAIR_RSP is on air; waiting for PAIR_CONF */
     RADIO_EX_WAIT_KEYS,   /**< PAIR_CONF forwarded; CM7 is checking it */
-    RADIO_EX_ACCEPTED     /**< PAIR_ACCEPT sent; the device is installed */
+    RADIO_EX_ACCEPTED,    /**< PAIR_ACCEPT sent; the device is installed */
+    /* Appended, never inserted: CM7 reads these values off the wire. ADR-0026 */
+    RADIO_EX_RSP_DUE,     /**< derived and staged for the next join region */
+    RADIO_EX_ACCEPT_DUE   /**< sealed and staged for the next join region */
 } radio_exchange_state_t;
 
 /* Why the last beacon failed, and why the last join frame was dropped.
