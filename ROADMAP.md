@@ -942,9 +942,11 @@ failing trial against 43 864..43 880 in the successful ones.
 
 **The receiver was on.** A `RegOpMode` read off the part at
 `RADIO_PAIR_INIT` air + `RADIO_PAIR_REQ_LEAD_US` into the region, once per join
-window, reads RX in **30 of 30** windows and in all 7 that carried an invitation.
-Mutation-proven: built against `RFM69_MODE_SLEEP` the same counter reads 30 of 30
-the other way. So "the window never opened" is refuted, not merely unobserved.
+window. Over both arms below it found the receiver out of RX in **0 of 902**
+windows and in **0 of 210** that carried an invitation. Mutation-proven: built
+against `RFM69_MODE_SLEEP` the same counter reads 30 of 30 the other way, so a
+zero from it means something. "The window never opened" is refuted, not merely
+unobserved.
 
 Thirty-six further trials on 2026-08-23, in two pre-registered arms:
 
