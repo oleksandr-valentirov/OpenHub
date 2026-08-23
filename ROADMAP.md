@@ -543,37 +543,23 @@ population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
 
-### 70. The boot erase path has never executed — `defect`
+### 70. The boot erase has run once, and the store holds no settings — `debt`
 
-**The decision it was opened for is made.** An erase is allowed at boot, and the
-boot order moved so that is legal: CM7 releases `HSEM_ID_0` in `main()` after
-`ipc_init()`, and the store's boot work runs below the release and above the
-scheduler. The three things CM4 waits on are all above that line, checked rather
-than assumed, and lwIP was never one of them.
+**Both halves this item was opened for are closed.** An erase is allowed at boot,
+the boot order moved to make it legal, and the path executed for the first time on
+2026-08-24 reclaiming the old keystore's sector — 931 ms, measured by the store's
+own driver.
 
-It removes the coupling instead of managing it: with the release before the erase,
-CM4 never waits on one, so the watchdog hazard cannot arise from this path at all.
+What is left is smaller and is the reason REQ-N-5 has not moved: **nothing writes
+the telemetry or network settings into the store.** `telem server` and `ip static`
+are still retyped after every reset. The store, the append path and the config
+record all exist; the wiring does not.
 
-**What is left is that the path has never run.** A wrap needs 576 changes, so
-nothing has ever scheduled a boot erase, and `boot erase: nothing was owed` is the
-only reading available. That sentence reads identically whether the path works or
-is unreachable, which is why the reachability half is instrumented separately:
+`cfg_put_config()` is the call. What it needs beside it is the console and the
+northbound command path setting the fields, and a reader on the other side using
+them at boot instead of waiting to be told.
 
-```
-boot erase: nothing was owed, and it was legal there
-```
-
-`cfg_boot_erase_was_legal()` is that half — HSEM_ID_0 free where the boot work
-runs — and it is the post-condition of the boot-order change rather than a
-restatement of it.
-
-**The first thing that will exercise it is the migration**, whose order improves
-by having a boot erase available: write the first snapshot into the *other* ring,
-leave the old log readable, and let the next boot reclaim it. At no point is there
-no readable copy, which §10's original erase-then-write order could not say.
-
-`../radio_devices_docs/open_hub/arch/config-store.md` § 8a,
-`../radio_devices_docs/open_hub/arch/dual-core.md` § why the release moved.
+`../radio_devices_docs/open_hub/arch/config-store.md` § 10a.
 ---
 
 ## Defects
@@ -1102,22 +1088,23 @@ not a patch.
 ### 38. The northbound link forgets its server on every reset — `debt`
 
 `telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
-`ip static`. Both wait on a configuration store; the `cfg` command that stubbed it
-out was removed on 2026-08-22, so nothing on the console advertises it any more.
-Until the store is built the link cannot come up unattended, which is most of what
-a server is for.
+`ip static`.
 
-**The store is being built.**
-[ADR-0027](../radio_devices_docs/open_hub/decisions/0027-config-store-is-a-ring-of-checkpoints.md)
-is a journal of fixed-size typed records wrapping between two sectors, with
-periodic checkpoints and small deltas between them. As of 2026-08-23 the format and
-the ring's arithmetic are written and tested on the host — `Common/inc/cfgstore.h`,
-`Common/src/cfgjournal.c`, `Common/test/test_cfg.c` — and what is left is the part
-that needs the board: the ITCM erase, programming, the boot and write wiring, the
-console, and the migration.
+**The store that was the blocker is built and running.** ADR-0027's ring is live
+on the board: the format, the ring's arithmetic, the flash driver, the boot scan,
+the append path, the roster's writers and the migration all work, and the old
+append-only keystore is retired. The 64-id ceiling, `slots left`, `stale format`
+and *a removal spends a slot* are gone with it.
 
-Closing this closes REQ-N-5, retires the 64-id ceiling on the roster, and takes
-`slots left`, `stale format` and *a removal spends a slot* out of the vocabulary.
+**What is left is this item alone, and it is now the smallest it has ever been.**
+`cfg_config_t` carries `telem_ip`, `telem_port`, `telem_token`, `ip_static`,
+`ip_addr`, `ip_mask` and `ip_gw`; `cfg_put_config()` persists them; the boot scan
+replays them. Nothing sets them and nothing reads them at boot.
+
+Three edits, none of them structural: the console's `telem server` and `ip static`
+write through `cfg_put_config()`; the northbound command path does the same; and
+boot uses `cfg_image()->cfg` instead of waiting to be told. Closing it closes
+REQ-N-5.
 
 `open_hub/arch/config-store.md`, `open_hub/network/telemetry.md`,
 `open_hub/network/ethernet.md`.
