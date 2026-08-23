@@ -129,8 +129,10 @@ SECTIONS
   {
     . = ALIGN(4);
     _sitcmfunc = .;
-    *(.itcmfunc)
-    *(.itcmfunc*)
+    /* KEEP: reached by address after a copy, not through the call graph.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    KEEP(*(.itcmfunc))
+    KEEP(*(.itcmfunc*))
     . = ALIGN(4);
     _eitcmfunc = .;
   } >ITCMRAM AT> FLASH

@@ -117,6 +117,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/hubipc.c
     Core/Src/pairing.c
     Core/Src/keystore.c
+    Core/Src/cfgflash.c
     Core/Src/erasetest.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c

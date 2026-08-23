@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "main.h"
+#include "cfgflash.h"
 
 /* 128 KB nothing reads, so an interrupted erase is harmless.
  * radio_devices_docs/open_hub/arch/config-store.md */
@@ -33,32 +34,16 @@ static int word_is_erased(uint32_t addr) {
     return 1;
 }
 
-/* Both arms run this. It calls nothing: the HAL is in the bank being erased. */
-#define ET_ERASE_BODY(spins)                                                  \
-    uint32_t sr;                                                              \
-    FLASH->CCR1 = 0xFFFFFFFFu;                                                \
-    if ((FLASH->CR1 & FLASH_CR_LOCK) != 0u) {                                 \
-        FLASH->KEYR1 = 0x45670123u;                                           \
-        FLASH->KEYR1 = 0xCDEF89ABu;                                           \
-    }                                                                         \
-    FLASH->CR1 &= ~(FLASH_CR_PSIZE | FLASH_CR_SNB);                           \
-    FLASH->CR1 |= (FLASH_CR_SER | FLASH_VOLTAGE_RANGE_3 |                     \
-                   ((uint32_t)ET_SECTOR << FLASH_CR_SNB_Pos) | FLASH_CR_START);\
-    __DSB();                                                                  \
-    while ((FLASH->SR1 & (FLASH_SR_QW | FLASH_SR_BSY)) != 0u)                 \
-        (*(spins))++;                                                         \
-    sr = FLASH->SR1;                                                          \
-    FLASH->CR1 &= ~FLASH_CR_SER;                                              \
-    return sr
-
+/* The driver's body, not a copy: 954 ms is quoted as describing the store.
+ * radio_devices_docs/open_hub/arch/config-store.md */
 __attribute__((section(".itcmfunc"), noinline))
 static uint32_t erase_from_itcm(volatile uint32_t *spins) {
-    ET_ERASE_BODY(spins);
+    CFGFLASH_ERASE_BODY(ET_SECTOR, spins);
 }
 
 __attribute__((section(".ramfunc"), noinline))
 static uint32_t erase_from_ram(volatile uint32_t *spins) {
-    ET_ERASE_BODY(spins);
+    CFGFLASH_ERASE_BODY(ET_SECTOR, spins);
 }
 
 /* Gives the next erase real work. CR1 comes back locked with SER set. */

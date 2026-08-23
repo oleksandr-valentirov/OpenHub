@@ -23,6 +23,8 @@
 #include "ipc.h"
 #include "keystore.h"
 #include "erasetest.h"
+#include "cfgflash.h"
+#include "cfgstore.h"
 #include "crypto.h"
 #include "hubipc.h"
 #include "pairing.h"
@@ -85,6 +87,7 @@ static int cmd_rng(cli_data_t *cli, int argc, char **argv);
 static int cmd_ipc(cli_data_t *cli, int argc, char **argv);
 static int cmd_crypto(cli_data_t *cli, int argc, char **argv);
 static int cmd_erasetest(cli_data_t *cli, int argc, char **argv);
+static int cmd_cfgflash(cli_data_t *cli, int argc, char **argv);
 static int cmd_timing(cli_data_t *cli, int argc, char **argv);
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
@@ -103,6 +106,7 @@ static const cli_cmd_t commands[] = {
     {"ipc",     0, 0, cmd_ipc,     "",                       "cross-core mailbox state"},
     {"crypto",  0, 0, cmd_crypto,  "",                       "run the crypto self-tests"},
     {"erasetest", 0, 0, cmd_erasetest, "",                "the bank 1 erase measurement"},
+    {"cfgflash", 0, 0, cmd_cfgflash, "",                  "the config store's flash guards"},
     {"timing",  0, 0, cmd_timing,  "",                       "superframe grid and beacon jitter"},
     {"hopprf",  1, 1, cmd_hopprf,  "<32 hex chars>",         "run the hop PRF on CM4"},
     {"telem",   0, 4, cmd_telemetry, "[server <ip> <port> [token] | on | off | now]",
@@ -319,6 +323,40 @@ static int cmd_ipc(cli_data_t *cli, int argc, char **argv) {
 
 
 /* The only on-target check available while there is no device to talk to. */
+
+/* Every guard, and none of them touches flash. ADR-0027 */
+static int cmd_cfgflash(cli_data_t *cli, int argc, char **argv) {
+    static const struct { uint32_t bit; const char *what; } names[] = {
+        { CFGF_ST_ITCM,       "the erase routine reached ITCM" },
+        { CFGF_ST_SECTOR,     "a sector that is not ours is refused" },
+        { CFGF_ST_SCHEDULER,  "an erase is refused while the scheduler runs" },
+        { CFGF_ST_ALIGN,      "a part-word write is refused" },
+        { CFGF_ST_RANGE,      "a write outside the store is refused" },
+        { CFGF_ST_NOT_ERASED, "a write over live data is refused" },
+        { CFGF_ST_STRINGS,    "two reasons render as two words" },
+        { CFGF_ST_NO_POP,     "the overwrite guard had a population to refuse" },
+    };
+    uint32_t bytes, bad;
+
+    UNUSED(argc);
+    UNUSED(argv);
+    bytes = cfgflash_init();
+    bad   = cfgflash_selftest();
+
+    cli_out(cli, "\r\nitcm     %lu bytes copied\r\n", (unsigned long)bytes);
+    cli_out(cli, "sectors  identity %u at %08lX, journal %u/%u at %08lX/%08lX\r\n",
+            (unsigned)CFG_IDENTITY_SECTOR, (unsigned long)CFG_IDENTITY_ADDR,
+            (unsigned)CFG_JOURNAL_SECTOR_A, (unsigned)CFG_JOURNAL_SECTOR_B,
+            (unsigned long)CFG_JOURNAL_ADDR_A, (unsigned long)CFG_JOURNAL_ADDR_B);
+    /* Pass or fail, ahead of anything unbounded: a verdict printed only on
+     * failure has no reading. */
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        cli_out(cli, "  %-4s %s\r\n", (bad & names[i].bit) ? "FAIL" : "ok",
+                names[i].what);
+    cli_out(cli, "guards   %s (mask %08lX)\r\n",
+            bad ? "FAILED" : "all refused", (unsigned long)bad);
+    return 0;
+}
 
 /* Reports what boot measured; never erases.
  * radio_devices_docs/open_hub/arch/config-store.md */
