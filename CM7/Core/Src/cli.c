@@ -25,6 +25,7 @@
 #include "erasetest.h"
 #include "cfgflash.h"
 #include "cfgstore.h"
+#include "cfgstoreapi.h"
 #include "crypto.h"
 #include "hubipc.h"
 #include "pairing.h"
@@ -88,6 +89,7 @@ static int cmd_ipc(cli_data_t *cli, int argc, char **argv);
 static int cmd_crypto(cli_data_t *cli, int argc, char **argv);
 static int cmd_erasetest(cli_data_t *cli, int argc, char **argv);
 static int cmd_cfgflash(cli_data_t *cli, int argc, char **argv);
+static int cmd_cfg(cli_data_t *cli, int argc, char **argv);
 static int cmd_timing(cli_data_t *cli, int argc, char **argv);
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
@@ -107,6 +109,7 @@ static const cli_cmd_t commands[] = {
     {"crypto",  0, 0, cmd_crypto,  "",                       "run the crypto self-tests"},
     {"erasetest", 0, 0, cmd_erasetest, "",                "the bank 1 erase measurement"},
     {"cfgflash", 0, 0, cmd_cfgflash, "",                  "the config store's flash guards"},
+    {"cfg",      0, 1, cmd_cfg,      "[identity]",           "the config store, and its migration"},
     {"timing",  0, 0, cmd_timing,  "",                       "superframe grid and beacon jitter"},
     {"hopprf",  1, 1, cmd_hopprf,  "<32 hex chars>",         "run the hop PRF on CM4"},
     {"telem",   0, 4, cmd_telemetry, "[server <ip> <port> [token] | on | off | now]",
@@ -323,6 +326,98 @@ static int cmd_ipc(cli_data_t *cli, int argc, char **argv) {
 
 
 /* The only on-target check available while there is no device to talk to. */
+
+/* Step 2 and 3 of the migration: write the identity, then witness it.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+static int cfg_migrate_identity(cli_data_t *cli) {
+    uint8_t priv[32], net[16], want[32], got[32];
+    cfg_identity_t back;
+    cfgflash_err_t e;
+
+    if (ks_hub_key_get(priv) != 0) {
+        cli_out(cli, "\r\nthe old log holds no hub key - nothing to carry\r\n");
+        return 0;
+    }
+    if (ks_net_key_get(net) != 0) {
+        memset(priv, 0, sizeof(priv));
+        cli_out(cli, "\r\nthe old log holds no network key - refusing\r\n");
+        return 0;
+    }
+    if (crypto_x25519_public(priv, want) != 0) {
+        memset(priv, 0, sizeof(priv));
+        cli_out(cli, "\r\nError: the stored scalar is unusable; nothing written\r\n");
+        return 0;
+    }
+
+    e = cfg_identity_write(priv, net);
+    memset(priv, 0, sizeof(priv));
+    memset(net, 0, sizeof(net));
+    if (e != CFGF_OK) {
+        cli_out(cli, "\r\nError: %s; the old log is untouched\r\n",
+                cfgflash_err_str(e));
+        return 0;
+    }
+
+    /* Derived from what flash gives back, never from what was passed in.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    if (cfg_identity_read(&back) != 0) {
+        cli_out(cli, "\r\nError: written and not readable; do NOT go further\r\n");
+        return 0;
+    }
+    if (crypto_x25519_public(back.hub_priv, got) != 0) {
+        cli_out(cli, "\r\nError: read back a scalar that is unusable\r\n");
+        return 0;
+    }
+    memset(back.hub_priv, 0, sizeof(back.hub_priv));
+
+    cli_out(cli, "\r\nidentity written to sector %u, seq %lu\r\n",
+            (unsigned)CFG_IDENTITY_SECTOR, (unsigned long)back.hdr.seq);
+    cli_out(cli, "  old log  ");
+    for (int i = 0; i < 32; i++)
+        cli_out(cli, "%02x", want[i]);
+    cli_out(cli, "\r\n  read back ");
+    for (int i = 0; i < 32; i++)
+        cli_out(cli, "%02x", got[i]);
+    cli_out(cli, "\r\n\r\n%s\r\n", (memcmp(want, got, 32) == 0)
+            ? "WITNESSED: the two agree, and the old log is still intact."
+            : "MISMATCH: do NOT erase anything. The old log is still the only copy.");
+    return 0;
+}
+
+/* Reads only, unless asked for the migration. ADR-0027 */
+static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
+    const cfg_scan_t *w = cfg_where();
+    cfg_identity_t id;
+    uint32_t live = 0;
+
+    if (argc == 2 && strcmp(argv[1], "identity") == 0)
+        return cfg_migrate_identity(cli);
+    if (argc != 1) {
+        cli_out(cli, "\r\ncfg [identity]\r\n");
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < CFG_DEVICE_MAX; i++)
+        if (cfg_image()->dev[i].state != CFG_DEV_FREE)
+            live++;
+
+    cli_out(cli, "\r\njournal  %s\r\n", w->found ? "a snapshot was found"
+                                                : "empty - no snapshot in either ring");
+    cli_out(cli, "  ring %c, snapshot at slot %u seq %lu, %u delta(s) replayed\r\n",
+            (w->ring == CFG_RING_A) ? 'A' : 'B', (unsigned)w->snap_slot,
+            (unsigned long)w->snap_seq, (unsigned)w->deltas);
+    cli_out(cli, "  next slot %u of %u, %u slot(s) skipped as damaged or foreign\r\n",
+            (unsigned)w->next_slot, (unsigned)CFG_SLOTS_PER_SECTOR,
+            (unsigned)w->damaged);
+    cli_out(cli, "  ring to erase at boot: %s\r\n",
+            (w->dirty == CFG_SECTOR_NONE) ? "none"
+                                          : (w->dirty == CFG_RING_A) ? "A" : "B");
+    cli_out(cli, "roster   %lu of %u\r\n", (unsigned long)live,
+            (unsigned)CFG_DEVICE_MAX);
+    cli_out(cli, "identity %s\r\n", (cfg_identity_read(&id) == 0)
+            ? "present in sector 5" : "none in sector 5");
+    return 0;
+}
 
 /* Every guard, and none of them touches flash. ADR-0027 */
 static int cmd_cfgflash(cli_data_t *cli, int argc, char **argv) {

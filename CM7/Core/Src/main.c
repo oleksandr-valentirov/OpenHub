@@ -25,6 +25,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "keystore.h"
+#include "cfgstoreapi.h"
 #include "erasetest.h"
 #include "cli.h"
 #include <string.h>
@@ -217,6 +218,10 @@ Error_Handler();
   /* Before the scheduler: recovery may stall the bank it executes from.
    * radio_devices_docs/open_hub/arch/keystore.md */
   (void)ks_init();
+  /* Reads only: the ring holds no snapshot until the migration writes one.
+   * radio_devices_docs/open_hub/arch/config-store.md */
+  (void)cfgflash_init();
+  (void)cfg_init();
 #if HUB_ERASE_TEST
   /* CM4 arms IWDG2 then waits here without refreshing it.
    * radio_devices_docs/open_hub/arch/config-store.md */
