@@ -1141,9 +1141,24 @@ northbound `detail` byte improves for free — a mutex timeout used to travel as
 which a reader would have decoded as `IPC_ST_UNKNOWN_REQ`, and now travels as
 0xFF, which the encoding already reserved for a local failure.
 
-**Not verified on the board.** Nothing here has been flashed, and the fault it
-addresses is intermittent, so a console line naming the mutex is the evidence
-still owed.
+**Verified on the board 2026-08-23**, and by the fault itself rather than by a
+contrivance. Cleaning the roster, two commands in one batch hit the mutex:
+
+```
+enrolled in slot 1, but no window is open: another CM7 caller held the mailbox
+removed 0xfef91007 ... but another CM7 caller held the mailbox: it may still
+  serve this device until the hub resets
+```
+
+Under the old code both would have read `CM4 rejected it, status 1` —
+indistinguishable from `IPC_ST_UNKNOWN_REQ`, which is the half hour this item was
+opened for. The run recorded it as `not measured` because nothing had failed yet;
+it fired an hour later, unprompted.
+
+What the fix does **not** cover is the renderer itself: nothing tests that
+`hub_ipc_str()` gives distinct words, and a build returning one string for every
+code would print a plausible sentence. That is the phase 1 refactor into pure
+translation units, in `radio_devices_docs/specs/03-roadmap.md`.
 
 `../radio_devices_docs/open_hub/arch/ipc.md`.
 
