@@ -2,6 +2,7 @@
  * ADR-0027. radio_devices_docs/open_hub/arch/config-store.md */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "cfgjournal.h"
@@ -343,6 +344,36 @@ static void test_plan(void)
     CHECK(cfg_journal_plan(&sc, 0, 1) == CFG_PLAN_WRAP, "a full ring must wrap");
 }
 
+/* A new runtime parameter must leave snapshots already on flash readable. */
+static void test_a_new_config_field_is_readable_over_an_old_snapshot(void)
+{
+    cfg_snapshot_t img;
+    cfg_scan_t sc;
+    const uint8_t *raw;
+    uint32_t tail_nonzero = 0;
+
+    erase_all();
+    put_snapshot(0, 0, 7, 4, 0x0A00002Au);
+    CHECK(cfg_journal_scan(ring[0], ring[1], &img, &sc) == 0, "scan refused");
+
+    /* A future field's bytes are pad today, and pad is written as zero. */
+    raw = (const uint8_t *)slot_ptr(0, 0);
+    for (uint32_t i = sizeof(cfg_hdr_t) + sizeof(cfg_config_t);
+         i < CFG_SNAP_HEAD_BYTES; i++) {
+        if (raw[i] != 0u)
+            tail_nonzero++;
+    }
+    CHECK(tail_nonzero == 0,
+          "%u byte(s) of head padding are not zero, so a new field would read "
+          "garbage out of an existing snapshot", tail_nonzero);
+
+    /* And the roster cannot move when the config grows. */
+    CHECK(offsetof(cfg_snapshot_t, dev) == CFG_SNAP_HEAD_BYTES,
+          "the roster's offset depends on the config's size");
+    CHECK(live_devices(&img) == 4, "the roster did not survive");
+    CHECK(img.cfg.telem_ip == 0x0A00002Au, "the config did not survive");
+}
+
 /* The geometry the design's erase budget rests on. */
 static void test_geometry(void)
 {
@@ -366,6 +397,7 @@ int main(void)
     test_entries_are_not_records();
     test_length_is_checked_first();
     test_config_delta();
+    test_a_new_config_field_is_readable_over_an_old_snapshot();
     test_plan();
     test_geometry();
 

@@ -10,6 +10,7 @@
 #define CFGSTORE_H
 
 #include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "radio_slots.h"
@@ -138,6 +139,11 @@ _Static_assert(sizeof(cfg_config_rec_t) == CFG_SLOT_BYTES, "a config record is o
 _Static_assert(sizeof(cfg_snapshot_t) % 32 == 0, "a snapshot is whole flash words");
 _Static_assert(sizeof(cfg_snapshot_t) % CFG_SLOT_BYTES == 0, "a snapshot is whole slots");
 _Static_assert(sizeof(cfg_snapshot_t) == CFG_SNAP_BYTES, "the snapshot is the size claimed");
+/* Why a new config field is cheap: the roster's offset is the head's size.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+_Static_assert(offsetof(cfg_snapshot_t, dev) == CFG_SNAP_HEAD_BYTES,
+               "the roster's offset must not depend on the config's size");
+
 _Static_assert(CFG_DEVICE_MAX == 64, "the roster is the grid's device cap");
 _Static_assert(CFG_DEVICE_MAX >= RADIO_DEVICE_MAX, "the store is smaller than the grid");
 _Static_assert(CFG_SNAP_SLOTS + CFG_SNAP_EVERY <= CFG_SLOTS_PER_SECTOR,
