@@ -1128,6 +1128,24 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         return 0;
     }
 
+    /* Before the attempt: a write that lands and is refused spends a slot.
+     * radio_devices_docs/open_hub/arch/keystore.md */
+    if (ks_find(dev_id) == NULL && ks_cache_full()) {
+        cli_out(cli, "\r\nError: the key store holds %lu distinct device ids,"
+                     " which is all the\r\n"
+                     "  cache fits - one entry per id ever written, not per"
+                     " device now enrolled.\r\n"
+                     "  Flash would accept the record; nothing could then serve"
+                     " it, so it is\r\n"
+                     "  refused here rather than written and lost. An id"
+                     " already held still enrols.\r\n"
+                     "  Recovery is an external erase of sectors 6 and 7, which"
+                     " also drops this\r\n"
+                     "  hub's long-term key - never from CM7.\r\n",
+                (unsigned long)ks_cached());
+        return 0;
+    }
+
     rc = ks_enrol(dev_id, &slot);
     if (rc != 0) {
         /* -4 printed "flash write failed" even when flash took the record. */

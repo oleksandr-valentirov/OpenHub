@@ -654,6 +654,8 @@ uint32_t ks_writes(void) { return writes; }
 uint32_t ks_errors(void) { return errors; }
 uint32_t ks_last_flash_error(void) { return last_flash_err; }
 uint32_t ks_flash_errors(void) { return flash_errors; }
+uint32_t ks_cached(void) { return cached; }
+uint8_t ks_cache_full(void) { return (uint8_t)(cached >= KS_MAX_DEVICES); }
 ks_fail_t ks_last_fail(void) { return last_fail; }
 
 const char *ks_fail_str(ks_fail_t f) {

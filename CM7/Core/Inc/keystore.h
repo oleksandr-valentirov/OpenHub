@@ -214,6 +214,20 @@ const char *ks_fail_str(ks_fail_t f);
 uint32_t ks_flash_errors(void);
 
 /**
+ * @brief Whether the cache can take a device id it does not already hold.
+ * @retval 1  full: a new id cannot be served, though flash would take the write
+ * @retval 0  there is room
+ *
+ * One entry per **distinct id ever written**, not per live device, so a store
+ * whose roster is one device can still be full.
+ * radio_devices_docs/open_hub/arch/keystore.md
+ */
+uint8_t ks_cache_full(void);
+
+/** @brief Ids the cache holds, live and deleted alike. @return count */
+uint32_t ks_cached(void);
+
+/**
  * @brief Slots holding this store's magic at a different version.
  * @return count; they are skipped rather than reclaimed, since the log never erases
  */
