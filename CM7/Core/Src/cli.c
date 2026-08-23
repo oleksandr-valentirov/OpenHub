@@ -2027,6 +2027,31 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     if (strcmp(argv[1], "remove") == 0 && argc == 3)
         return cmd_device_remove(cli, argv);
 
+    /* Moves the channel filter for one measurement; a reset restores the header.
+     * radio_devices_docs/open_hub/radio/configuration.md */
+    if (strcmp(argv[1], "rxbw") == 0 && argc == 3) {
+        ipc_rxbw_t b;
+        uint32_t hz = (uint32_t)strtoul(argv[2], NULL, 0);
+
+        if (hz == 0u) {
+            cli_out(cli, "\r\nError: rxbw expects a bandwidth in Hz\r\n");
+            return 0;
+        }
+        if (rfm_request(IPC_REQ_SET_RXBW, 0, (const uint8_t *)&hz, sizeof(hz))
+                != IPC_ST_OK || rfm_reply.len < sizeof(b)) {
+            cli_out(cli, "\r\nError: CM4 refused the bandwidth\r\n");
+            return 0;
+        }
+        memcpy(&b, rfm_reply.payload, sizeof(b));
+        /* Asked and set are different numbers and the difference is the subject.
+         * ROADMAP item 23 */
+        cli_out(cli, "\r\nrxbw asked %lu Hz, set %lu Hz, RegRxBw %02X\r\n",
+                (unsigned long)b.asked_hz, (unsigned long)b.set_hz, b.reg);
+        cli_out(cli, "  header says %lu Hz; a reset puts it back\r\n",
+                (unsigned long)RADIO_RX_BANDWIDTH_HZ);
+        return 0;
+    }
+
     /* Forces a quiesce without a device, so an SDR can check the silence.
      * radio_devices_docs/open_hub/testing/sdr.md */
     if (strcmp(argv[1], "quiesce") == 0 && argc == 3) {
@@ -2090,6 +2115,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         "afcraw                  - the individual corrections, newest first\r\n"
         "latency                 - the hub half of the event deadline\r\n"
         "lna <0..6>              - pin the front-end gain; 0 hands it back to AGC\r\n"
+        "rxbw <hz>               - move the channel filter; a reset restores it\r\n"
         "dump <reg>              - read an RFM69 register\r\n");
     return 0;
 }

@@ -976,6 +976,33 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         return;
     }
 
+    /* The filter's own width, which the encoder rounds up and nothing has chosen.
+     * radio_devices_docs/open_hub/radio/configuration.md */
+    case IPC_REQ_SET_RXBW: {
+        ipc_rxbw_t b;
+        uint32_t hz = 0;
+        uint8_t back = 0;
+
+        if (req->len < sizeof(hz)) {
+            status = IPC_ST_BAD_ARG;
+            len = 0;
+            break;
+        }
+        memcpy(&hz, req->payload, sizeof(hz));
+        memset(&b, 0, sizeof(b));
+        b.asked_hz = hz;
+        if (rfm69_set_rx_bandwidth_hz(&radio, hz) != RFM69_OK ||
+            rfm69_read_reg(&radio, RFM69_RegRxBw, &back) != RFM69_OK) {
+            status = IPC_ST_RADIO_ERR;
+            len = 0;
+            break;
+        }
+        b.reg    = back;
+        b.set_hz = rfm69_rx_bandwidth_from_reg(back);
+        (void)ipc_send_reply(req, IPC_ST_OK, &b, (uint8_t)sizeof(b));
+        return;
+    }
+
     /* The one knob that separates an overdriven front end from a dirty transmitter. */
     case IPC_REQ_SET_LNA: {
         if (rfm69_set_lna_gain(&radio, req->arg) != RFM69_OK)

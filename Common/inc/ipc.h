@@ -56,7 +56,8 @@ enum {
     IPC_REQ_GET_AFC_RAW,    /**< the same, one entry per frame, for the scatter */
     IPC_REQ_SET_LNA,        /**< pin the front-end gain, or hand it back to AGC */
     IPC_REQ_GET_EVT_LAT,    /**< how long an arrival takes to reach CM7 and back */
-    IPC_REQ_GET_JOINPROBE   /**< the receiver's own state where a request is due */
+    IPC_REQ_GET_JOINPROBE,  /**< the receiver's own state where a request is due */
+    IPC_REQ_SET_RXBW        /**< move the channel filter without a reflash */
 };
 
 /* Events, CM4 -> CM7: a separate ring for what the radio originates.
@@ -76,6 +77,15 @@ enum {
     IPC_ST_BAD_ARG,
     IPC_ST_RADIO_ERR
 };
+
+/* Reply for IPC_REQ_SET_RXBW: the encoder rounds up, so asked is not set.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+typedef struct {
+    uint32_t asked_hz;
+    uint32_t set_hz;    /**< what the encoding actually reached */
+    uint8_t  reg;       /**< RegRxBw read back off the part, not the shadow */
+    uint8_t  pad[3];
+} ipc_rxbw_t;
 
 /* Reply for IPC_REQ_GET_TIMING: beacon lateness against the boundary.
  * radio_devices_docs/open_hub/radio/timebase.md */
