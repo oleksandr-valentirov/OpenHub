@@ -953,6 +953,40 @@ It wants its own line, printed pass or fail, ahead of anything unbounded.
 
 `../radio_devices_docs/open_hub/security/self-tests.md`.
 
+### 67. CM4 arms a watchdog and then waits on CM7 without refreshing it — `blocking` `defect`
+
+`CM4/Core/Src/main.c` runs `MX_IWDG2_Init()` — 512 ms, and as short as ~348 ms
+with the LSI at its ±50% tolerance — and then:
+
+```c
+while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}   /* no refresh in this loop */
+```
+
+CM7 releases that semaphore in `StartDefaultTask`, **after `osKernelStart()` and
+after `MX_LWIP_Init()`**. So CM4's boot budget for CM7 is a watchdog period that
+nothing enforces, nothing measures and nothing declares.
+
+**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms.
+Held before the release, it outlasts IWDG2, the system resets, the erase is cut
+mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` — which
+`ks_init()` then reads at every boot, hard-faulting a board with a perfectly good
+image. Reproduced deliberately on sector 3 on 2026-08-23 and then removed by
+releasing the semaphore first; the controlled pair is in
+`radio_devices_docs/open_hub/arch/config-store.md` § what was measured.
+
+Two things are wrong and they are separable:
+
+- **The wait does not refresh.** Any CM7 boot path that grows past the period
+  resets the system, and the cause reads as a hardware fault rather than a timeout.
+- **The budget is undeclared.** Nothing says how long CM7 may take, so nobody
+  adding work to CM7's boot can know they have spent it. `MX_LWIP_Init()` is
+  already inside it.
+
+The fix is not a longer period. The wait refreshes, and the budget becomes a
+constant both sides can be asserted against.
+
+`radio_devices_docs/open_hub/arch/keystore.md`, `bench/runs/2026-08-23-3/`.
+
 ### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
 
 Item 60's twin and a separate leg: the confirmation is lost while the hub
@@ -1138,8 +1172,10 @@ new id is still refused, and no safe patch changes that:
   likewise has no reader outside the keystore. Both are fields durable before they
   are written.
 - *Compact the log* — read the live records and the hub key, erase, re-append.
-  **Not available**: an erase in bank 1 from CM7 hangs the core, and there is no
-  console route that exports the hub's private scalar, only one that generates one.
+  **Available since 2026-08-23**: CM7 erases a bank 1 sector in 954 ms with no error
+  bit, from ITCM, once `HSEM_ID_0` is released first (item 67). What is still true
+  is that no console route exports the hub's private scalar, only one that generates
+  one — so a compaction must carry the key forward in RAM, not rely on re-creating it.
 - *External erase of sectors 6 and 7, then `device hubkey gen`.* Costs the hub a
   new identity. On this bench, where the one enrolled device holds no key, that
   costs nothing — but it is still the owner's call, and it is now a cheap choice
