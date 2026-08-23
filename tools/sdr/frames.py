@@ -89,9 +89,11 @@ def parse(payload, keys=None):
             return line + "  [tag failed - wrong key, or dev_id not %08x]" % dev
         rssi_down = struct.unpack_from("<b", pt, 0)[0]
         flags, supply, uptime = struct.unpack_from("<BHI", pt, 1)
+        temp = struct.unpack_from("<h", pt, 12)[0]
         return ("UPLINK v%d slot=%u superframe=%u  rssi_down=%d dBm flags=%02x "
-                "supply=%umV uptime=%us" % (ver, slot, sf, rssi_down, flags,
-                                            supply, uptime))
+                "supply=%umV temp=%.1fC uptime=%us" % (ver, slot, sf, rssi_down,
+                                                       flags, supply, temp / 10.0,
+                                                       uptime))
 
     names = {FRAME_PAIR_RSP: "PAIR_RSP", FRAME_PAIR_CONF: "PAIR_CONF",
              FRAME_PAIR_ACCEPT: "PAIR_ACCEPT"}

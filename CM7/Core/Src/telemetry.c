@@ -321,6 +321,8 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     /* Sent only when the flag says it was measured; a stale rail is not a reading. */
     if ((d->flags & RADIO_REPORT_FLAG_SUPPLY_STALE) == 0u)
         OHT_PUT(w, OHT_F_DEVICE_SUPPLY_MV, d->supply_mv);
+    if ((d->flags & RADIO_REPORT_FLAG_TEMP_STALE) == 0u)
+        OHT_PUT(w, OHT_F_DEVICE_TEMP_C_X10, d->temp_c_x10);
 }
 
 /**

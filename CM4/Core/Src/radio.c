@@ -85,6 +85,7 @@ typedef struct dev_entry {
     uint32_t frames_replay;
     uint32_t uptime_s;
     uint16_t supply_mv;
+    int16_t  temp_c_x10;        /**< as the device measured its own die */
     int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
     uint32_t arrival_us;        /**< into the superframe the report claimed */
     uint32_t arrival_sync_us;   /**< the same off the DIO3 edge, or IPC_ARRIVAL_SYNC_NONE */
@@ -707,6 +708,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->cyc_n           = e->cyc_n;
     d->cyc_sum         = e->cyc_sum;
     d->supply_mv       = e->supply_mv;
+    d->temp_c_x10      = e->temp_c_x10;
     d->report_every    = e->report_every;
     d->flags           = e->flags;
     d->ack_arg         = e->dl_ack_arg;
@@ -2031,6 +2033,7 @@ static void handle_uplink_frame(void) {
     d->rssi_down = rpt.rssi_down;
     d->flags     = rpt.flags;
     d->supply_mv = rpt.supply_mv;
+    d->temp_c_x10 = rpt.temp_c_x10;
     d->uptime_s  = rpt.uptime_s;
     uplink_notify(d);
 }

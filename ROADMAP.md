@@ -97,7 +97,7 @@ h = 1 demod penalty, and neither side has read the datasheet row.
 
 The wire change landed: both sealed bodies are 16 bytes, frames are 39, and
 `app_len` with `app[4]` uplink and `app[6]` downlink sit inside the air budget
-the slot already paid for. `link_v5` pins both directions and both firmwares
+the slot already paid for. `link_v6` pins both directions and both firmwares
 compile the same digest.
 
 **Nothing writes into it.** `app_len` is 0 on every frame, so "exchanging
@@ -105,21 +105,30 @@ messages" is still telemetry plus a command byte. This is an application questio
 now rather than a wire one, and the last blocking item that does not depend on
 the radio.
 
-After it the slot has **seven spare flag bits and nothing else**; the next byte
+**`link_v6` halved the uplink's half of it**, to `app[2]`, to make room for
+`temp_c_x10` — a first-class device measurement rather than an application one.
+The downlink's `app[6]` is untouched. That was the cheaper of the two ways to
+find two bytes: the other was 320 µs per slot across 194 slots and a re-measured
+grid.
+
+After it the slot has **four spare flag bits and nothing else**; the next byte
 costs a grid change and a re-measurement.
 
 `Common/inc/radio_protocol.h`, `radio/tdma.md` § slot budget.
 
-### 4. The device has no reporting loop the hub can count — `blocking` `device`
+### 4. Reports arrive, and the denominator is still the device's to state — `device`
 
-The hub grants `report_every` and holds no evidence any device honours it. This
-already produced one wrong dismissal: `uplink windows 375, sync 1` read as eleven
-missing reports when the device had no reporting loop at all, so the population
-was one transmission.
+**No longer blocking, 2026-08-24.** Node A reports on grant, and the hub counts
+them: `devices` shows `2/0 ok/bad`, `cadence: grant 8, seen every 8`, and both
+directions' levels at `-46/-48`. The device's own reporting loop existed all
+along and could not transmit — [ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)
+§ the floor is latched once.
 
-**The hub must not derive the denominator.** An `expected` column on `devices`
-would print an assumption with a column heading. The device has to say what it
-sent.
+What this entry still owns is the part that was never about the loop. **The hub
+must not derive the denominator**: an `expected` column on `devices` would print
+an assumption with a column heading, and `cadence ... seen every 8` is an
+observation of gaps rather than a count of what was sent. The device knows how
+many it sent and does not say so on the wire.
 
 `open_hub/cli.md`, and the `verification` skill.
 
@@ -1056,7 +1065,7 @@ the device session rather than taken here.
 **The comment is corrected and the field is believed.** It said the field wraps
 at 4294.967 s; it does not. The device session pinned it across the crossing —
 4294 before, **4296 after**, 11496 two hours past — and the correction is in
-`Common/inc/radio_protocol.h` as of `link_v5`.
+`Common/inc/radio_protocol.h` as of `link_v6`.
 
 **Neither side's field data ever reached the test.** The hub's largest
 observation is 1496 s and the device's 4255 s, against a 4295 s threshold. A host

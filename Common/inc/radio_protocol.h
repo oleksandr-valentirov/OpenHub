@@ -45,7 +45,7 @@ enum {
  *
  * radio_devices_docs/radio/tdma.md
  */
-#define RADIO_LINK_VERSION           5u
+#define RADIO_LINK_VERSION           6u
 
 /** @brief On the wire in four frame types, so both sides must compile the same one. */
 #define RADIO_NET_ID                 0x0001u
@@ -230,7 +230,8 @@ typedef struct radio_uplink_report {
     uint8_t  ack_cmd;           /**< what it was, so a mismatched ack is visible */
     uint8_t  ack_arg;           /**< the argument it applied, read according to ack_cmd */
     uint8_t  app_len;           /**< 0 means no application data, never a sentinel */
-    uint8_t  app[4];
+    int16_t  temp_c_x10;        /**< the node's own die, in tenths of a degree Celsius */
+    uint8_t  app[2];
 } __attribute__((packed)) radio_uplink_report_t;
 
 /**
@@ -241,6 +242,7 @@ typedef struct radio_uplink_report {
 #define RADIO_REPORT_FLAG_RSSI_STALE    0x01   /**< rssi_down is a last value, not a sentinel */
 #define RADIO_REPORT_FLAG_SUPPLY_STALE  0x02   /**< supply_mv was never measured, so do not read it */
 #define RADIO_REPORT_FLAG_RESUMED       0x04   /**< first report after a self-imposed silence */
+#define RADIO_REPORT_FLAG_TEMP_STALE    0x08   /**< temp_c_x10 was never measured, so do not read it */
 
 /**
  * @brief Device -> hub, sealed, in its own slot and carrying no dev_id.

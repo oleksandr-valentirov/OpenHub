@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the uplink and downlink frame vectors for the v5 wire.
+"""Generate the uplink and downlink frame vectors for the v6 wire.
 
 The session key is read from the published pairing set rather than re-derived,
 so these frames are anchored to bytes both firmwares already agree on and
@@ -9,9 +9,13 @@ pair_v2 pinned one uplink frame at the 8-byte body; the downlink was never
 pinned at all. Both directions are here, whole frames, so the little-endian
 struct fields meeting the big-endian nonce are checked rather than inferred.
 
-v5 adds ack_arg to the report and takes its byte from app[5] -> app[4]. The
+v5 added ack_arg to the report and took its byte from app[5] -> app[4]. Its
 value is deliberately not the rate the downlink vector commands: a hub that
 echoes its own commanded value instead of reading the frame must fail here.
+
+v6 adds temp_c_x10 and takes its two bytes from app[4] -> app[2]. The value is
+negative, because a sign lost between an int16 on the wire and a signed read at
+the hub is the mistake this pins.
 
 A published set is immutable: the device repository includes the generated
 header directly. Changing any value below means emitting link_v(N+1).
@@ -27,7 +31,7 @@ import sys
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION      = 5
+VERSION      = 6
 DEV_ID       = 0x0000002A
 DIR_UPLINK   = 0x01
 DIR_DOWNLINK = 0x02
@@ -46,7 +50,8 @@ RPT_UPTIME_S  = 61
 RPT_ACK_SEQ   = 0x5B
 RPT_ACK_CMD   = CMD_SET_RATE
 RPT_ACK_ARG   = 31            # not DL_REPORT_EVERY: an echoed grant must not pass
-RPT_APP       = bytes.fromhex("a1b2c3d4")
+RPT_TEMP_C_X10 = -173          # signed, and not a whole degree either
+RPT_APP       = bytes.fromhex("a1b2")
 
 DL_SUPERFRAME = 0x1a2b3c59
 DL_SLOT       = 1
@@ -95,7 +100,8 @@ def main():
 
     report = (struct.pack("<bBHI", RPT_RSSI_DOWN, RPT_FLAGS, RPT_SUPPLY_MV,
                           RPT_UPTIME_S) +
-              bytes([RPT_ACK_SEQ, RPT_ACK_CMD, RPT_ACK_ARG, len(RPT_APP)]) + RPT_APP)
+              bytes([RPT_ACK_SEQ, RPT_ACK_CMD, RPT_ACK_ARG, len(RPT_APP)]) +
+              struct.pack("<h", RPT_TEMP_C_X10) + RPT_APP)
     assert len(report) == 16, len(report)
 
     up_hdr = struct.pack("<BBBI", FRAME_UPLINK, VERSION, UP_SLOT, UP_SUPERFRAME)
@@ -144,6 +150,9 @@ def main():
             "#\n"
             "# ack_arg is 31 and the downlink commands 12: a hub echoing its own\n"
             "# commanded value rather than reading the frame fails here.\n"
+            "#\n"
+            "# temp_c_x10 is negative: a sign dropped between the wire and the hub\n"
+            "# reads as a plausible warm room rather than as a fault.\n"
             "#\n"
             "# value_digest = %s\n\n" % (VERSION, digest) +
             "".join("%-22s = %s\n" % (k, v) for k, v in rows))

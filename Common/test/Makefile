@@ -14,7 +14,7 @@ CFLAGS = -std=c11 -Wall -Wextra -Werror -O1 -g -I../inc -I vectors
 # Named, and named LIVE: this list watched wire_v3 and pair_v2 long after the
 # build stopped including either, so the guard against a moved contract was
 # itself pointed at files that could no longer move.
-VECTORS = vectors/hop_v1.h vectors/wire_v4.h vectors/pair_v4.h vectors/link_v5.h \
+VECTORS = vectors/hop_v1.h vectors/wire_v4.h vectors/pair_v4.h vectors/link_v6.h \
           vectors/oht_v1.h
 
 test_hop: test_hop.c ../src/hop.c ../inc/hop.h $(VECTORS)

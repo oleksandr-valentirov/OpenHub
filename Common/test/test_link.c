@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "radio_protocol.h"
-#include "link_v5.h"
+#include "link_v6.h"
 
 static int fails;
 
@@ -23,6 +23,7 @@ static int fails;
 #define V_UPTIME_S     61u
 #define V_ACK_SEQ      0x5Bu
 #define V_ACK_ARG      31u
+#define V_TEMP_C_X10   (-173)
 #define V_REPORT_EVERY 12u
 #define V_ARG          0x1234u
 #define V_HUB_TIME_S   0x00112233u
@@ -53,7 +54,7 @@ int main(void) {
     radio_downlink_cmd_t  cmd;
     radio_uplink_t        up;
     radio_downlink_t      dl;
-    static const uint8_t app_up[4] = { 0xa1, 0xb2, 0xc3, 0xd4 };
+    static const uint8_t app_up[2] = { 0xa1, 0xb2 };
     static const uint8_t app_dl[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
 
     /* A size assert answers "same shape", never "same contract". */
@@ -68,6 +69,7 @@ int main(void) {
     rpt.ack_cmd   = RADIO_CMD_SET_RATE;
     rpt.ack_arg   = V_ACK_ARG;
     rpt.app_len   = (uint8_t)sizeof(app_up);
+    rpt.temp_c_x10 = V_TEMP_C_X10;
     memcpy(rpt.app, app_up, sizeof(app_up));
     CHECK(sizeof(rpt) == sizeof(LV_UPLINK_PLAIN));
     diff("uplink report layout", (const uint8_t *)&rpt, LV_UPLINK_PLAIN, sizeof(rpt));

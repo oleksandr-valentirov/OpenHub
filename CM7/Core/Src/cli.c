@@ -879,13 +879,14 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
     if (x.devices == 0u) {
         cli_out(cli, "no devices paired\r\n");
     } else {
-        cli_out(cli, "slot  dev_id      rssi up/down  supply  uptime   ok/bad     last seen\r\n");
+        cli_out(cli, "slot  dev_id      rssi up/down  supply    temp  uptime   ok/bad     last seen\r\n");
     }
 
     for (i = 0; i < x.devices; i++) {
         ipc_device_report_t d;
         char age[16];
         char supply[12];
+        char temp[20];
 
         rc = rfm_request(IPC_REQ_GET_DEVICE_INFO, i, NULL, 0);
         if (rc != IPC_ST_OK || rfm_reply.len < sizeof(d))
@@ -902,17 +903,31 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                      (unsigned long)((now - d.last_superframe) *
                                      (SUPERFRAME_US / 1000000u)));
 
-        /* A rail never measured and a rail reading 0 mV print alike otherwise.
+        /* Before the first report the flags say nothing, and 0 mV is a reading.
          * radio_devices_docs/open_hub/cli.md */
-        if (d.flags & RADIO_REPORT_FLAG_SUPPLY_STALE)
+        if (d.frames_ok == 0u || (d.flags & RADIO_REPORT_FLAG_SUPPLY_STALE))
             snprintf(supply, sizeof(supply), "%6s", "--");
         else
             snprintf(supply, sizeof(supply), "%4umV", d.supply_mv);
 
-        cli_out(cli, "%4u  0x%08lX  %4d/%-5d %s  %s  %6lus  %lu/%lu  %s\r\n",
+        /* A die never measured and a die reading 0.0 C print alike otherwise.
+         * radio_devices_docs/open_hub/cli.md */
+        if (d.frames_ok == 0u || (d.flags & RADIO_REPORT_FLAG_TEMP_STALE)) {
+            snprintf(temp, sizeof(temp), "%6s", "--");
+        } else {
+            /* Signed by hand: -0.5 C truncates to a whole part of 0 and loses it. */
+            unsigned mag = (unsigned)(d.temp_c_x10 < 0 ? -d.temp_c_x10 : d.temp_c_x10);
+            char buf[16];
+
+            snprintf(buf, sizeof(buf), "%s%u.%01u", d.temp_c_x10 < 0 ? "-" : "",
+                     mag / 10u, mag % 10u);
+            snprintf(temp, sizeof(temp), "%5sC", buf);
+        }
+
+        cli_out(cli, "%4u  0x%08lX  %4d/%-5d %s  %s  %s  %6lus  %lu/%lu  %s\r\n",
                 d.slot, (unsigned long)d.dev_id, d.rssi_up, d.rssi_down,
                 (d.flags & RADIO_REPORT_FLAG_RSSI_STALE) ? "stale" : "     ",
-                supply, (unsigned long)d.uptime_s,
+                supply, temp, (unsigned long)d.uptime_s,
                 (unsigned long)d.frames_ok, (unsigned long)d.frames_bad, age);
 
         /* Granted against observed, never a grant restated as a measurement.

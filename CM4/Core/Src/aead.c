@@ -12,7 +12,7 @@
 /* The live set: a self-test pinned to a retired one stops moving with the wire.
  * radio_devices_docs/radio/crypto/wire-crypto.md */
 #include "pair_v4.h"
-#include "link_v5.h"
+#include "link_v6.h"
 
 extern CRYP_HandleTypeDef hcryp;
 
