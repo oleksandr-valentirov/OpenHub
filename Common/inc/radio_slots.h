@@ -166,6 +166,60 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
 #define RADIO_PAIR_CONF_BYTES   26u
 #define RADIO_PAIR_ACCEPT_BYTES 50u
 
+/* --- one turn per join region ------------------------------------------- */
+
+/* The air the schedule already reserves for joining, after all 194 slots.
+ * radio_devices_docs/radio/decisions/0026-one-turn-per-join-region.md */
+#define RADIO_JOIN_REGION_US    (SUPERFRAME_US - RADIO_END_GUARD_US - \
+                                 RADIO_JOIN_OFFSET_US)
+
+/* Two X25519 on an unaccelerated M4; measured, and not summed from anything. */
+#define RADIO_PAIR_DEV_TURNAROUND_US  105000u
+
+/* Compare, seal 19 bytes, write the keystore, cross the mailbox. ADR-0026 */
+#define RADIO_PAIR_GRANT_LEAD_US      40000u
+
+/* A turn is one hub transmission and the answer it invites. ADR-0026 */
+#define RADIO_TURN_INVITE_US    (RADIO_AIR_START_TO_END_US(RADIO_PAIR_INIT_BYTES) + \
+                                 RADIO_PAIR_REQ_LEAD_US +                           \
+                                 RADIO_AIR_START_TO_END_US(RADIO_PAIR_REQ_BYTES))
+#define RADIO_TURN_RESPOND_US   RADIO_AIR_START_TO_END_US(RADIO_PAIR_RSP_BYTES)
+#define RADIO_TURN_GRANT_US     (RADIO_AIR_START_TO_END_US(RADIO_PAIR_CONF_BYTES) + \
+                                 RADIO_PAIR_GRANT_LEAD_US +                         \
+                                 RADIO_AIR_START_TO_END_US(RADIO_PAIR_ACCEPT_BYTES))
+
+/* Invitation, response, grant. ADR-0026 */
+#define RADIO_PAIR_REGIONS      3u
+
+/* How far past its request a device still accepts a grant. ADR-0026 */
+#define RADIO_PAIR_ACCEPT_WINDOW_SF  8u
+
+/* The premise as a check: the second half does not fit one region.
+ * radio_devices_docs/radio/decisions/0026-one-turn-per-join-region.md */
+_Static_assert(RADIO_AIR_START_TO_END_US(RADIO_PAIR_RSP_BYTES) +
+               RADIO_PAIR_DEV_TURNAROUND_US +
+               RADIO_AIR_START_TO_END_US(RADIO_PAIR_CONF_BYTES) > RADIO_JOIN_REGION_US,
+               "the exchange's second half now fits one region; ADR-0026 is moot");
+
+/* Against the window, not the region: the window is what opens. ADR-0026 */
+_Static_assert(RADIO_JOIN_RX_US <= RADIO_JOIN_REGION_US,
+               "the join window overruns the region the schedule reserves for it");
+_Static_assert(RADIO_TURN_INVITE_US < RADIO_JOIN_RX_US,
+               "the invitation and its request do not fit one join window");
+_Static_assert(RADIO_TURN_RESPOND_US < RADIO_JOIN_RX_US,
+               "the response does not fit one join window");
+_Static_assert(RADIO_TURN_GRANT_US < RADIO_JOIN_RX_US,
+               "the confirmation and its grant do not fit one join window");
+
+/* The grant lands two regions late and must still be taken. ADR-0026 */
+_Static_assert(RADIO_PAIR_REGIONS - 1u <= RADIO_PAIR_ACCEPT_WINDOW_SF,
+               "the exchange outlasts the window the device accepts a grant in");
+
+/* The whole procedure, restarts included, inside the operator's window. ADR-0026 */
+_Static_assert((uint32_t)RADIO_PAIR_REGIONS * (SUPERFRAME_US / 1000u) <
+               RADIO_PAIR_WINDOW_MS,
+               "one exchange does not fit the window an operator opens");
+
 /* The steady-state frame a paired device sends in its own slot. */
 #define RADIO_UPLINK_BYTES      39u
 #define RADIO_DOWNLINK_BYTES    39u
