@@ -13,9 +13,9 @@
  */
 
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
-/* 3 widened the payload, 6 moved a reply's fields; the half-flash gate is for both.
+/* 3 widened the payload, 6 and 7 moved a reply; the gate is for all three.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      6u
+#define IPC_VERSION      7u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  64u
@@ -531,6 +531,7 @@ typedef struct ipc_device_report {
     uint8_t  flags;            /**< RADIO_REPORT_FLAG_* from the last report */
     uint8_t  ack_arg;          /**< the argument the device said it applied, per ack_cmd */
     int16_t  temp_c_x10;       /**< the device's own die, in tenths of a degree Celsius */
+    uint16_t missed_run;       /**< report opportunities closed in a row with nothing */
     uint32_t arrival_us;       /**< into its superframe, stamped after the decrypt. ROADMAP item 44 */
     uint32_t arrival_sync_us;  /**< the same, off the DIO3 edge; IPC_ARRIVAL_SYNC_NONE if unpaired */
     uint16_t sync_unpaired;    /**< arrivals whose edge could not be paired to their frame */

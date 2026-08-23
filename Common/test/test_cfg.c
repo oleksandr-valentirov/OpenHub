@@ -374,6 +374,27 @@ static void test_a_new_config_field_is_readable_over_an_old_snapshot(void)
     CHECK(img.cfg.telem_ip == 0x0A00002Au, "the config did not survive");
 }
 
+/* A zero that means "never set" has to be told from a zero that means a value. */
+static void test_link_lost_sentinel(void)
+{
+    cfg_snapshot_t img;
+    cfg_scan_t sc;
+
+    erase_all();
+    put_snapshot(0, 0, 7, 4, 0x0A00002Au);
+    CHECK(cfg_journal_scan(ring[0], ring[1], &img, &sc) == 0, "scan refused");
+
+    /* An existing store carries a zero here, and zero is not a threshold. */
+    CHECK(img.cfg.link_lost_misses == 0u, "the field should be unset in this snapshot");
+    CHECK(cfg_link_lost_misses(&img.cfg) == CFG_LINK_LOST_DEFAULT,
+          "an unset field must resolve to the default, not to zero");
+
+    img.cfg.link_lost_misses = 3u;
+    CHECK(cfg_link_lost_misses(&img.cfg) == 3u, "a set field must be used as it stands");
+    img.cfg.link_lost_misses = 255u;
+    CHECK(cfg_link_lost_misses(&img.cfg) == 255u, "the whole byte must be reachable");
+}
+
 /* The geometry the design's erase budget rests on. */
 static void test_geometry(void)
 {
@@ -399,6 +420,7 @@ int main(void)
     test_config_delta();
     test_a_new_config_field_is_readable_over_an_old_snapshot();
     test_plan();
+    test_link_lost_sentinel();
     test_geometry();
 
     if (failures) {

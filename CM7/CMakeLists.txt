@@ -123,6 +123,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
     Core/Src/telemetry.c
+    Core/Src/hubconfig.c
     ../Common/src/rng.c
     ../Common/src/ipc.c
     ../Common/src/oht_codec.c

@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "ea768903aa87a3ae"
+#define OHT_SCHEMA_DIGEST  "78bf543027ab6155"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -56,6 +56,7 @@
 #define OHT_F_HUB_EVT_RTT_MAX_US     0x0153u, OHT_T_U32
 #define OHT_F_HUB_EVT_LOST           0x0154u, OHT_T_U32
 #define OHT_F_HUB_IPC_READY          0x0155u, OHT_T_BOOL
+#define OHT_F_HUB_LINK_LOST_MISSES   0x0156u, OHT_T_U8
 
 /* device: One paired device, keyed by its 32-bit identifier.
  * radio_devices_docs/open_hub/network/telemetry.md */
@@ -71,6 +72,7 @@
 #define OHT_F_DEVICE_ARRIVAL_SYNC_US    0x1009u, OHT_T_U32
 #define OHT_F_DEVICE_SYNC_UNPAIRED      0x100au, OHT_T_U16
 #define OHT_F_DEVICE_TEMP_C_X10         0x100bu, OHT_T_I16
+#define OHT_F_DEVICE_MISSED_RUN         0x100cu, OHT_T_U16
 #define OHT_F_DEVICE_RSSI_UP_SYNC_DBM   0x1010u, OHT_T_I8
 #define OHT_F_DEVICE_RSSI_UP_LATCH_DBM  0x1011u, OHT_T_I8
 #define OHT_F_DEVICE_RSSI_DOWN_DBM      0x1012u, OHT_T_I8

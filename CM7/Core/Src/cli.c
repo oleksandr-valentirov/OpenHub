@@ -26,6 +26,7 @@
 #include "cfgflash.h"
 #include "cfgstore.h"
 #include "cfgstoreapi.h"
+#include "hubconfig.h"
 #include "crypto.h"
 #include "hubipc.h"
 #include "pairing.h"
@@ -745,25 +746,26 @@ static int cmd_ip(cli_data_t *cli, int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "dhcp") == 0 && argc == 2) {
-        LOCK_TCPIP_CORE();
-        dhcp_start(&gnetif);
-        UNLOCK_TCPIP_CORE();
-        cli_out(cli, "\r\nDHCP client started\r\n");
+        int rc = hubconfig_set_dhcp();
+
+        cli_out(cli, "\r\nDHCP client started%s\r\n",
+                (rc == 0) ? ", and it is what this hub boots into"
+                          : " - NOT STORED, a reset undoes it");
         return 0;
     }
 
     if (strcmp(argv[1], "static") == 0 && argc == 5) {
+        int rc;
+
         if (!ip4addr_aton(argv[2], &ip) || !ip4addr_aton(argv[3], &mask) ||
             !ip4addr_aton(argv[4], &gw)) {
             cli_out(cli, "\r\nError: failed to convert IP address.\r\n");
             return 0;
         }
-        /* release first, or the client keeps renewing on top of the static config */
-        LOCK_TCPIP_CORE();
-        dhcp_release_and_stop(&gnetif);
-        netif_set_addr(&gnetif, &ip, &mask, &gw);
-        UNLOCK_TCPIP_CORE();
-        cli_out(cli, "\r\nstatic %s\r\n", argv[2]);
+        rc = hubconfig_set_static(ip.addr, mask.addr, gw.addr);
+        cli_out(cli, "\r\nstatic %s%s\r\n", argv[2],
+                (rc == 0) ? ", and it survives a reset"
+                          : " - NOT STORED, a reset undoes it");
         return 0;
     }
 
@@ -831,6 +833,21 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                 (unsigned long)c.dev_id, c.repeats);
         return 0;
     }
+    if (argc == 3 && strcmp(argv[1], "lost") == 0) {
+        int n = atoi(argv[2]);
+
+        if (n < 1 || n > 255) {
+            cli_out(cli, "\r\nError: 1..255 missed reports\r\n");
+            return 0;
+        }
+        if (hubconfig_set_link_lost((uint8_t)n) != 0) {
+            cli_out(cli, "\r\nError: %s\r\n", cfgflash_err_str(hubconfig_last_err()));
+            return 0;
+        }
+        /* Named in reports rather than in seconds: the grant decides the seconds. */
+        cli_out(cli, "\r\na link counts as lost after %d missed reports in a row\r\n", n);
+        return 0;
+    }
     if (argc == 3 && strcmp(argv[1], "rate") == 0) {
         int n = atoi(argv[2]);
 
@@ -850,7 +867,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
     if (argc != 1) {
-        cli_out(cli, "\r\nUsage: devices [rate <n>] | cmd <dev_id> rejoin | cmd <dev_id> rate <n>\r\n");
+        cli_out(cli, "\r\nUsage: devices [rate <n>] | [lost <n>] | cmd <dev_id> rejoin"
+                     " | cmd <dev_id> rate <n>\r\n");
         return 0;
     }
 
@@ -880,11 +898,12 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         cli_out(cli, "no devices paired\r\n");
     } else {
         cli_out(cli, "slot  dev_id      rssi up/down  supply    temp  uptime   ok/bad     last seen\r\n");
+        cli_out(cli, "lost after %u missed reports in a row\r\n", hubconfig_link_lost());
     }
 
     for (i = 0; i < x.devices; i++) {
         ipc_device_report_t d;
-        char age[16];
+        char age[24];
         char supply[12];
         char temp[20];
 
@@ -898,6 +917,9 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
          * radio_devices_docs/open_hub/cli.md */
         if (d.frames_ok == 0u)
             snprintf(age, sizeof(age), "never");
+        else if (d.missed_run >= hubconfig_link_lost())
+            /* A device that reported and then stopped; never one that never did. */
+            snprintf(age, sizeof(age), "LOST, %u missed", d.missed_run);
         else
             snprintf(age, sizeof(age), "%lus ago",
                      (unsigned long)((now - d.last_superframe) *
@@ -2226,14 +2248,19 @@ static int cmd_telemetry(cli_data_t *cli, int argc, char **argv) {
             cli_out(cli, "\r\nError: port is 1..65535\r\n");
             return 0;
         }
-        if (telemetry_configure(argv[2], (uint16_t)n, (argc >= 5) ? argv[4] : NULL) != 0) {
+        int rc = hubconfig_set_server(argv[2], (uint16_t)n,
+                                      (argc >= 5) ? argv[4] : NULL);
+
+        if (rc == -1) {
             cli_out(cli, "\r\nError: %s is not an IPv4 address\r\n", argv[2]);
             return 0;
         }
-        telemetry_enable(1);
         /* Says configured, never connected: the task has not tried yet. */
         cli_out(cli, "\r\nserver %s:%d, link enabled - 'telem' shows whether it "
                      "connected\r\n", argv[2], n);
+        if (rc != 0)
+            cli_out(cli, "NOT STORED (%s) - a reset undoes it\r\n",
+                    cfgflash_err_str(hubconfig_last_err()));
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "on") == 0) {

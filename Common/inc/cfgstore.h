@@ -44,6 +44,10 @@
 #define CFG_NONCE_BYTES      8u
 #define CFG_TOKEN_BYTES      33u   /**< the northbound token, NUL-terminated */
 
+/* Zero is "never set", not "lost after none": an older snapshot's pad reads as
+ * zero. radio_devices_docs/open_hub/arch/config-store.md */
+#define CFG_LINK_LOST_DEFAULT  12u
+
 /* Bank 1. The identity is apart from the ring because the ring's sectors get
  * erased. radio_devices_docs/open_hub/arch/config-store.md */
 #define CFG_IDENTITY_SECTOR  5u
@@ -106,8 +110,14 @@ typedef struct cfg_config {
     uint32_t ip_mask;
     uint32_t ip_gw;
     char     telem_token[CFG_TOKEN_BYTES];
-    uint8_t  spare[3];
+    uint8_t  link_lost_misses;            /**< missed reports before the link counts as lost */
+    uint8_t  spare[2];
 } __attribute__((packed)) cfg_config_t;
+
+/** @brief The configured value, or the default a snapshot that predates it gives. */
+static inline uint8_t cfg_link_lost_misses(const cfg_config_t *c) {
+    return (c->link_lost_misses == 0u) ? CFG_LINK_LOST_DEFAULT : c->link_lost_misses;
+}
 
 /** @brief One config change on its own: one slot, and the head a snapshot carries. */
 typedef struct cfg_config_rec {

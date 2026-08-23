@@ -1152,29 +1152,26 @@ not a patch.
 
 `open_hub/network/tls.md`, `open_hub/network/telemetry.md`.
 
-### 38. The northbound link forgets its server on every reset — `debt`
+### 38b. The report rate is in the store and still not read from it — `debt`
 
-`telem server <ip> <port> [token]` has to be retyped after a reset, exactly like
-`ip static`.
+**What is left of item 38, which is closed.** `telem server`, `ip static` and
+`ip dhcp` now apply and persist through `hubconfig`, and
+`hubconfig_apply_boot()` replays them after `MX_LWIP_Init()`. Measured: the
+threshold set by `devices lost 3` came back as 3 across a reset, and a stored
+server address is applied before the telemetry task first dials.
 
-**The store that was the blocker is built and running.** ADR-0027's ring is live
-on the board: the format, the ring's arithmetic, the flash driver, the boot scan,
-the append path, the roster's writers and the migration all work, and the old
-append-only keystore is retired. The 64-id ceiling, `slots left`, `stale format`
-and *a removal spends a slot* are gone with it.
+`cfg_config_t.report_every` is the one field of the head nothing writes and
+nothing reads. It is not the same shape of work as the rest were: the rate has to
+reach CM4 as well, so the seam would need an IPC call it does not have — `devices
+rate <n>` sends `IPC_REQ_SET_REPORT_RATE` from `cli.c`, where `rfm_request` is
+static. Either the request moves somewhere both can reach, or `hubconfig` gains a
+callback the CLI installs.
 
-**What is left is this item alone, and it is now the smallest it has ever been.**
-`cfg_config_t` carries `telem_ip`, `telem_port`, `telem_token`, `ip_static`,
-`ip_addr`, `ip_mask` and `ip_gw`; `cfg_put_config()` persists them; the boot scan
-replays them. Nothing sets them and nothing reads them at boot.
+Until then the granted rate is `RADIO_REPORT_EVERY_DEFAULT` at every boot, which
+is correct and not what the operator last chose.
 
-Three edits, none of them structural: the console's `telem server` and `ip static`
-write through `cfg_put_config()`; the northbound command path does the same; and
-boot uses `cfg_image()->cfg` instead of waiting to be told. Closing it closes
-REQ-N-5.
+`open_hub/arch/config-store.md` § 8c, `open_hub/network/telemetry.md`.
 
-`open_hub/arch/config-store.md`, `open_hub/network/telemetry.md`,
-`open_hub/network/ethernet.md`.
 ### 39. A device command still cannot say anything the wire has no word for — `debt` `contract`
 
 `dev_app` reaches the firmware end to end and is refused there with

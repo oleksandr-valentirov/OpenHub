@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "keystore.h"
 #include "cfgstoreapi.h"
+#include "hubconfig.h"
 #include "erasetest.h"
 #include "cli.h"
 #include <string.h>
@@ -502,6 +503,8 @@ void StartDefaultTask(void *argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
+  /* The netif exists and nothing has dialled out yet. ROADMAP item 38 */
+  hubconfig_apply_boot();
   /* The release moved to main(). radio_devices_docs/open_hub/arch/dual-core.md */
   /* Activate HSEM notification for Cortex-M7 */
   HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));

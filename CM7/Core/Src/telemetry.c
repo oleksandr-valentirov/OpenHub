@@ -21,6 +21,7 @@ _Static_assert(sizeof(BUILD_ID) <= 32u, "BUILD_ID does not fit oht_hello_t.build
 #include "hubipc.h"
 #include "keystore.h"
 #include "cfgstoreapi.h"
+#include "hubconfig.h"
 #include "pairing.h"
 #include "radio_protocol.h"
 #include "radio_slots.h"
@@ -214,6 +215,8 @@ static void put_hub(oht_writer_t *w, const snap_t *s) {
     oht_rec_begin(w, OHT_OBJ_HUB, 0);
     OHT_PUT(w, OHT_F_HUB_UPTIME_MS, osKernelGetTickCount());
     OHT_PUT(w, OHT_F_HUB_IPC_READY, ipc_ready());
+    /* The threshold a reader needs to make sense of every device's missed_run. */
+    OHT_PUT(w, OHT_F_HUB_LINK_LOST_MISSES, hubconfig_link_lost());
     OHT_PUT(w, OHT_F_HUB_IPC_STALE_REPLIES, ipc_stale_replies());
 
     if (s->have_timing) {
@@ -310,6 +313,8 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     /* Always sent: it is what tells an absent stamp from an unchanged one.
      * radio_devices_docs/open_hub/network/telemetry.md */
     OHT_PUT(w, OHT_F_DEVICE_SYNC_UNPAIRED, d->sync_unpaired);
+    /* Always sent: a run of zero is the fact that the device is answering. */
+    OHT_PUT(w, OHT_F_DEVICE_MISSED_RUN, d->missed_run);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_LATCH_DBM, d->rssi_up);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_DOWN_DBM, d->rssi_down);
     OHT_PUT(w, OHT_F_DEVICE_CYC_MIN_MS, d->cyc_min);

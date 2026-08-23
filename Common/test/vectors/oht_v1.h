@@ -8,7 +8,7 @@
  */
 
 #define OHT_VECTORS_DIGEST  "f36fe543fb369334"
-#define OHT_VECTORS_SCHEMA  "ea768903aa87a3ae"
+#define OHT_VECTORS_SCHEMA  "78bf543027ab6155"
 
 /* one device, every integral width and both signs */
 static const unsigned char oht_v1_widths[] = {

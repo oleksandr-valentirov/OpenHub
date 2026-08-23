@@ -100,6 +100,7 @@ typedef struct dev_entry {
     uint8_t  dl_ack_arg;        /**< ... and what it said it applied, never what was asked */
     uint32_t dl_nonce_sf;       /**< the superframe of the last downlink sealed for it */
     uint8_t  dl_nonce_used;     /**< ... and whether there was one, since 0 is a real one */
+    uint16_t missed_run;        /**< report opportunities closed in a row with nothing */
     uint32_t cyc_last_sf;       /**< superframe of the last cycle that arrived */
     uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
     uint16_t cyc_n;
@@ -709,6 +710,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->cyc_sum         = e->cyc_sum;
     d->supply_mv       = e->supply_mv;
     d->temp_c_x10      = e->temp_c_x10;
+    d->missed_run      = e->missed_run;
     d->report_every    = e->report_every;
     d->flags           = e->flags;
     d->ack_arg         = e->dl_ack_arg;
@@ -1392,6 +1394,26 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 }
 
 
+/* The superframe that just closed: over, so its answer cannot still change.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static void score_missed_reports(void) {
+    uint32_t past = frame_counter - 1u;
+
+    for (uint8_t i = 0; i < RADIO_MAX_DEVICES; i++) {
+        dev_entry_t *d = &devices[i];
+
+        if (!d->used || d->report_every == 0u)
+            continue;
+        /* Only an opportunity the grant actually named counts as a miss. */
+        if ((past % d->report_every) != 0u)
+            continue;
+        if (d->frames_ok != 0u && d->last_superframe == past)
+            d->missed_run = 0;
+        else if (d->missed_run != 0xFFFFu)
+            d->missed_run++;
+    }
+}
+
 /* The counter keeps advancing through a quiesce; only transmission stops.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static void on_superframe(void) {
@@ -1429,6 +1451,7 @@ static void on_superframe(void) {
         return;
     }
 
+    score_missed_reports();
     RFM_send_broadcast(0, 0);
 }
 
@@ -2030,6 +2053,8 @@ static void handle_uplink_frame(void) {
         }
     }
     d->rssi_up   = (int8_t)(rssi_x2 / 2);
+    /* Cleared here too: a frame in its own superframe outruns the score. */
+    d->missed_run = 0;
     d->rssi_down = rpt.rssi_down;
     d->flags     = rpt.flags;
     d->supply_mv = rpt.supply_mv;
