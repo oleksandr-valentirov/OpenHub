@@ -543,7 +543,7 @@ population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
 
-### 70. The boot erase cannot satisfy both halves of ADR-0027 as written — `blocking` `debt`
+### 70. Where an erase is allowed to run has two answers and needs one — `blocking` `debt`
 
 §8 puts the boot erase **before `osKernelStart()`**; §7 says it runs only **after
 `HSEM_ID_0` is released**; CM7 releases that semaphore in `StartDefaultTask`, after
@@ -558,9 +558,16 @@ scheduler runs - so this cannot be resolved by accident. Three options are coste
 on the page; the cheapest changes no boot order at all and erases the spare lazily
 at the first wrap, which is what CM4's `kv_init()` already does.
 
-**It blocks steps 4 and 5 of the migration**, which are the ones that erase the old
-log and write the first snapshot. Everything before them is done: the identity is
-in sector 5 and witnessed.
+**It does not, by itself, block the migration** — that was written here first and
+is wrong in a way worth correcting rather than deleting. §8's erase is automatic and
+happens at a wrap; §10's erase of sector 6 is a one-off an operator triggers and
+need not happen at boot at all. What stops the migration is this store's **own**
+guard: a console command runs under the scheduler, so `cfgflash_erase()` returns
+`CFGF_ERR_SCHEDULER`.
+
+The two meet at one question — *where is an erase allowed to run* — and one answer
+settles both, which is the reason to decide it once. Everything before the erasing
+steps is done: the identity is in sector 5 and witnessed.
 
 `../radio_devices_docs/open_hub/arch/config-store.md` § 8a.
 
