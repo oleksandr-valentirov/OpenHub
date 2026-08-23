@@ -59,6 +59,52 @@ uint16_t cfg_since_snapshot(void);
  */
 int cfg_identity_read(cfg_identity_t *out);
 
+/** Which store answered the last key read. */
+typedef enum {
+    CFG_SRC_NONE = 0,
+    CFG_SRC_STORE,    /**< the identity sector */
+    CFG_SRC_OLD_LOG   /**< the append-only keystore, which is being retired */
+} cfg_src_t;
+
+/** @brief Which store served the last hub_key_get(). @return the source */
+cfg_src_t hub_key_source(void);
+
+/**
+ * @brief The hub's scalar: the new store if it has one, else the old log.
+ * @param priv  receives it
+ * @retval  0  copied out
+ * @retval -1  neither store holds one
+ *
+ * One seam, so the fallback order is stated once rather than at every call site.
+ */
+int hub_key_get(uint8_t priv[CFG_ROOT_KEY_BYTES]);
+
+/**
+ * @brief The network hop key, the same way, and it never creates one.
+ * @param key  receives it
+ * @retval  0  copied out
+ * @retval -1  neither store holds one
+ */
+int hub_net_key_get(uint8_t key[CFG_SESSION_BYTES]);
+
+/**
+ * @brief The hub's long-term scalar, from the identity sector.
+ * @param priv  receives it
+ * @retval  0  an identity record exists and was copied out
+ * @retval -1  none is stored; the caller must fall back to the old log
+ */
+int cfg_hub_key_get(uint8_t priv[CFG_ROOT_KEY_BYTES]);
+
+/**
+ * @brief The network hop key, from the identity sector.
+ * @param key  receives it
+ * @retval  0  an identity record exists and was copied out
+ * @retval -1  none is stored
+ *
+ * Unlike the old log's accessor this never creates one, so reading it is a read.
+ */
+int cfg_net_key_get(uint8_t key[CFG_SESSION_BYTES]);
+
 /**
  * @brief Appends an identity record. Never erases: the sector is written once.
  * @param priv  the hub's X25519 scalar

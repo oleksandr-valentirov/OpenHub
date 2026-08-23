@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "hsem_table.h"
+#include "keystore.h"
 
 static cfg_snapshot_t image;
 static cfg_scan_t     scan;
@@ -18,6 +19,9 @@ static cfgflash_err_t boot_erase = CFGF_OK;
 static uint32_t       boot_erase_ms;
 static uint8_t        boot_erased;
 static uint8_t        boot_sem_free;
+/* Which store answered last; a fallback can cover a broken new path.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+static cfg_src_t      key_source = CFG_SRC_NONE;
 
 static const void *ring_ptr(uint8_t ring)
 {
@@ -96,6 +100,57 @@ int cfg_identity_read(cfg_identity_t *out)
         return -1;
     if (out != NULL)
         *out = *best;
+    return 0;
+}
+
+/* The identity moved to its own sector; the old log is the fallback until it is
+ * erased. radio_devices_docs/open_hub/arch/config-store.md */
+int hub_key_get(uint8_t priv[CFG_ROOT_KEY_BYTES])
+{
+    if (cfg_hub_key_get(priv) == 0) {
+        key_source = CFG_SRC_STORE;
+        return 0;
+    }
+    if (ks_hub_key_get(priv) == 0) {
+        key_source = CFG_SRC_OLD_LOG;
+        return 0;
+    }
+    key_source = CFG_SRC_NONE;
+    return -1;
+}
+
+cfg_src_t hub_key_source(void)
+{
+    return key_source;
+}
+
+/* Never creates one, unlike the old log's accessor, so a read stays a read. */
+int hub_net_key_get(uint8_t key[CFG_SESSION_BYTES])
+{
+    if (cfg_net_key_get(key) == 0)
+        return 0;
+    return ks_net_key_get(key);
+}
+
+int cfg_hub_key_get(uint8_t priv[CFG_ROOT_KEY_BYTES])
+{
+    cfg_identity_t id;
+
+    if (cfg_identity_read(&id) != 0)
+        return -1;
+    memcpy(priv, id.hub_priv, CFG_ROOT_KEY_BYTES);
+    memset(&id, 0, sizeof(id));
+    return 0;
+}
+
+int cfg_net_key_get(uint8_t key[CFG_SESSION_BYTES])
+{
+    cfg_identity_t id;
+
+    if (cfg_identity_read(&id) != 0)
+        return -1;
+    memcpy(key, id.net_key, CFG_SESSION_BYTES);
+    memset(&id, 0, sizeof(id));
     return 0;
 }
 

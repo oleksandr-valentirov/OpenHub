@@ -428,6 +428,36 @@ static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
             (unsigned)CFG_DEVICE_MAX);
     cli_out(cli, "identity %s\r\n", (cfg_identity_read(&id) == 0)
             ? "present in sector 5" : "none in sector 5");
+
+    /* The new path with no fallback behind it.
+     * radio_devices_docs/open_hub/arch/config-store.md */
+    {
+        uint8_t priv[32], pub[32];
+
+        if (cfg_hub_key_get(priv) != 0) {
+            cli_out(cli, "  the store alone: no key\r\n");
+        } else if (crypto_x25519_public(priv, pub) != 0) {
+            cli_out(cli, "  the store alone: a scalar that will not derive\r\n");
+        } else {
+            cli_out(cli, "  the store alone: ");
+            for (int i = 0; i < 32; i++)
+                cli_out(cli, "%02x", pub[i]);
+            cli_out(cli, "\r\n");
+        }
+        memset(priv, 0, sizeof(priv));
+    }
+    {
+        uint8_t priv[32];
+        cfg_src_t src;
+
+        (void)hub_key_get(priv);
+        src = hub_key_source();
+        memset(priv, 0, sizeof(priv));
+        cli_out(cli, "  pairing reads: %s\r\n",
+                (src == CFG_SRC_STORE) ? "the store"
+                : (src == CFG_SRC_OLD_LOG) ? "the OLD LOG - erasing it breaks pairing"
+                : "nothing");
+    }
     return 0;
 }
 
@@ -1756,7 +1786,7 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
                          " discard-legacy'\r\n");
             return 0;
         }
-        if (ks_hub_key_get(priv) == 0) {
+        if (hub_key_get(priv) == 0) {
             memset(priv, 0, sizeof(priv));
             cli_out(cli, "\r\nError: a hub key already exists. Replacing it"
                          " orphans every paired device - each holds this hub's"
@@ -1782,7 +1812,7 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
 
-    if (ks_hub_key_get(priv) != 0) {
+    if (hub_key_get(priv) != 0) {
         cli_out(cli, "\r\nno hub key yet - run 'device hubkey gen' once\r\n");
         return 0;
     }

@@ -16,6 +16,7 @@
 #include "pairing.h"
 #include "hubipc.h"
 #include "keystore.h"
+#include "cfgstoreapi.h"
 #include "crypto.h"
 #include "ipc.h"
 #include "radio_protocol.h"
@@ -129,7 +130,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
         goto refuse;
     }
 
-    if (ks_hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
+    if (hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
         stats.no_hub_key++;
         status = IPC_ST_RADIO_ERR;
         goto refuse;
@@ -203,7 +204,7 @@ static void serve_pair_conf(const ipc_msg_t *m) {
     memset(&k, 0, sizeof(k));
     /* Fetched before the record is written, never after.
      * radio_devices_docs/open_hub/arch/keystore.md */
-    if (ks_net_key_get(k.hop_key) != 0) {
+    if (hub_net_key_get(k.hop_key) != 0) {
         stats.errors++;
         status = IPC_ST_RADIO_ERR;
         goto refuse;
@@ -243,7 +244,7 @@ static void install_paired_devices(void) {
     if (ks_count() == 0u)
         return;
     /* Only if something is paired: creating one is a flash write. */
-    if (ks_net_key_get(net_key) != 0) {
+    if (hub_net_key_get(net_key) != 0) {
         stats.errors++;
         return;
     }
@@ -331,7 +332,7 @@ static void pair_init_derive(void) {
     }
     /* Only the hub's own key: mode OPEN has no secret to derive a MAC key from.
      * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
-    if (ks_hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
+    if (hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
         mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
         pi_stats.derive_failed++;
         return;
