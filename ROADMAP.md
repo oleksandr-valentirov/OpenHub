@@ -1117,11 +1117,26 @@ was never at risk.** That decision is withdrawn.
 **What is still open is a decision, and it is not the same one.** Enrolment of a
 new id is still refused, and no safe patch changes that:
 
-- *Drop deleted entries from the cache.* Cheapest, and it restarts `key_gen` at 1
-  for a re-enrolled device. CM4 scopes its replay floor to `key_gen`
-  (`CM4/Core/Src/radio.c:80`), so a repeating generation number is a replay
-  question and not a tidy-up. `tx_floor` has **no reader outside the keystore** and
-  costs nothing to lose, which is its own small finding.
+- *Drop deleted entries from the cache.* **63 of the 64 entries are tombstones**
+  — `device list` prints one live device — so this reclaims almost all of it, and
+  the entries are RAM rebuilt by `scan()` from flash, so it is a scan rule and not
+  a flash operation.
+
+  **The objection first written here was checked and does not hold.** It said a
+  restarted `key_gen` is a replay question because CM4 scopes its floor to it.
+  Traced: `key_gen` is **not on the air wire at all** — it appears in `ipc.h` and in
+  each side's own store and nowhere else. CM4 assigns `d->key_gen` in
+  `install_device()` and **never compares it**, and seeds `d->rx_floor` from the
+  live `frame_counter`, which is monotonic and independent of it. `kvstore.c`'s
+  `key_gen` and `rx_floor` fields are declared, documented as scoping each other,
+  and **read by nothing**. The device's `key_gen` is displayed and reported and
+  never compared against the hub's. The two counters never meet.
+
+  So the real cost is a **debt, not a hazard**: the comment *"named, so a stale
+  floor is detectable"* describes a guard that was designed and never wired, and
+  dropping the continuity removes the history that guard would have used. `tx_floor`
+  likewise has no reader outside the keystore. Both are fields durable before they
+  are written.
 - *Compact the log* — read the live records and the hub key, erase, re-append.
   **Not available**: an erase in bank 1 from CM7 hangs the core, and there is no
   console route that exports the hub's private scalar, only one that generates one.
