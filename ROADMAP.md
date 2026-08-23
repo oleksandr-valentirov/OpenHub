@@ -987,6 +987,44 @@ constant both sides can be asserted against.
 
 `radio_devices_docs/open_hub/arch/keystore.md`, `bench/runs/2026-08-23-3/`.
 
+### 68. Six devices share one uplink slot on flash — `blocking` `defect`
+
+Exposed 2026-08-23 by fixing item 66, and it was there the whole time.
+
+`lowest_free_slot()` picks the lowest slot no **cached** live device holds. While
+the cache was full of tombstones the live devices were not in it, so every
+enrolment saw one device at slot 0 and answered **slot 1**. Six of them did:
+
+```
+b7e33ff6    0 enrolled
+3cfde754    1 enrolled
+527b51e7    1 enrolled
+48e4c4fb    1 enrolled
+22cdec51    1 enrolled      <- node A's identity
+a18892ec    1 enrolled
+3c7a11d9    1 enrolled
+```
+
+**The slot is written into the record**, so this is on flash and permanent for
+those records. It is not a display artefact.
+
+**Two things were wrong at once and only one of them is fixed.** `device list`
+reported `1 enrolled` while the store held seven, because the cache had no room
+for them — that is item 66 and it is closed. The colliding slots are the damage
+that happened while it was open.
+
+**It matters to CM4, not only to tidiness.** `install_device()` does
+`d = &devices[k->slot]`, so all six map to `devices[1]` and overwrite one another.
+Any pairing that lands on one of them serves a roster entry another device also
+believes is its own.
+
+None of the six carries a key — all read `(no key yet)` — so nothing is paired and
+nothing is lost by removing them. The repair is `device remove` on all seven and
+`device add` for whichever are wanted, which now assigns slots against a cache
+that holds the whole roster. It costs one flash slot per removal out of 1731.
+
+`../radio_devices_docs/open_hub/arch/keystore.md`.
+
 ### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
 
 Item 60's twin and a separate leg: the confirmation is lost while the hub
@@ -1109,7 +1147,7 @@ still owed.
 
 `../radio_devices_docs/open_hub/arch/ipc.md`.
 
-### 66. The store holds 64 distinct device ids and the cache fits 64 — `blocking` `defect`
+### 66. The store holds 64 distinct device ids and the cache fits 64 — `closed 2026-08-23`
 
 **Retitled and re-scoped 2026-08-23 after it was measured.** This item said the
 store had stopped accepting writes and could not say why. **The store was never
@@ -1148,8 +1186,30 @@ writes (`f584daa`), which stops the store bleeding a slot per attempt.
 **The erase of bank 1 sectors 6 and 7 is not needed, and the hub's long-term key
 was never at risk.** That decision is withdrawn.
 
-**What is still open is a decision, and it is not the same one.** Enrolment of a
-new id is still refused, and no safe patch changes that:
+**Closed by not caching tombstones.** `scan()` no longer holds a cache entry for a
+device whose newest record is a removal, and it reads the **older sector first** so
+that scan order is seq order — without that, a tombstone can arrive before the
+record it retires and a dead id is cached as live.
+
+Measured on the board, on the full store, which is the only fixture where this
+check has a population at all:
+
+| | before | after |
+|---|---|---|
+| `errors` at boot | 7 | **0** |
+| roster `device list` shows | 1 | **7** |
+| `device add` of a new id | refused | **enrolled in slot 2** |
+
+The roster line is the finding: the store held **seven** live devices and reported
+one, because the cache had no room. What that cost while it was open is item 68.
+
+A side effect worth naming: `OHT_CMD_PAIR_WINDOW` checked only `ks_find() == NULL`,
+so a removed device passed it and armed a window. With tombstones out of the cache
+that path returns `NO_SUCH_DEVICE` correctly.
+
+**The options below are kept because the wall they answer is only postponed.** The
+log still reclaims nothing, so the next 64 fresh identities refill it; ADR-0027 is
+what removes it:
 
 - *Drop deleted entries from the cache.* **63 of the 64 entries are tombstones**
   — `device list` prints one live device — so this reclaims almost all of it, and

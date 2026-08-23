@@ -165,6 +165,30 @@ static uint8_t write_record(uint32_t addr, const ks_record_t *r) {
     return 0;
 }
 
+/* Order in the cache carries no meaning, so the last entry fills the hole. */
+static void cache_drop(ks_record_t *slot) {
+    uint32_t i = (uint32_t)(slot - cache);
+
+    if (i < cached) {
+        cache[i] = cache[cached - 1u];
+        cached--;
+    }
+}
+
+/* The log appends in order, so a sector's first valid record is its oldest.
+ * radio_devices_docs/open_hub/arch/keystore.md */
+static uint32_t sector_first_seq(uint32_t base) {
+    for (uint32_t i = 0; i < KS_SLOTS; i++) {
+        const ks_record_t *r = (const ks_record_t *)(base + i * KS_RECORD_BYTES);
+
+        if (slot_erased(r))
+            break;
+        if (record_valid(r))
+            return r->seq;
+    }
+    return 0xFFFFFFFFu;
+}
+
 static ks_record_t *cache_find(uint32_t dev_id) {
     for (uint32_t i = 0; i < cached; i++)
         if (cache[i].dev_id == dev_id)
@@ -186,7 +210,17 @@ static void scan(void) {
     next_slot   = 0;
     last_seq    = 0;
 
-    for (int s = 0; s < 2; s++) {
+    /* Oldest sector first: scan order becomes seq order, so a tombstone
+     * follows what it retires. radio_devices_docs/open_hub/arch/keystore.md */
+    int order[2] = {0, 1};
+
+    if ((int32_t)(sector_first_seq(KS_ADDR_A) - sector_first_seq(KS_ADDR_B)) > 0) {
+        order[0] = 1;
+        order[1] = 0;
+    }
+
+    for (int n = 0; n < 2; n++) {
+        int s = order[n];
         uint32_t base = s ? KS_ADDR_B : KS_ADDR_A;
 
         first_erased[s] = KS_SLOTS;
@@ -250,14 +284,21 @@ static void scan(void) {
                 continue;
             }
 
+            /* A tombstone is not a device; caching one spent a roster slot. */
             have = cache_find(r->dev_id);
             if (have != NULL) {
-                if ((int32_t)(r->seq - have->seq) > 0)
-                    *have = *r;
+                if ((int32_t)(r->seq - have->seq) > 0) {
+                    if (r->state == KS_STATE_DELETED)
+                        cache_drop(have);
+                    else
+                        *have = *r;
+                }
+            } else if (r->state == KS_STATE_DELETED) {
+                /* Nothing cached and the newest is a removal: nothing to hold. */
             } else if (cached < KS_MAX_DEVICES) {
                 cache[cached++] = *r;
             } else {
-                /* A boot condition, counted with the write failures. */
+                /* Now a real roster overflow, not a history one. */
                 errors++;
                 last_fail = KS_FAIL_SCAN_OVER;
             }
