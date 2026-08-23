@@ -152,6 +152,14 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
  * radio_devices_docs/radio/pairing.md */
 #define RADIO_PAIR_REQ_LEAD_US  30000u
 
+/* Measured end to end 2026-08-23, invitation to accept, and not summed from
+ * frame sizes. radio_devices_docs/radio/pairing.md */
+#define RADIO_PAIR_EXCHANGE_US  270000u
+
+/* One superframe covers the tail; the second is margin, and four blocks the
+ * next enrolment. radio_devices_docs/radio/pairing.md */
+#define RADIO_PAIR_QUIESCE_SUPERFRAMES  2u
+
 #define RADIO_PAIR_INIT_BYTES   61u
 #define RADIO_PAIR_REQ_BYTES    56u
 #define RADIO_PAIR_RSP_BYTES    58u
@@ -217,3 +225,18 @@ _Static_assert(RADIO_SLOT_COUNT <= 256u, "the slot field cannot address the grid
 /* Every region, in order, inside one superframe. */
 _Static_assert(RADIO_JOIN_OFFSET_US + RADIO_JOIN_LEN_US + RADIO_END_GUARD_US <=
                SUPERFRAME_US, "the regions overrun the superframe");
+
+/* A pairing quiesce must outlast the exchange it was asked for. */
+_Static_assert((uint32_t)RADIO_PAIR_QUIESCE_SUPERFRAMES * SUPERFRAME_US >
+               RADIO_PAIR_EXCHANGE_US, "the exchange outlives its clear air");
+
+/* Both ends clamp to this, so the hub may ask for less and never for more. */
+_Static_assert(RADIO_PAIR_QUIESCE_SUPERFRAMES <= RADIO_QUIESCE_SUPERFRAMES,
+               "a quiesce longer than the clamp is refused by every device");
+
+/* The next enrolment must clear the gap rule, or the second device never pairs.
+ * radio_devices_docs/radio/pairing.md */
+#define RADIO_PAIR_NEXT_INIT_SF                                                    ((((1u + RADIO_PAIR_QUIESCE_SUPERFRAMES + 2u) + RADIO_PAIR_INIT_EVERY - 1u)       / RADIO_PAIR_INIT_EVERY) * RADIO_PAIR_INIT_EVERY)
+_Static_assert(RADIO_PAIR_NEXT_INIT_SF - (1u + RADIO_PAIR_QUIESCE_SUPERFRAMES) >=
+               RADIO_QUIESCE_MIN_GAP,
+               "back-to-back enrolments are refused clear air by the gap rule");

@@ -807,13 +807,64 @@ starts at the **next** superframe boundary and the exchange starts 126 ms before
 one, so the response goes out before the clear air begins. `RADIO_QUIESCE_MIN_GAP`
 then refuses back-to-back enrolments outright — `pairings that got no clear air`.
 
-The region cannot simply grow. Three options are derived on the page below, and
-**A is the one to take**: arm the quiesce from the *invitation* rather than from
-the request, so the clear air starts before the exchange does, and stop
-`RADIO_QUIESCE_MIN_GAP` refusing back-to-back enrolments. It costs no slots.
+**A was withdrawn on measurement, both halves.** The quiesce is already armed at
+the request and already takes effect at the boundary the exchange's tail lives
+in; `quiesce_lost` was 1 of 7, so six exchanges had their clear air and failed
+anyway. And `RADIO_QUIESCE_MIN_GAP` is enforced by the device too, so relaxing it
+here would suspend a grid the devices still believed was running. One real defect
+came out of A and is fixed: a valid PAIR_REQ was discarded when `begin_quiesce()`
+refused, which made that attempt certain to fail rather than merely unlikely.
+
+**This item is a margin, not the cause of the current failures.** Counted on both
+ends over one closed window: device sent 4 requests, hub saw 3; hub answered 3,
+device heard 2; device confirmed 2, heard 1 accept - loss on all three legs with
+**zero CRC errors**, which is a receiver not listening rather than a damaged
+link. Item 60 carries that.
+
 B moves `RADIO_JOIN_OFFSET_US` to 1 718 000 and spends 16 uplink slots.
 C - the 37 200 us of mailbox - is worth doing anyway and cannot fix this alone.
-
-This needs a decision record, not a constant. Next free number is ADR-0026.
+Still needs a decision record. Next free number is ADR-0026.
 
 `../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.
+
+### 60. The hub has never registered a PAIR_CONF - `blocking` `defect`
+
+Three instruments over one 80 s window, 2026-08-23, with an SDR capture of the
+join channel as the third:
+
+```
+12.759 s  PAIR_INIT     (hub)
+12.803 s  PAIR_REQ      +44.4 ms   (device)
+12.910 s  PAIR_RSP      +106.6 ms  (hub)
+13.011 s  PAIR_CONF     +100.7 ms  (device)
+          PAIR_ACCEPT   never
+```
+
+The exchange ran correctly and on schedule - +44.4 ms against a
+`RADIO_PAIR_REQ_LEAD_US` of 30 000 plus the frame, +106.6 against the device's
+own measured 107 432 us - and **the hub did not answer the confirmation**. Its
+counter is `req 2 -> rsp 2 -> conf 0 -> accept 0`, cumulative since reset: not
+one confirmation has ever been registered, while one is demonstrably on the air
+at the right instant and decodes cleanly off the antenna.
+
+`pair_reqs_dropped` is **0**, so the frame never reached `handle_join_frame` -
+every refusal in that function increments it. It was lost below the parser. The
+window's own receive counters read `sync 2, crc err 1, frames 1`: one good frame,
+which is the request, and one CRC error, which is the size of the remaining
+population.
+
+**A frame the SDR decodes cleanly and the hub CRCs is not a link problem.** It
+is 100.7 ms after the hub's own transmission and about 125 ms past a superframe
+boundary the exchange crosses, so the receiver's state around the turnaround and
+the boundary is where to look - not the budget in item 59, which the same capture
+rules out.
+
+The second, separable failure in the same window: **the device radiated 4
+requests and the hub heard 1.** The SDR carries all four, each 44.4 ms after an
+invitation, at the same power as the one that worked, so the device's counter is
+honest and this is the hub's receive path.
+
+Capture and decode: they were deleted with the run; regenerate with
+`capture.py -f 866.5e6 -s 2.4e6 -t 80 -g 30` while a window is open.
+
+`../radio_devices_docs/radio/pairing.md` § the budget is a real margin.

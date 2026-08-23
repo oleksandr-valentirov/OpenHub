@@ -162,7 +162,7 @@ static uint32_t unreserved_frames = 0;   /* boundaries passed with nothing sent 
 /* data_beacons counts attempts, which is what keeps the accounting exact.
  * radio_devices_docs/open_hub/arch/ipc.md */
 static uint32_t beacon_err = 0;
-static uint32_t quiesce_lost = 0;        /* a valid PAIR_REQ that won no clear air */
+static uint32_t quiesce_lost = 0;        /* a PAIR_REQ served without clear air */
 
 /* Join-region sub-state, so a 100 ms window never blocks the loop.
  * radio_devices_docs/open_hub/radio/superloop.md */
@@ -2231,11 +2231,10 @@ static void handle_join_frame(void) {
             return;
         }
 
-        /* Clear air before arithmetic: a refused quiesce must not cost curve work. */
-        if (begin_quiesce(RADIO_QUIESCE_SUPERFRAMES) == 0) {
+        /* Asked for, not required: an open window and the named device already
+         * bound the cost. radio_devices_docs/radio/pairing.md */
+        if (begin_quiesce(RADIO_PAIR_QUIESCE_SUPERFRAMES) == 0)
             quiesce_lost++;
-            return;
-        }
 
         e.dev_id     = req.dev_id;
         e.superframe = req.superframe;
