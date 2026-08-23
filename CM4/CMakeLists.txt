@@ -109,6 +109,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/timebase.c
     Core/Src/calib.c
     Core/Src/kvstore.c
+    Core/Src/bootwait.c
 )
 
 # Link directories setup

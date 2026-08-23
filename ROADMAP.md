@@ -433,40 +433,45 @@ readings that argue against it; it is not restated here.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
-### 67. CM4 arms a watchdog and then waits on CM7 without refreshing it — `blocking` `defect`
+### 67. CM4's wait on CM7 refreshes now; the control has not run — `blocking` `defect`
 
-`CM4/Core/Src/main.c` runs `MX_IWDG2_Init()` — 512 ms, and as short as ~348 ms
-with the LSI at its ±50% tolerance — and then:
+**Fixed in code 2026-08-23, unverified on hardware.** `CM4/Core/Src/main.c` armed
+IWDG2 at 512 ms — as short as ~348 ms with the LSI at a tolerance nobody has read
+off the datasheet — and then spun on `HSEM_ID_0` with no refresh in the loop,
+while CM7 releases that semaphore in `StartDefaultTask`, after `osKernelStart()`
+and `MX_LWIP_Init()`.
 
-```c
-while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}   /* no refresh in this loop */
-```
-
-CM7 releases that semaphore in `StartDefaultTask`, **after `osKernelStart()` and
-after `MX_LWIP_Init()`**. So CM4's boot budget for CM7 is a watchdog period that
-nothing enforces, nothing measures and nothing declares.
-
-**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms.
-Held before the release, it outlasts IWDG2, the system resets, the erase is cut
+**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms;
+held before the release it outlasts IWDG2, the system resets, the erase is cut
 mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` — which
-`ks_init()` then reads at every boot, hard-faulting a board with a perfectly good
-image. Reproduced deliberately on sector 3 on 2026-08-23 and then removed by
-releasing the semaphore first; the controlled pair is in
-`radio_devices_docs/open_hub/arch/config-store.md` § what was measured.
+`ks_init()` reads at every subsequent boot, hard-faulting a board with a perfectly
+good image. It never presented as a timeout.
 
-Two things are wrong and they are separable:
+Both halves are built:
 
-- **The wait does not refresh.** Any CM7 boot path that grows past the period
-  resets the system, and the cause reads as a hardware fault rather than a timeout.
-- **The budget is undeclared.** Nothing says how long CM7 may take, so nobody
-  adding work to CM7's boot can know they have spent it. `MX_LWIP_Init()` is
-  already inside it.
+- The wait moved to `CM4/Core/Src/bootwait.c` and refreshes **unconditionally**
+  rather than paced off `HAL_GetTick()`, because pacing would make the safety
+  property depend on SysTick still running — the same class of fault. The tick
+  measures and nothing else.
+- The budget is declared. `Common/inc/hub_boot.h` carries
+  `HUB_CM7_BOOT_BUDGET_MS`, both cores compile it, `bootwait_ms()` reaches the
+  console through `ipc_timing_t`, and `timing` prints the measurement beside the
+  budget and flags an overrun. How long CM7's boot took was not observable from
+  anywhere before this.
 
-The fix is not a longer period. The wait refreshes, and the budget becomes a
-constant both sides can be asserted against.
+**What is owed is the control, and it is two flashes.** Nothing yet proves the
+refresh does anything: on a fast boot the loop body may run few enough times that
+a build without it would behave identically. Mutation in both directions is the
+check — remove the refresh, confirm the board resets before CM4 reaches
+`RFM_Init`; restore it, confirm it does not. A plain reset with no erase in flight
+is harmless, so this costs nothing but a flash. Until it runs, this item is a
+change that compiles.
 
-`radio_devices_docs/open_hub/arch/keystore.md`, `bench/runs/2026-08-23-3/`.
+The first `timing` after a flash also gives the number the budget should be
+tightened against; 3000 ms is a declaration awaiting its first measurement.
 
+`../radio_devices_docs/open_hub/arch/dual-core.md` § the wait between step 3 and
+step 4, § the budget is declared.
 ### 68. Six devices share one uplink slot on flash — `blocking` `defect`
 
 Exposed 2026-08-23 by fixing the roster cache, and it was there the whole time.

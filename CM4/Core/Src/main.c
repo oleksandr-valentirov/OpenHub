@@ -28,6 +28,7 @@
 #include "rfm69_registers.h"
 #include "hsem_table.h"
 #include "timebase.h"
+#include "bootwait.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -143,7 +144,9 @@ int main(void)
   MX_IWDG2_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
-  while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {}  /* wait for dependent HW init */
+  /* Refreshes IWDG2: CM7 releases this after lwIP, past the watchdog period.
+   * radio_devices_docs/open_hub/arch/dual-core.md */
+  bootwait_for_cm7(&hiwdg2);
   calib_init();   /* before RFM_Init: the grid must start already corrected */
   if(RFM_Init(1, 1))
     BSP_LED_On(LED_RED);

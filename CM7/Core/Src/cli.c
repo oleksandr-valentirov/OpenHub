@@ -18,6 +18,7 @@
 #include "build_id.h"
 #include "networking.h"
 #include "hsem_table.h"
+#include "hub_boot.h"
 #include "shared_memory.h"
 #include "ipc.h"
 #include "keystore.h"
@@ -412,6 +413,12 @@ static int cmd_timing(cli_data_t *cli, int argc, char **argv) {
 
     /* The two cores are flashed separately and can disagree. */
     cli_out(cli, "build CM4 %.*s\r\n", (int)sizeof(t.build), t.build);
+    /* CM4 arms IWDG2 before this wait, so a long one used to reset the system.
+     * radio_devices_docs/open_hub/arch/dual-core.md */
+    cli_out(cli, "boot: CM4 waited %lu ms on CM7, budget %u%s\r\n",
+            (unsigned long)t.boot_wait_ms, (unsigned)HUB_CM7_BOOT_BUDGET_MS,
+            (t.boot_wait_ms > HUB_CM7_BOOT_BUDGET_MS)
+                ? "  <- OVER, CM7's boot has grown past what is declared" : "");
     cli_out(cli, "clock %+ld ppm vs nominal, grid steps %lu ticks\r\n",
             (long)t.calib_ppm, (unsigned long)t.period_tk);
     cli_out(cli, "calib: %lu windows, %lu rejected%s\r\n",
