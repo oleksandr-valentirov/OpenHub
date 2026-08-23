@@ -946,9 +946,34 @@ window, reads RX in **30 of 30** windows and in all 7 that carried an invitation
 Mutation-proven: built against `RFM69_MODE_SLEEP` the same counter reads 30 of 30
 the other way. So "the window never opened" is refuted, not merely unobserved.
 
-The loss is clustered rather than per-frame — trials 3, 4 and 5 lost nothing and
-trial 6 lost everything — and a per-trial state and a per-frame coin are different
-mechanisms. Separating them is what the next batch is for.
+Thirty-six further trials on 2026-08-23, in two pre-registered arms:
+
+| | requests radiated | registered | enrolments |
+|---|---|---|---|
+| A — as built | 69 | **34** | 6 of 20 |
+| B — the join window's RSSI sampler suppressed | 15 | **7** | 4 of 6 |
+
+**p = 0.54.** The sampler was the leading hypothesis and it is dead: the hub
+triggers `RssiStart` on every superloop pass and spends 500 us of each ~630 us
+pass timing out, so the part is inside a manual measurement about 80% of the time
+and a 1.28 ms preamble cannot avoid one. Removing it changed nothing. The AFC
+spread, pre-registered as the second measure, did not narrow either.
+
+Arm B is six trials and not the ten pre-registered, because item 66 stopped the
+store mid-batch. Its four remaining trials are void and are not counted.
+
+**What the arms did not kill is the carrier.** `device afc` over each arm:
+
+| arm | frames | min | max | last |
+|---|---|---|---|---|
+| A | 48 | -12 330 | **19 287** | 13 061 |
+| B | 15 | -10 132 | **17 089** | 8 666 |
+
+`RADIO_CARRIER_ERR_HZ` is **12 000** and both arms exceed it — in the frames that
+*arrived*. The lost ones are not in that sample, so it bounds nothing on its own,
+but the allowance is demonstrably being spent. The untried arm is
+`RADIO_RX_BW_HUB_HZ`, whose next encodable step is 166.7 kHz for 0.97 dB of noise
+bandwidth against roughly 50 dB of margin.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
@@ -986,3 +1011,44 @@ A negative return for the local failure would separate them; `-1` is already
 "CM4 did not answer".
 
 `../radio_devices_docs/open_hub/arch/ipc.md`.
+
+### 66. The device store stops accepting writes and cannot say why — `blocking` `defect`
+
+`device add` began returning `not enrolled: flash write failed` partway through a
+batch on 2026-08-23 and has not accepted a write since, across a reset and a
+reflash of both cores. `device list` reads:
+
+```
+1 enrolled, flash: 21 writes, 5 errors, 1736 slots left
+last flash error 0x00000000
+132 slot(s) hold records of an older format and are skipped
+```
+
+**It is not exhaustion.** 1736 of 2048 slots are free. Five writes of twenty-one
+failed, so it is intermittent rather than a wall, and the failures survive a
+power cycle because the state is in flash.
+
+**`last flash error 0x00000000` is the second defect and the one that blocks
+diagnosis.** The store reports an error and then reports its code as zero, so
+"which HAL error" is unanswerable from the console. A code that reads zero for a
+failure is indistinguishable from no failure ever recorded, which is the class
+this project has already been bitten by.
+
+The 132 old-format slots are expected — the store steps over them by design and
+they cost a slot each — but they have never been seen beside a write failure and
+they are the only unusual thing in the picture.
+
+**Recovery is not free and needs a decision.** This store is in bank 1, sectors 6
+and 7, and never erases anything: `keystore.md` is explicit that a full store is
+not recoverable by reboot, unlike CM4's. The only documented repair is
+`STM32_Programmer_CLI -c port=SWD sn=<probe> mode=UR -e 6 7`.
+
+**That erases the hub's own long-term X25519 key with it.** `ks_hub_key_get` and
+`ks_hub_key_set` keep it in this same log, so the repair gives the hub a **new
+identity**: every device that ever paired with it must re-enrol, and the public
+key the invitations carry changes. On a bench with nothing paired that is cheap,
+and it is not cheap anywhere else.
+
+Enrolment cannot be measured at all until this is cleared, so it blocks 63 and 60.
+
+`../radio_devices_docs/open_hub/arch/keystore.md`.
