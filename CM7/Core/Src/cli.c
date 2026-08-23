@@ -1409,7 +1409,7 @@ static int cmd_device_synctime(cli_data_t *cli) {
     return 0;
 }
 
-/* The 119 bytes the last exchange's confirmations were taken over.
+/* The bytes the last exchange's confirmations were taken over.
  * radio_devices_docs/radio/pairing.md */
 static int cmd_device_transcript(cli_data_t *cli) {
     uint32_t dev_id = 0, sf = 0;
@@ -1426,23 +1426,31 @@ static int cmd_device_transcript(cli_data_t *cli) {
      * radio_devices_docs/open_hub/cli.md */
     cli_out(cli, "superframe fed in: %lu\r\n", (unsigned long)sf);
 
-    static const struct { const char *name; uint8_t off, len; } f[] = {
-        { "hub_id    ",  0,  4 }, { "dev_id    ",  4,  4 },
-        { "superframe",  8,  4 }, { "dev_nonce ", 12,  8 },
-        { "hub_pub   ", 20, 33 }, { "eph_pub   ", 53, 33 },
-        { "dev_pub   ", 86, 33 },
+    /* Walked, never addressed: three literal offsets outlived the curve. ADR-0025 */
+    static const struct { const char *name; uint8_t len; } f[] = {
+        { "hub_id    ", 4 }, { "dev_id    ", 4 },
+        { "superframe", 4 }, { "dev_nonce ", 8 },
+        { "hub_pub   ", (uint8_t)CRYPTO_POINT_LEN },
+        { "eph_pub   ", (uint8_t)CRYPTO_POINT_LEN },
+        { "dev_pub   ", (uint8_t)CRYPTO_POINT_LEN },
     };
+    uint32_t off = 0;
+
     for (unsigned i = 0; i < sizeof(f) / sizeof(f[0]); i++) {
         cli_out(cli, "  %s ", f[i].name);
         for (uint8_t b = 0; b < f[i].len; b++)
-            cli_out(cli, "%02x", t[f[i].off + b]);
+            cli_out(cli, "%02x", t[off + b]);
         cli_out(cli, "\r\n");
+        off += f[i].len;
     }
+    /* The fields must cover the buffer exactly, or one of them names nothing. */
+    _Static_assert(4u + 4u + 4u + 8u + 3u * CRYPTO_POINT_LEN == CRYPTO_TRANSCRIPT_LEN,
+                   "the transcript's fields do not add up to the transcript");
 
-    cli_out(cli, "flat 119:\r\n");
-    for (int b = 0; b < 119; b++) {
+    cli_out(cli, "flat %u:\r\n", (unsigned)CRYPTO_TRANSCRIPT_LEN);
+    for (uint32_t b = 0; b < CRYPTO_TRANSCRIPT_LEN; b++) {
         cli_out(cli, "%02x", t[b]);
-        if ((b % 32) == 31) cli_out(cli, "\r\n");
+        if ((b % 32u) == 31u) cli_out(cli, "\r\n");
     }
     cli_out(cli, "\r\n");
     return 0;

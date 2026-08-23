@@ -69,7 +69,7 @@ uint8_t ks_init(void);
 /**
  * @brief Enrols a device at the lowest free slot, persisting before any window opens.
  * @param dev_id    the device being enrolled
- * @param pubkey    its 33-byte compressed SEC1 point
+ * @param pubkey    its 32-byte X25519 u-coordinate, little-endian
  * @param slot_out  receives the slot assigned; no operator ever picks one
  * @retval  0  written to flash
  * @retval !=0 the store refused it; no window may be opened

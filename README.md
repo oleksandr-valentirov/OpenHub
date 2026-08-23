@@ -54,7 +54,7 @@ Type <code>?</code> for the command list.
         </tr>
         <tr>
             <td>CM7/crypto/crypto.c</td>
-            <td>P-256, HKDF and AES-GCM over mbedTLS, plus the self-tests</td>
+            <td>X25519, HKDF and AES-GCM over mbedTLS, plus the self-tests</td>
         </tr>
         <tr>
             <td>CM7/Core/Src/keystore.c</td>

@@ -3,10 +3,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* For the point width, which is the wire struct's and not a literal here. */
+#include "radio_protocol.h"
+
 /**
  * @file crypto.h
  * @brief Asymmetric and key-derivation crypto, on CM7 where the curve runs. ADR-0011
  */
+
+/* Every point in the transcript, from the wire struct: 33 outlived the curve once.
+ * radio_devices_docs/radio/decisions/0025-x25519-replaces-p256.md */
+#define CRYPTO_POINT_LEN   ((uint32_t)sizeof(((radio_pair_req_t *)0)->pubkey))
+
+/** @brief hub_id | dev_id | superframe | dev_nonce, big-endian throughout. */
+#define CRYPTO_SALT_LEN    (4u + 4u + 4u + 8u)
+
+/** @brief The salt, then the hub's static, the hub's ephemeral and the device's. */
+#define CRYPTO_TRANSCRIPT_LEN  (CRYPTO_SALT_LEN + 3u * CRYPTO_POINT_LEN)
 
 typedef enum {
     CRYPTO_TEST_DRBG = 0,
@@ -46,18 +59,18 @@ int crypto_init(void);
 int crypto_random(void *buf, size_t len);
 
 /**
- * @brief Generates a P-256 keypair.
+ * @brief Generates an X25519 keypair; the point is a u-coordinate, RFC 7748.
  * @param priv  receives the scalar, zeroed on failure
- * @param pub   receives the compressed point, also zeroed on failure
+ * @param pub   receives the u-coordinate, also zeroed on failure
  * @retval  0  generated
  * @retval !=0 an mbedTLS error, and neither output is half-written
  */
 int crypto_x25519_keygen(uint8_t priv[32], uint8_t pub[32]);
 
 /**
- * @brief Recovers the compressed public key from a stored private one, ~167 ms.
+ * @brief Recovers the public u-coordinate from a stored private one, ~167 ms.
  * @param priv  the stored scalar
- * @param pub   receives the compressed point
+ * @param pub   receives the u-coordinate
  * @retval  0  recovered
  * @retval !=0 an mbedTLS error
  *
@@ -88,21 +101,21 @@ typedef struct crypto_pair_out {
     uint8_t key_session[16];  /**< seals PAIR_ACCEPT and every uplink report */
     uint8_t confirm_hub[16];  /**< goes out in PAIR_RSP */
     uint8_t confirm_dev[16];  /**< what PAIR_CONF must contain */
-    uint8_t transcript[116];    /**< the bytes the confirmations were taken over */
+    uint8_t transcript[CRYPTO_TRANSCRIPT_LEN]; /**< what the confirmations were taken over */
 } crypto_pair_out_t;
 
 /**
- * @brief One pairing's arithmetic, ~330 ms, with dev_pub curve-checked first.
+ * @brief One pairing's arithmetic, ~330 ms, with dev_pub shape-checked first.
  * @param hub_priv        this hub's scalar
- * @param hub_pub         its compressed point, bound into the transcript
- * @param dev_pub         the device's, refused unless it is on the curve
+ * @param hub_pub         its u-coordinate, bound into the transcript
+ * @param dev_pub         the device's; any 32 bytes is a u-coordinate, RFC 7748
  * @param hub_id          bound into the salt, and byte order differs from the wire
  * @param dev_id          the enrolled device
  * @param req_superframe  the request's own field, not the live counter
  * @param dev_nonce       the device's contribution to freshness
  * @param out             receives the session key, both confirmations and the transcript
  * @retval  0  every output is filled
- * @retval !=0 an mbedTLS error, or a point that is not on the curve
+ * @retval !=0 an mbedTLS error, or the all-zero secret a low-order point gives
  *
  * radio_devices_docs/open_hub/security/self-tests.md
  */
@@ -119,17 +132,6 @@ int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
  */
 const char *crypto_test_name(crypto_test_t t);
 
-/**
- * @brief MACs one invitation header under the key, run once per retry.
- * @param k_init   the enrolment secret's MAC key; unused under mode OPEN
- * @param hdr      the header bytes as they go on the wire
- * @param hdr_len  their length
- * @param mac      receives the truncated HMAC-SHA256
- * @retval  0  produced
- * @retval !=0 an mbedTLS error
- */
-int crypto_pair_init_mac(const uint8_t k_init[32], const uint8_t *hdr,
-                         size_t hdr_len, uint8_t mac[12]);
 
 /**
  * @brief Runs one self-test.
@@ -152,8 +154,8 @@ int crypto_run_test(crypto_test_t t);
  * @retval  0  all four passed
  * @retval !=0 the first failure's code; the test is named by crypto_selftest_fast_rc
  *
- * The seven P-256 tests are not here: they cost 3.3 s together and would double
- * the window in which a paired device misses beacons after a hub reset.
+ * The slow tests are not here: they cost seconds together and would double the
+ * window in which a paired device misses beacons after a hub reset.
  * radio_devices_docs/open_hub/security/self-tests.md
  */
 int crypto_selftest_fast(void);

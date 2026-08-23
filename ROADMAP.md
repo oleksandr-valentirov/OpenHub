@@ -868,3 +868,39 @@ Capture and decode: they were deleted with the run; regenerate with
 `capture.py -f 866.5e6 -s 2.4e6 -t 80 -g 30` while a window is open.
 
 `../radio_devices_docs/radio/pairing.md` § the budget is a real margin.
+
+### 61. Enrolment mode SECRET has no MAC primitive any more — `debt`
+
+`crypto_pair_init_mac` was HMAC-SHA256/96 over the invitation's cleartext, keyed
+by a K_init that `crypto_pair_init_key` derived from Z1. ADR-0024 replaced that
+with mode OPEN and an all-zero MAC, and the keying half went with it. The MAC
+half stayed: declared, defined, **called by nothing and covered by no test**, with
+a comment still citing ADR-0021. It was removed on 2026-08-23.
+
+`RADIO_ENROL_MODE_SECRET` is still reserved in the protocol header. Building it
+needs a MAC keyed by a **provisioned** secret, which is a different key from the
+one the deleted function took, so this is a note about what is owed rather than
+about a function to restore.
+
+Half a mechanism is worse than none: the surviving half took a 32-byte key with
+no derivation left to produce it, and the next reader would have keyed it with
+whatever was to hand.
+
+`../radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md`.
+
+### 62. The frame cipher's self-test is unreadable exactly when it matters — `debt`
+
+`aead_selftest` is reported by one line inside `devices`, printed **only when it
+is nonzero**, and placed after the per-device list. With eighteen records enrolled
+the CLI's response buffer truncated the output four lines earlier, so the result
+was not absent — it was unreachable, and silence was indistinguishable from a
+pass, from a truncation and from a command that never ran.
+
+Found on 2026-08-23 while confirming the self-test still passed after it was
+repointed from pair_v2's vectors to pair_v4's. Emptying the keystore made it
+readable, which is the wrong way round: a keystore with devices in it is the
+normal case.
+
+It wants its own line, printed pass or fail, ahead of anything unbounded.
+
+`../radio_devices_docs/open_hub/security/self-tests.md`.

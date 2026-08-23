@@ -68,7 +68,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for pairTask. Its own stack because a P-256 scalar
+/* Definitions for pairTask. Its own stack because an X25519 scalar
    multiplication needs several kilobytes and defaultTask has 2 KB. */
 osThreadId_t pairTaskHandle;
 uint32_t pairTaskBuffer[ 3072 ];

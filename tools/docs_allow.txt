@@ -61,3 +61,6 @@ radio/phy.md:link_v4  # three correct historical citations: the pre-v4 wire, and
 radio/decisions/0022-boot-epoch-in-the-nonce.md:store_reserve_counter  # named as the scheme ADR-0023 removed
 radio/decisions/0023-the-hub-supplies-the-transmit-floor.md:store_reserve_counter  # named as what this record deletes
 radio/decisions/0022-boot-epoch-in-the-nonce.md:reserve_extend  # named as the discarded lower bound ADR-0023 fixed
+open_hub/security/self-tests.md:crypto_pair_init_key  # the page names the function ADR-0024 removed with its design, in the past tense
+open_hub/security/self-tests.md:crypto_pair_init_mac  # same passage: named as what outlived the design uncalled and was removed 2026-08-23
+radio/decisions/0025-x25519-replaces-p256.md:crypto_p256_decompress  # an ADR must be able to name the function it replaced

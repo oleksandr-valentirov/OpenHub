@@ -246,21 +246,6 @@ done:
     return rc;
 }
 
-/* HMAC-SHA256 truncated to 96 bits, over the frame's cleartext. ADR-0021 */
-int crypto_pair_init_mac(const uint8_t k_init[32], const uint8_t *hdr,
-                         size_t hdr_len, uint8_t mac[12]) {
-    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    uint8_t full[32];
-    int rc;
-
-    memset(mac, 0, 12);
-    rc = mbedtls_md_hmac(md, k_init, 32, hdr, hdr_len, full);
-    if (rc == 0)
-        memcpy(mac, full, 12);
-    mbedtls_platform_zeroize(full, sizeof(full));
-    return rc;
-}
-
 /* The ephemeral is supplied rather than drawn, so a self-test can pin only it.
  * radio_devices_docs/open_hub/security/self-tests.md */
 static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
@@ -772,8 +757,8 @@ done:
     return rc;
 }
 
-/* Can this build read a compressed SEC1 point? It decides the wire format.
- * ADR-0018, radio_devices_docs/open_hub/security/self-tests.md */
+/* What this build refuses, now that no point can be off the curve. ADR-0025
+ * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_low_order(void) {
     uint8_t z[32];
     uint8_t pub[32];

@@ -9,7 +9,9 @@
 #include "main.h"
 #include "aead.h"
 #include "radio_protocol.h"
-#include "pair_v2.h"
+/* The live set: a self-test pinned to a retired one stops moving with the wire.
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
+#include "pair_v4.h"
 #include "link_v5.h"
 
 extern CRYP_HandleTypeDef hcryp;
@@ -220,7 +222,13 @@ int aead_selftest(void) {
     _Static_assert(LINK_VECTORS_VERSION == RADIO_LINK_VERSION,
                    "the link vectors are not the wire this build speaks");
 
-    /* pair_v2's frames stay: they check GCM, not the wire this build speaks. */
+    /* pair_v4's frames now, so the same seal checks GCM and the live layout at once.
+     * radio_devices_docs/radio/crypto/wire-crypto.md */
+    _Static_assert(sizeof(PV_FRAME_ACCEPT) == sizeof(radio_pair_accept_t),
+                   "the accept vector is not the frame this build compiles");
+    _Static_assert(sizeof(PV_ACCEPT_AAD) == RADIO_PAIR_ACCEPT_AAD_LEN,
+                   "the accept vector's AAD is not the header this build pins");
+
     _Static_assert(sizeof(LV_UPLINK_PLAIN) == sizeof(radio_uplink_report_t),
                    "the uplink vector is not the report this build compiles");
     _Static_assert(sizeof(LV_DOWNLINK_PLAIN) == sizeof(radio_downlink_cmd_t),
