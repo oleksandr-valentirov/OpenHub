@@ -547,8 +547,12 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
         if (!arg_u32(body, len, 0x8000u, &u32v) || u32v == 0u)
             return OHT_RES_BAD_ARGS;
         (void)arg_u32(body, len, 0x8002u, &window);
-        if (ks_find(u32v) == NULL)
-            return OHT_RES_NO_SUCH_DEVICE;
+        {
+            const cfg_device_t *have = cfg_find(u32v);
+
+            if (have == NULL || have->state == CFG_DEV_FREE)
+                return OHT_RES_NO_SUCH_DEVICE;
+        }
         pairing_arm_init(u32v, window);
         return OHT_RES_OK;
     }

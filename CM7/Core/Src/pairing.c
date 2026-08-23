@@ -28,6 +28,14 @@
 
 #define PAIR_POLL_MS  20u
 
+/* A record with no key yet holds zeros; the store answers no such question.
+ * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
+static int has_pubkey(const cfg_device_t *rec) {
+    static const uint8_t zero[CFG_PUBKEY_BYTES];
+
+    return memcmp(rec->pubkey, zero, sizeof(zero)) != 0;
+}
+
 /* Long enough for two scalar multiplications, short enough to free the slot. */
 #define PAIR_PENDING_MS  12000u
 
@@ -87,7 +95,7 @@ static void drop_pending(void) {
 static void serve_pair_req(const ipc_msg_t *m) {
     ipc_pair_req_evt_t e;
     ipc_pair_rsp_evt_t r;
-    const ks_record_t *rec;
+    const cfg_device_t *rec;
     uint8_t hub_priv[32];
     uint8_t fp[32];
     uint8_t status = IPC_ST_BAD_ARG;
@@ -101,8 +109,8 @@ static void serve_pair_req(const ipc_msg_t *m) {
 
     /* Enrolment is what authenticates this exchange.
      * radio_devices_docs/open_hub/radio/pairing.md */
-    rec = ks_find(e.dev_id);
-    if (rec == NULL || rec->state == KS_STATE_DELETED) {
+    rec = cfg_find(e.dev_id);
+    if (rec == NULL || rec->state == CFG_DEV_FREE) {
         stats.not_enrolled++;
         goto refuse;
     }
@@ -113,7 +121,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
         goto refuse;
     }
     /* A nonce this device has already used: every stuck-RNG mode, and replay. */
-    if (rec->state == KS_STATE_PAIRED &&
+    if (rec->state == CFG_DEV_PAIRED &&
         memcmp(rec->last_nonce, e.dev_nonce, 8) == 0) {
         stats.repeat_nonce++;
         goto refuse;
@@ -121,7 +129,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
 
     /* A record with no key adopts the one on the wire; one with a key pins it.
      * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
-    if (ks_has_pubkey(rec) && !ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
+    if (has_pubkey(rec) && !ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
         stats.bad_fingerprint++;
         /* The fingerprint of what arrived, which is what the operator can compare. */
         if (mbedtls_sha256(e.pubkey, sizeof(e.pubkey), fp, 0) == 0)
@@ -173,7 +181,7 @@ refuse:
 static void serve_pair_conf(const ipc_msg_t *m) {
     ipc_pair_conf_evt_t e;
     ipc_device_keys_t k;
-    const ks_record_t *rec;
+    const cfg_device_t *rec;
     uint8_t status = IPC_ST_BAD_ARG;
 
     stats.confs++;
@@ -195,8 +203,8 @@ static void serve_pair_conf(const ipc_msg_t *m) {
         goto refuse;
     }
 
-    rec = ks_find(e.dev_id);
-    if (rec == NULL) {
+    rec = cfg_find(e.dev_id);
+    if (rec == NULL || rec->state == CFG_DEV_FREE) {
         stats.not_enrolled++;
         goto refuse;
     }
@@ -241,7 +249,7 @@ static void install_paired_devices(void) {
     uint8_t net_key[16];
     uint32_t i;
 
-    if (ks_count() == 0u)
+    if (cfg_live_devices() == 0u)
         return;
     /* Only if something is paired: creating one is a flash write. */
     if (hub_net_key_get(net_key) != 0) {
@@ -249,11 +257,11 @@ static void install_paired_devices(void) {
         return;
     }
 
-    for (i = 0; i < ks_count(); i++) {
-        const ks_record_t *r = ks_at(i);
+    for (i = 0; i < CFG_DEVICE_MAX; i++) {
+        const cfg_device_t *r = cfg_at(i);
         ipc_device_keys_t k;
 
-        if (r == NULL || r->state != KS_STATE_PAIRED)
+        if (r == NULL || r->state != CFG_DEV_PAIRED)
             continue;
 
         memset(&k, 0, sizeof(k));
@@ -319,14 +327,14 @@ void pairing_disarm_init(void) {
 /* Once per window, never per frame, and z1_derivations measures the claim.
  * radio_devices_docs/open_hub/radio/pairing.md */
 static void pair_init_derive(void) {
-    const ks_record_t *rec;
+    const cfg_device_t *rec;
     uint8_t hub_priv[32];
 
     pi.pending_arm = 0;
     pi.armed = 0;
 
-    rec = ks_find(pi.pending_dev);
-    if (rec == NULL || rec->state == KS_STATE_DELETED) {
+    rec = cfg_find(pi.pending_dev);
+    if (rec == NULL || rec->state == CFG_DEV_FREE) {
         pi_stats.derive_failed++;
         return;
     }

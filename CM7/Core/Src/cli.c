@@ -1302,15 +1302,6 @@ static int cmd_device_store(cli_data_t *cli) {
     return 0;
 }
 
-static const char *ks_state_name(uint8_t st) {
-    switch (st) {
-    case KS_STATE_ENROLLED: return "enrolled";
-    case KS_STATE_PAIRED:   return "paired";
-    case KS_STATE_DELETED:  return "removed";
-    default:                return "?";
-    }
-}
-
 static const char *cfg_state_name(uint8_t st) {
     switch (st) {
     case CFG_DEV_ENROLLED:  return "enrolled";
@@ -1376,9 +1367,9 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
     /* Says what re-enrolling would destroy; 'device window' is the reopen.
      * radio_devices_docs/open_hub/cli.md */
     {
-        const ks_record_t *have = ks_find(dev_id);
+        const cfg_device_t *have = cfg_find(dev_id);
 
-        if (have != NULL && have->state == KS_STATE_PAIRED) {
+        if (have != NULL && have->state == CFG_DEV_PAIRED) {
             cli_out(cli, "\r\nError: 0x%08lx is paired in slot %u. 'device add'"
                          " would discard its session key.\r\n"
                          "  'device window %08lx' reopens the pairing window\r\n"
@@ -1389,42 +1380,9 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         }
     }
 
-    /* Before the attempt: a full log is standing, not transient.
-     * radio_devices_docs/open_hub/arch/keystore.md */
-    if (ks_exhausted() || ks_slots_left() == 0u) {
-        cli_out(cli, "\r\nError: the key store is full - %lu slot(s) left,"
-                     " %lu hold a retired format.\r\n"
-                     "  It is an append-only log and never erases, so nothing"
-                     " here reclaims them:\r\n"
-                     "  'device remove' appends a tombstone and costs one more."
-                     " Recovery is an\r\n"
-                     "  external erase of sectors 6 and 7 - never from CM7.\r\n",
-                (unsigned long)ks_slots_left(), (unsigned long)ks_stale_format());
-        return 0;
-    }
-
-    /* Before the attempt: a write that lands and is refused spends a slot.
-     * radio_devices_docs/open_hub/arch/keystore.md */
-    if (ks_find(dev_id) == NULL && ks_cache_full()) {
-        cli_out(cli, "\r\nError: the key store holds %lu distinct device ids,"
-                     " which is all the\r\n"
-                     "  cache fits - one entry per id ever written, not per"
-                     " device now enrolled.\r\n"
-                     "  Flash would accept the record; nothing could then serve"
-                     " it, so it is\r\n"
-                     "  refused here rather than written and lost. An id"
-                     " already held still enrols.\r\n"
-                     "  Recovery is an external erase of sectors 6 and 7, which"
-                     " also drops this\r\n"
-                     "  hub's long-term key - never from CM7.\r\n",
-                (unsigned long)ks_cached());
-        return 0;
-    }
-
     {
         cfgflash_err_t e = cfg_enrol(dev_id, &slot);
 
-        rc = (e == CFGF_OK) ? 0 : -1;
         if (e != CFGF_OK) {
             /* The reason the store gave, not one word for every refusal.
              * radio_devices_docs/open_hub/arch/config-store.md */
@@ -1434,18 +1392,6 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
                                             : cfgflash_err_str(e));
             return 0;
         }
-    }
-    if (rc != 0) {
-        const char *why = "unreachable";
-
-        cli_out(cli, "\r\nError: not enrolled: %s\r\n", why);
-        if (rc == -4)
-            cli_out(cli, "  HAL 0x%08lx, %lu of %lu errors this boot were flash;"
-                         " 'device list' has the rest\r\n",
-                    (unsigned long)ks_last_flash_error(),
-                    (unsigned long)ks_flash_errors(),
-                    (unsigned long)ks_errors());
-        return 0;
     }
 
     rc = rfm_request(IPC_REQ_ADD_DEVICE, 0, (const uint8_t *)&dev_id, sizeof(dev_id));
@@ -1461,11 +1407,6 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nenrolled 0x%08lx in slot %u, pairing window open\r\n",
                 (unsigned long)dev_id, (unsigned)slot);
     }
-    /* Warned while there is still room to act, not when the next add refuses. */
-    if (ks_slots_left() < KS_SLOTS_LOW)
-        cli_out(cli, "warning: %lu key-store slot(s) left, under the %u a full"
-                     " roster needs. The log never erases.\r\n",
-                (unsigned long)ks_slots_left(), (unsigned)KS_SLOTS_LOW);
     return 0;
 }
 
@@ -1939,14 +1880,14 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
     }
     if (strcmp(argv[1], "window") == 0 && argc == 3) {
         uint32_t dev_id = 0;
-        const ks_record_t *have;
+        const cfg_device_t *have;
 
         if (parse_hex(argv[2], &dev_id)) {
             cli_out(cli, "\r\nError: device id must be hex\r\n");
             return 0;
         }
-        have = ks_find(dev_id);
-        if (have == NULL || have->state == KS_STATE_DELETED) {
+        have = cfg_find(dev_id);
+        if (have == NULL || have->state == CFG_DEV_FREE) {
             cli_out(cli, "\r\nError: 0x%08lx is not enrolled\r\n",
                     (unsigned long)dev_id);
             return 0;
