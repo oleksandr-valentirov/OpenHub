@@ -484,46 +484,6 @@ refresh load-bearing rather than dormant.
 
 `../radio_devices_docs/open_hub/arch/dual-core.md` § the wait between step 3 and
 step 4, § what the two arms measured. `bench/journal/2026-08-23-architect.md`.
-### 68. Six devices share one uplink slot on flash — `blocking` `defect`
-
-Exposed 2026-08-23 by fixing the roster cache, and it was there the whole time.
-
-`lowest_free_slot()` picks the lowest slot no **cached** live device holds. While
-the cache was full of tombstones the live devices were not in it, so every
-enrolment saw one device at slot 0 and answered **slot 1**. Six of them did:
-
-```
-b7e33ff6    0 enrolled
-3cfde754    1 enrolled
-527b51e7    1 enrolled
-48e4c4fb    1 enrolled
-22cdec51    1 enrolled      <- node A's identity
-a18892ec    1 enrolled
-3c7a11d9    1 enrolled
-```
-
-**The slot is written into the record**, so this is on flash and permanent for
-those records. It is not a display artefact.
-
-**Two things were wrong at once and only one of them is fixed.** `device list`
-reported `1 enrolled` while the store held seven, because the cache had no room
-for them. That cache defect is fixed — `scan()` no longer holds an entry for a
-device whose newest record is a removal, and reads the older sector first so scan
-order is seq order. The colliding slots are the damage that happened while it was
-open, and they are on flash.
-
-**It matters to CM4, not only to tidiness.** `install_device()` does
-`d = &devices[k->slot]`, so all six map to `devices[1]` and overwrite one another.
-Any pairing that lands on one of them serves a roster entry another device also
-believes is its own.
-
-None of the six carries a key — all read `(no key yet)` — so nothing is paired and
-nothing is lost by removing them. The repair is `device remove` on all seven and
-`device add` for whichever are wanted, which now assigns slots against a cache
-that holds the whole roster. It costs one flash slot per removal out of 1731.
-
-`../radio_devices_docs/open_hub/arch/keystore.md`.
-
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
 Found 2026-08-21 by the device session dropping its transmit power from +14 to
@@ -582,6 +542,27 @@ while the run collects all three (236 µs) — **power has to be computed on the
 population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
+
+### 70. The boot erase cannot satisfy both halves of ADR-0027 as written — `blocking` `debt`
+
+§8 puts the boot erase **before `osKernelStart()`**; §7 says it runs only **after
+`HSEM_ID_0` is released**; CM7 releases that semaphore in `StartDefaultTask`, after
+the scheduler. **Both cannot hold**, and the specification said both.
+
+Nothing had run the sequence, which is why nobody noticed: a wrap needs 576
+changes, so the first store to schedule a boot erase does not exist yet.
+
+`cfgflash_erase()` refuses in both of the states the question is about -
+`CFGF_ERR_CM4_HELD` while the semaphore is taken, `CFGF_ERR_SCHEDULER` while the
+scheduler runs - so this cannot be resolved by accident. Three options are costed
+on the page; the cheapest changes no boot order at all and erases the spare lazily
+at the first wrap, which is what CM4's `kv_init()` already does.
+
+**It blocks steps 4 and 5 of the migration**, which are the ones that erase the old
+log and write the first snapshot. Everything before them is done: the identity is
+in sector 5 and witnessed.
+
+`../radio_devices_docs/open_hub/arch/config-store.md` § 8a.
 
 ---
 
@@ -1125,7 +1106,7 @@ the ring's arithmetic are written and tested on the host — `Common/inc/cfgstor
 that needs the board: the ITCM erase, programming, the boot and write wiring, the
 console, and the migration.
 
-Closing this closes REQ-N-5, retires the 64-id ceiling behind item 68, and takes
+Closing this closes REQ-N-5, retires the 64-id ceiling on the roster, and takes
 `slots left`, `stale format` and *a removal spends a slot* out of the vocabulary.
 
 `open_hub/arch/config-store.md`, `open_hub/network/telemetry.md`,
