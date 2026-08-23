@@ -126,20 +126,23 @@ task before starting.
 | Skill | Lives in | Use when |
 |---|---|---|
 | `rfm69` | this repo | the radio will not transmit, will not receive, corrupts frames, or you are touching `CM4/rfm69_lib` or the PHY |
+| `config-migration` | this repo | before editing `cfg_config_t`, `cfg_device_t`, `cfg_snapshot_t` or `CFG_VERSION`; before anything that erases or rewrites the store's flash; when two stores must share sectors |
 | `sdr` | `~/.claude/skills` | a radio claim needs evidence from the air rather than from a counter |
 | `cubemx` | `~/.claude/skills` | peripherals, pins, clocks, FreeRTOS tasks or middleware change — or a change is about to be hand-written into a generated file |
 | `verification` | `~/.claude/skills` | adding or reading a check, a self-test, a counter, a test vector or a probe; before quoting a measurement; whenever a first success is imminent |
 | `regression` | `~/.claude/skills` | opening, conducting, aborting or grading a regression run — the protocol, not the checks |
 | `telemetry` | `~/.claude/skills` | reading the hub's live state or commanding it through `openhub-server`, over REST or the websocket, instead of the console |
 
-Keep them current. A new surprise about the radio goes in `rfm69`, a new way a
-green check turned out to be worthless goes in `verification` — not here.
+Keep them current. A new surprise about the radio goes in `rfm69`, a new way the
+configuration store bit back goes in `config-migration`, a new way a green check
+turned out to be worthless goes in `verification` — not here.
 
 **`sdr`, `cubemx`, `verification`, `telemetry` and `regression` are shared with
-the WL55 device session and no longer live in this tree.** Only `rfm69` is still committed here, because the
-RFM69 is the hub's radio and the device has an SX126x. They are loaded by
-name exactly as before; what changed is that an edit to any of them is not a
-commit here. Make the edit in `~/.claude/skills` and **tell the device session**,
+the WL55 device session and no longer live in this tree.** `rfm69` and
+`config-migration` are still committed here, because the RFM69 is the hub's radio
+and the configuration store is the hub's flash — the device has an SX126x and a
+store of its own design. The shared ones are loaded by name exactly as before;
+what changed is that an edit to any of them is not a commit here. Make the edit in `~/.claude/skills` and **tell the device session**,
 so it picks the change up rather than finding it by accident.
 
 They were moved out because both repositories were told to keep them current
