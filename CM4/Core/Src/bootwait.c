@@ -11,6 +11,7 @@
 #include "hub_boot.h"
 
 static uint32_t wait_ms;
+static uint32_t wait_spins;
 
 void bootwait_for_cm7(IWDG_HandleTypeDef *iwdg)
 {
@@ -21,6 +22,8 @@ void bootwait_for_cm7(IWDG_HandleTypeDef *iwdg)
     while (HAL_HSEM_IsSemTaken(HSEM_ID_0)) {
         if (iwdg != NULL)
             HAL_IWDG_Refresh(iwdg);
+        if (wait_spins != 0xFFFFFFFFu)
+            wait_spins++;
     }
 
     wait_ms = HAL_GetTick() - start;
@@ -29,4 +32,9 @@ void bootwait_for_cm7(IWDG_HandleTypeDef *iwdg)
 uint32_t bootwait_ms(void)
 {
     return wait_ms;
+}
+
+uint32_t bootwait_spins(void)
+{
+    return wait_spins;
 }

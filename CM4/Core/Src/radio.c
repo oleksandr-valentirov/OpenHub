@@ -820,6 +820,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         t.calib_rejects = calib_rejects();
         t.calib_age_tk  = calib_age_tk();
         t.boot_wait_ms  = bootwait_ms();
+        t.boot_wait_spins = bootwait_spins();
         memcpy(t.build, BUILD_ID BUILD_SUFFIX, sizeof(BUILD_ID BUILD_SUFFIX));
         t.late_over     = late_over;
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));

@@ -433,45 +433,57 @@ readings that argue against it; it is not restated here.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
-### 67. CM4's wait on CM7 refreshes now; the control has not run — `blocking` `defect`
+### 67. CM4's wait on CM7 refreshes, proven in both directions — `closed 2026-08-23`
 
-**Fixed in code 2026-08-23, unverified on hardware.** `CM4/Core/Src/main.c` armed
-IWDG2 at 512 ms — as short as ~348 ms with the LSI at a tolerance nobody has read
-off the datasheet — and then spun on `HSEM_ID_0` with no refresh in the loop,
-while CM7 releases that semaphore in `StartDefaultTask`, after `osKernelStart()`
-and `MX_LWIP_Init()`.
+`CM4/Core/Src/main.c` armed IWDG2 at 512 ms and then spun on `HSEM_ID_0` with no
+refresh, while CM7 releases that semaphore in `StartDefaultTask`, after
+`osKernelStart()` and `MX_LWIP_Init()`. **This is what bricked the board twice**:
+an erase held before the release outlasts the period, the system resets, the erase
+is cut mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` for
+`ks_init()` to read at every boot. It never presented as a timeout.
 
-**This is what bricked the board twice.** An erase of a bank 1 sector takes 954 ms;
-held before the release it outlasts IWDG2, the system resets, the erase is cut
-mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` — which
-`ks_init()` reads at every subsequent boot, hard-faulting a board with a perfectly
-good image. It never presented as a timeout.
+The wait moved to `CM4/Core/Src/bootwait.c` and refreshes **unconditionally**
+rather than paced off `HAL_GetTick()`, because pacing would make the safety
+property depend on SysTick still running — the same class of fault. The budget is
+declared in `Common/inc/hub_boot.h`, both cores compile it, and `timing` prints
+what CM4 actually waited beside it.
 
-Both halves are built:
+**The first reading was ambiguous and the control had to be built before anything
+could be read.** `boot: CM4 waited 0 ms` means both *CM4 did not wait* and *the
+clock that measures the wait was not running*, and nothing separated them. Adding
+`boot_wait_spins` settled it: **0 ms over 0 passes** — on a software reset CM4
+reaches the wait after CM7 has already released, so **the refresh is dead code on
+this boot path today.** That is why the mutation had to be run against a wait that
+exists rather than against the shipping build, and why the console says so in
+words rather than printing a bare zero.
 
-- The wait moved to `CM4/Core/Src/bootwait.c` and refreshes **unconditionally**
-  rather than paced off `HAL_GetTick()`, because pacing would make the safety
-  property depend on SysTick still running — the same class of fault. The tick
-  measures and nothing else.
-- The budget is declared. `Common/inc/hub_boot.h` carries
-  `HUB_CM7_BOOT_BUDGET_MS`, both cores compile it, `bootwait_ms()` reaches the
-  console through `ipc_timing_t`, and `timing` prints the measurement beside the
-  budget and flags an overrun. How long CM7's boot took was not observable from
-  anywhere before this.
+`HUB_BOOT_HOLD_MS` makes the wait real. Both arms, same CM7 build, same 1500 ms
+hold, only CM4's binary differing by the refresh:
 
-**What is owed is the control, and it is two flashes.** Nothing yet proves the
-refresh does anything: on a fast boot the loop body may run few enough times that
-a build without it would behave identically. Mutation in both directions is the
-check — remove the refresh, confirm the board resets before CM4 reaches
-`RFM_Init`; restore it, confirm it does not. A plain reset with no erase in flight
-is harmless, so this costs nothing but a flash. Until it runs, this item is a
-change that compiles.
+| arm | CM4 | CM7 |
+|---|---|---|
+| refresh present | **waited 1495 ms over 3 179 402 passes**, grid running | `status` answers |
+| refresh removed | **never answers IPC, across three system resets** | `status` answers |
+| refresh restored | **1495 ms over 3 179 323 passes**, grid running | `status` answers |
 
-The first `timing` after a flash also gives the number the budget should be
-tightened against; 3000 ms is a declaration awaiting its first measurement.
+**1495 ms is nearly three times the 512 ms period and the board came up**, so the
+refresh is doing exactly what it exists for. The two present-arm readings agree to
+0.002 %, which is the same measurement rather than two.
+
+**The failure mode is worse than the reset loop this item predicted.** CM4 does not
+come back: it dies at 512 ms, reboots into `HAL_PWREx_EnterSTOPMode` waiting on a
+notification CM7 has already sent once and will not send again, and stays there.
+CM7 stays healthy and answers the console throughout. A live console beside a dead
+radio is precisely how this presented as a hardware fault on a working board.
+
+**What is still owed is not this item's.** The budget stands at 3000 ms with no
+measurement behind it, because the only boot measured never waits. The number to
+tighten it against arrives with the first CM7 boot path long enough to matter, and
+that is ADR-0027's boot erase — 954 ms — which is the first thing that makes this
+refresh load-bearing rather than dormant.
 
 `../radio_devices_docs/open_hub/arch/dual-core.md` § the wait between step 3 and
-step 4, § the budget is declared.
+step 4, § what the two arms measured. `bench/journal/2026-08-23-architect.md`.
 ### 68. Six devices share one uplink slot on flash — `blocking` `defect`
 
 Exposed 2026-08-23 by fixing the roster cache, and it was there the whole time.

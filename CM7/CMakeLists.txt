@@ -152,9 +152,11 @@ endif()
 # Opt-in: it programs and erases sector 3 at boot.
 # radio_devices_docs/open_hub/arch/config-store.md
 set(HUB_ERASE_TEST 0 CACHE STRING "run the bank 1 erase measurement at boot")
+set(HUB_BOOT_HOLD_MS 0 CACHE STRING "hold CM4 on HSEM_ID_0 this long, to exercise its wait")
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     HUB_ERASE_TEST=${HUB_ERASE_TEST}
+    HUB_BOOT_HOLD_MS=${HUB_BOOT_HOLD_MS}
     MBEDTLS_CONFIG_FILE="openhub_mbedtls_config.h")
 
 # Third-party code keeps its own warnings and is optimised even in Debug.

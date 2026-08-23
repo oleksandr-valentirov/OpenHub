@@ -492,6 +492,11 @@ void StartDefaultTask(void *argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
+#if HUB_BOOT_HOLD_MS
+  /* Makes CM4's wait real, so its watchdog refresh can be read in both
+   * directions. radio_devices_docs/open_hub/arch/dual-core.md */
+  osDelay(HUB_BOOT_HOLD_MS);
+#endif
   HAL_HSEM_Release(HSEM_ID_0, 0);
   /* Activate HSEM notification for Cortex-M7 */
   HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));

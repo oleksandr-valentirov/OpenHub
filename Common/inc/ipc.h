@@ -97,6 +97,7 @@ typedef struct ipc_timing {
     uint32_t late_over;      /**< beacons that left later than the cost limit */
     uint32_t calib_age_tk;   /**< ticks since the last accepted window */
     uint32_t boot_wait_ms;   /**< how long this core waited on CM7's boot semaphore */
+    uint32_t boot_wait_spins; /**< passes of that wait; 0 beside 0 ms is a wait that never ran */
     char     build[24];      /**< CM4's own git describe; CM7 has its own */
 } __attribute__((packed)) ipc_timing_t;
 
