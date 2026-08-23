@@ -175,6 +175,23 @@ static uint8_t  join_phase = 0;
 static uint8_t  join_beacon_pending = 0;
 static uint32_t join_rx_deadline = 0;
 static uint32_t join_served_frame = 0xFFFFFFFFu;
+
+/* `sync 0` cannot separate silent air from a receiver that never opened.
+ * radio_devices_docs/radio/pairing.md */
+static uint32_t jp_windows, jp_passes, jp_probes, jp_not_rx;
+static uint32_t jp_inv_probes, jp_inv_not_rx, jp_levels, jp_level_tries;
+static int16_t  jp_inv_peak_x2 = -32768, jp_inv_floor_x2 = 32767;
+static int16_t  jp_idle_peak_x2 = -32768, jp_idle_floor_x2 = 32767;
+static uint8_t  jp_last_op;
+static uint8_t  jp_step;        /* which of the two probes this window has taken */
+
+/* Just before a request's preamble, then inside its payload; both off the
+ * schedule. radio_devices_docs/radio/decisions/0026-one-turn-per-join-region.md */
+#define JP_MODE_US   (RADIO_AIR_START_TO_END_US(RADIO_PAIR_INIT_BYTES) + \
+                      RADIO_PAIR_REQ_LEAD_US)
+_Static_assert(JP_MODE_US < RADIO_TURN_INVITE_US, "the level span must follow the mode probe");
+_Static_assert(RADIO_TURN_INVITE_US < RADIO_JOIN_RX_US, "a probe outside the window measures nothing");
+
 static uint8_t  rx_buffer[RFM69_FIFO_SIZE];
 
 /* Indexed by slot, so an uplink frame's slot byte is the whole lookup. */
@@ -983,6 +1000,27 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         return;
     }
 
+    case IPC_REQ_GET_JOINPROBE: {
+        ipc_join_probe_t j;
+
+        memset(&j, 0, sizeof(j));
+        j.windows    = jp_windows;
+        j.passes     = jp_passes;
+        j.probes     = jp_probes;
+        j.not_rx     = jp_not_rx;
+        j.inv_probes = jp_inv_probes;
+        j.inv_not_rx = jp_inv_not_rx;
+        j.levels     = jp_levels;
+        j.tries      = jp_level_tries;
+        j.inv_peak   = (jp_inv_peak_x2 == -32768) ? 0 : (int8_t)(jp_inv_peak_x2 / 2);
+        j.inv_floor  = (jp_inv_floor_x2 == 32767) ? 0 : (int8_t)(jp_inv_floor_x2 / 2);
+        j.idle_peak  = (jp_idle_peak_x2 == -32768) ? 0 : (int8_t)(jp_idle_peak_x2 / 2);
+        j.idle_floor = (jp_idle_floor_x2 == 32767) ? 0 : (int8_t)(jp_idle_floor_x2 / 2);
+        j.last_op    = jp_last_op;
+        (void)ipc_send_reply(req, IPC_ST_OK, &j, (uint8_t)sizeof(j));
+        return;
+    }
+
     case IPC_REQ_GET_AFC_RAW: {
         ipc_afc_raw_t r;
         uint32_t i, have = (afc_n < IPC_AFC_RING) ? afc_n : IPC_AFC_RING;
@@ -1399,6 +1437,33 @@ static void rx_sample_rssi(void) {
     /* Half-dB below zero, returned negated: stronger is larger. */
     if (x2 > rx_rssi_peak_x2)  rx_rssi_peak_x2  = x2;   /* loudest */
     if (x2 < rx_rssi_floor_x2) rx_rssi_floor_x2 = x2;   /* quietest */
+}
+
+/* Only a level inside a request's payload sits below the sync word.
+ * radio_devices_docs/radio/pairing.md */
+static void join_sample_rssi(void) {
+    uint32_t off_tk = rfm_micros() - superframe_start_tk;
+    int16_t x2 = 0;
+    int16_t *peak, *floor;
+
+    if ((int32_t)(off_tk - (join_offset_tk + timebase_us_to_ticks(JP_MODE_US))) < 0 ||
+        (int32_t)(off_tk - (join_offset_tk +
+                            timebase_us_to_ticks(RADIO_TURN_INVITE_US))) > 0) {
+        rx_sample_rssi();
+        return;
+    }
+    /* Attempts, not successes: a trigger that never completes reads as a quiet band. */
+    jp_level_tries++;
+    if (rfm69_measure_rssi(&radio, RSSI_TIMEOUT_US, &x2) != RFM69_OK)
+        return;
+    rx_rssi_samples++;
+    if (x2 > rx_rssi_peak_x2)  rx_rssi_peak_x2  = x2;
+    if (x2 < rx_rssi_floor_x2) rx_rssi_floor_x2 = x2;
+    peak  = (pi_last_sent_sf == frame_counter) ? &jp_inv_peak_x2  : &jp_idle_peak_x2;
+    floor = (pi_last_sent_sf == frame_counter) ? &jp_inv_floor_x2 : &jp_idle_floor_x2;
+    jp_levels++;
+    if (x2 > *peak)  *peak  = x2;
+    if (x2 < *floor) *floor = x2;
 }
 
 /* Stamps TIM2 on the DIO3 SyncAddressMatch edge.
@@ -2321,7 +2386,7 @@ static void handle_join_frame(void) {
 /* Overlays the uplink tail, and split across superloop passes.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static void join_region_service(void) {
-    uint8_t flags1, flags2;
+    uint8_t flags1 = 0, flags2 = 0;
 
     if (pair_state == RADIO_PAIR_IDLE) {
         if (join_phase) {
@@ -2370,8 +2435,12 @@ static void join_region_service(void) {
               - timebase_us_to_ticks(RADIO_END_GUARD_US)
             : rfm_micros() + timebase_us_to_ticks(RADIO_JOIN_RX_US);
         join_phase = 1;
+        jp_windows++;
+        jp_step = 0;
         return;
     }
+
+    jp_passes++;
 
     if (join_beacon_pending && pair_region_owned())
         join_beacon_pending = 0;        /* the region belongs to the exchange */
@@ -2396,7 +2465,28 @@ static void join_region_service(void) {
             handle_join_frame();
         /* After the frame, never before: a trigger overwrites the arriving level. */
         else if (!(flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH))
-            rx_sample_rssi();
+            join_sample_rssi();
+    }
+
+    /* Read off the part: the driver's shadow cannot show a set_mode that did not
+     * take. radio_devices_docs/radio/pairing.md */
+    if (jp_step == 0u &&
+        timebase_elapsed(superframe_start_tk + join_offset_tk +
+                         timebase_us_to_ticks(JP_MODE_US))) {
+        uint8_t op = 0;
+
+        jp_step = 1;
+        if (rfm69_read_reg(&radio, RFM69_RegOpMode, &op) == RFM69_OK) {
+            uint8_t off = (((op >> 2) & 0x07u) != (uint8_t)RFM69_MODE_RX) ? 1u : 0u;
+
+            jp_last_op = op;
+            jp_probes++;
+            jp_not_rx += off;
+            if (pi_last_sent_sf == frame_counter) {
+                jp_inv_probes++;
+                jp_inv_not_rx += off;
+            }
+        }
     }
 
     if (timebase_elapsed(join_rx_deadline)) {
@@ -2467,6 +2557,19 @@ static void rx_diag_reset(void) {
     rx_rssi_peak_x2 = -32768;
     rx_rssi_floor_x2 = 32767;
     rx_rssi_samples = 0;
+    jp_windows = 0;
+    jp_passes = 0;
+    jp_probes = 0;
+    jp_not_rx = 0;
+    jp_inv_probes = 0;
+    jp_inv_not_rx = 0;
+    jp_levels = 0;
+    jp_level_tries = 0;
+    jp_inv_peak_x2 = -32768;
+    jp_inv_floor_x2 = 32767;
+    jp_idle_peak_x2 = -32768;
+    jp_idle_floor_x2 = 32767;
+    jp_last_op = 0;
     rx_last_len = 0;
     rx_last_type = 0;
     rx_last_rssi = 0;

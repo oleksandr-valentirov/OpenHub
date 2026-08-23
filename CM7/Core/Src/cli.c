@@ -957,6 +957,25 @@ static int cmd_device_pair(cli_data_t *cli) {
                         (unsigned long)d.last_superframe);
         }
     }
+    /* Below every counter above: a window that never opened reads as an empty band.
+     * radio_devices_docs/radio/pairing.md */
+    {
+        ipc_join_probe_t j;
+
+        if (rfm_request(IPC_REQ_GET_JOINPROBE, 0, NULL, 0) == IPC_ST_OK &&
+            rfm_reply.len >= sizeof(j)) {
+            memcpy(&j, rfm_reply.payload, sizeof(j));
+            cli_out(cli, "join probe: %lu windows, %lu passes, RegOpMode %02X,"
+                         " not in RX %lu of %lu (invited %lu of %lu)\r\n",
+                    (unsigned long)j.windows, (unsigned long)j.passes, j.last_op,
+                    (unsigned long)j.not_rx, (unsigned long)j.probes,
+                    (unsigned long)j.inv_not_rx, (unsigned long)j.inv_probes);
+            cli_out(cli, "join probe level where a request is due: invited %d/%d,"
+                         " idle %d/%d, %lu of %lu taken\r\n",
+                    j.inv_peak, j.inv_floor, j.idle_peak, j.idle_floor,
+                    (unsigned long)j.levels, (unsigned long)j.tries);
+        }
+    }
     cli_out(cli, "join regions %lu, beacons %lu, tx err %lu\r\n",
             (unsigned long)p.join_regions, (unsigned long)p.join_beacons,
             (unsigned long)p.join_tx_err);

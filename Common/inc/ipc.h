@@ -55,7 +55,8 @@ enum {
     IPC_REQ_GET_AFC,        /**< how far off centre each received frame arrived */
     IPC_REQ_GET_AFC_RAW,    /**< the same, one entry per frame, for the scatter */
     IPC_REQ_SET_LNA,        /**< pin the front-end gain, or hand it back to AGC */
-    IPC_REQ_GET_EVT_LAT     /**< how long an arrival takes to reach CM7 and back */
+    IPC_REQ_GET_EVT_LAT,    /**< how long an arrival takes to reach CM7 and back */
+    IPC_REQ_GET_JOINPROBE   /**< the receiver's own state where a request is due */
 };
 
 /* Events, CM4 -> CM7: a separate ring for what the radio originates.
@@ -385,6 +386,26 @@ _Static_assert(IPC_AFC_STEPS_TO_HZ(16384) == 1000000,
                "Fstep is FXOSC/2^19, so 16384 steps is exactly one megahertz");
 
 _Static_assert(sizeof(ipc_afc_raw_t) <= IPC_PAYLOAD_MAX, "ipc_afc_raw_t too large");
+
+/* Reply for IPC_REQ_GET_JOINPROBE: whether the receiver was on, and what reached it.
+ * radio_devices_docs/radio/pairing.md */
+typedef struct ipc_join_probe {
+    uint32_t windows;      /**< join windows opened since the pairing window */
+    uint32_t passes;       /**< superloop passes taken inside them */
+    uint32_t probes;       /**< RegOpMode read off the part where a request is due */
+    uint32_t not_rx;       /**< of those, the part was not receiving */
+    uint32_t inv_probes;   /**< the subset whose superframe carried an invitation */
+    uint32_t inv_not_rx;
+    uint32_t levels;       /**< triggered measurements taken inside a request's payload */
+    uint32_t tries;        /**< attempts at them: a trigger that never completes reads quiet */
+    int8_t   inv_peak;     /**< strongest level, invitation superframes */
+    int8_t   inv_floor;
+    int8_t   idle_peak;    /**< the same probe with no invitation out: the control */
+    int8_t   idle_floor;
+    uint8_t  last_op;      /**< RegOpMode as read, never as written */
+    uint8_t  reserved[3];
+} __attribute__((packed)) ipc_join_probe_t;
+_Static_assert(sizeof(ipc_join_probe_t) <= IPC_PAYLOAD_MAX, "ipc_join_probe_t too large");
 
 /* Reply for IPC_REQ_GET_EVT_LAT: both terms on CM4's clock. ROADMAP item 2
  * radio_devices_docs/open_hub/arch/ipc.md */

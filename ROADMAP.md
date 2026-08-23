@@ -910,3 +910,79 @@ normal case.
 It wants its own line, printed pass or fail, ahead of anything unbounded.
 
 `../radio_devices_docs/open_hub/security/self-tests.md`.
+
+### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
+
+Item 60's twin and a separate leg: the confirmation is lost while the hub
+**waits**, this one while the hub has just transmitted the invitation and
+returned to receive. Item 59 named it and item 60 carried it, whose title is
+about PAIR_CONF, so it had no entry of its own until now.
+
+Six trials on 2026-08-23 under ADR-0026, cumulative `join reqs seen` differenced
+per trial against the device's own `req sent`:
+
+| trial | device sent | hub registered | sync | crc err | frames |
+|---|---|---|---|---|---|
+| 1 | 3 | 1 | 1 | 0 | 1 |
+| 2 | 3 | 1 | 2 | 0 | 2 |
+| 3 | 1 | 1 | 2 | 0 | 2 |
+| 4 | 1 | 1 | 2 | 0 | 2 |
+| 5 | 2 | 2 | 4 | 1 | 3 |
+| 6 | 4 | **0** | 1 | 1 | 0 |
+
+**14 radiated, 6 registered.** Retries covered it in four trials and not in the
+sixth, which is why that trial's exchange is excluded from ADR-0026's denominator.
+
+`sync == frames + crc_err` in **all six**, so nothing is lost between the sync
+detector and the parser, and `dropped 0` says nothing was refused above it. The
+loss is entirely that no sync word matched.
+
+The device placed every request correctly: `invite -> request 43 880 us` in the
+failing trial against 43 864..43 880 in the successful ones.
+
+**The receiver was on.** A `RegOpMode` read off the part at
+`RADIO_PAIR_INIT` air + `RADIO_PAIR_REQ_LEAD_US` into the region, once per join
+window, reads RX in **30 of 30** windows and in all 7 that carried an invitation.
+Mutation-proven: built against `RFM69_MODE_SLEEP` the same counter reads 30 of 30
+the other way. So "the window never opened" is refuted, not merely unobserved.
+
+The loss is clustered rather than per-frame — trials 3, 4 and 5 lost nothing and
+trial 6 lost everything — and a per-trial state and a per-frame coin are different
+mechanisms. Separating them is what the next batch is for.
+
+`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
+
+### 64. The join region's level instrument almost never completes — `defect`
+
+`rfm69_measure_rssi` triggers and waits `RSSI_TIMEOUT_US` = 500 us for RssiDone.
+Measured 2026-08-23 over 31 join windows with nothing on air: **76 successes from
+about 95 000 calls**, and **0 from 534** inside the span where a request's payload
+would be. Both are the same 0.08%; the span is not special.
+
+So every `rx level: peak/floor` this project has quoted for the join region rests
+on about 75 samples, which is why peak reads -84 to -85 dBm in every trial
+including the ones that paired. **It measures the band, not the frame**, and it
+cannot say at what level a missed request arrived.
+
+The part evaluates RSSI continuously while the receiver waits for a preamble, so
+a manual trigger is mostly ignored — `OpenHub/.claude/skills/rfm69` already says
+the receiver "parks until a signal arrives". Until this is fixed the level witness
+below the sync word is the SDR, not the hub.
+
+`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
+
+### 65. `status 1` means two different faults — `debt`
+
+`hub_ipc_call` returns **1** both when CM4 replies `IPC_ST_UNKNOWN_REQ` and when
+CM7 cannot take the IPC mutex inside `IPC_REPLY_TIMEOUT_MS`. The CLI prints
+"Error: CM4 rejected it, status 1" for both, so a mutex CM7 never acquired is
+reported as a request CM4 refused.
+
+Seen on 2026-08-23: `device pair` printed it while `devices`, `timing` and
+`device dump` all answered normally, and the same command succeeded on the next
+attempt. Half an hour went to looking for an enum mismatch that was not there.
+
+A negative return for the local failure would separate them; `-1` is already
+"CM4 did not answer".
+
+`../radio_devices_docs/open_hub/arch/ipc.md`.
