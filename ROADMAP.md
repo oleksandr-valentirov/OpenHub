@@ -827,48 +827,54 @@ Still needs a decision record. Next free number is ADR-0026.
 
 `../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.
 
-### 60. The hub has never registered a PAIR_CONF - `blocking` `defect`
+### 60. The hub registers a PAIR_CONF about two times in five - `blocking` `defect`
 
-Three instruments over one 80 s window, 2026-08-23, with an SDR capture of the
-join channel as the third:
+**This item said "has never registered one". That was wrong**, and it was wrong
+in the way a small sample is: the claim rested on `conf 0` after one or two
+confirmations had been radiated, which at the rate measured since is a coin
+landing the same way twice. Ten controlled enrolments on 2026-08-23, each from an
+erased store and a fresh device identity:
 
-```
-12.759 s  PAIR_INIT     (hub)
-12.803 s  PAIR_REQ      +44.4 ms   (device)
-12.910 s  PAIR_RSP      +106.6 ms  (hub)
-13.011 s  PAIR_CONF     +100.7 ms  (device)
-          PAIR_ACCEPT   never
-```
+| | device radiated | hub registered |
+|---|---|---|
+| confirmations | 12 | **5** |
+| enrolments completed | - | **5 of 10** |
 
-The exchange ran correctly and on schedule - +44.4 ms against a
-`RADIO_PAIR_REQ_LEAD_US` of 30 000 plus the frame, +106.6 against the device's
-own measured 107 432 us - and **the hub did not answer the confirmation**. Its
-counter is `req 2 -> rsp 2 -> conf 0 -> accept 0`, cumulative since reset: not
-one confirmation has ever been registered, while one is demonstrably on the air
-at the right instant and decodes cleanly off the antenna.
+Against the WL55-to-WL55 control's 4 of 4 the difference is suggestive and not
+established: Fisher one-sided **p = 0.13**. What *is* established is that the
+fault is **intermittent**, and nothing about it changed between the runs that
+produced "never" and these - no receive-path code has moved.
 
-`pair_reqs_dropped` is **0**, so the frame never reached `handle_join_frame` -
-every refusal in that function increments it. It was lost below the parser. The
-window's own receive counters read `sync 2, crc err 1, frames 1`: one good frame,
-which is the request, and one CRC error, which is the size of the remaining
-population.
+**The confirmation usually produces no sync word at all.** That is the finding
+that replaces "lost below the parser", which came from the one window that
+happened to hold a CRC error. In the failing trials the hub's window counters
+read `sync 1, frames 1` or `sync 2, frames 2` - one sync per *request*, and none
+for the confirmation that followed. When it is heard it arrives at **-42 to -43
+dBm**, the same level as the request beside it.
 
-**A frame the SDR decodes cleanly and the hub CRCs is not a link problem.** It
-is 100.7 ms after the hub's own transmission and about 125 ms past a superframe
-boundary the exchange crosses, so the receiver's state around the turnaround and
-the boundary is where to look - not the budget in item 59, which the same capture
-rules out.
+So the receiver is not listening when the confirmation lands, and this is not a
+link, level, CRC or FIFO problem. Where to look, in order:
 
-The second, separable failure in the same window: **the device radiated 4
-requests and the hub heard 1.** The SDR carries all four, each 44.4 ms after an
-invitation, at the same power as the one that worked, so the device's counter is
-honest and this is the hub's receive path.
+- `join_rx_deadline` is `rfm_micros() + RADIO_JOIN_RX_US`, **100 000 us**, set
+  when the window opens. The device's own response-to-confirmation turnaround is
+  **105 000 us**. The second half of the exchange cannot fit the window it starts
+  in, and `join_region_service` puts the part in standby the moment the deadline
+  passes, whatever the exchange is doing.
+- `frame_tx` returns the part to RX after transmitting the response, so the hub
+  does keep listening past the deadline - until the next `join_region_service`
+  pass closes the window underneath it. Which of the two happens first is a race,
+  and a race is what a rate near half looks like.
+- With `device_count == 0` the window instead runs to the superframe boundary
+  less the end guard, so the same exchange meets a **60 ms** blind gap plus a
+  beacon transmission if it crosses a boundary.
 
-Capture and decode: they were deleted with the run; regenerate with
-`capture.py -f 866.5e6 -s 2.4e6 -t 80 -g 30` while a window is open.
+The fix is not a longer constant: it is that an exchange in flight must hold the
+window open until it resolves or times out.
 
-`../radio_devices_docs/radio/pairing.md` § the budget is a real margin.
+Two things this rules out, both measured: the front end (item 59's page carries
+the -42 dBm figure and the SX126x's -44 dBm on the same frames) and the budget.
 
+`../radio_devices_docs/radio/pairing.md` § the WL55-to-WL55 control.
 ### 61. Enrolment mode SECRET has no MAC primitive any more — `debt`
 
 `crypto_pair_init_mac` was HMAC-SHA256/96 over the invitation's cleartext, keyed
