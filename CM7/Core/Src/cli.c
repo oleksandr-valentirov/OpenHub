@@ -409,6 +409,18 @@ static int cmd_cfg(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "  next slot %u of %u, %u slot(s) skipped as damaged or foreign\r\n",
             (unsigned)w->next_slot, (unsigned)CFG_SLOTS_PER_SECTOR,
             (unsigned)w->damaged);
+    {
+        uint32_t ms = 0;
+        uint8_t  ran = 0;
+        cfgflash_err_t e = cfg_boot_erase(&ms, &ran);
+
+        cli_out(cli, "  boot erase: %s, and it %s legal there\r\n", ran
+                ? "ran" : (e == CFGF_OK) ? "nothing was owed" : cfgflash_err_str(e),
+                cfg_boot_erase_was_legal() ? "was" : "WAS NOT");
+        if (ran)
+            cli_out(cli, "              reclaimed a ring in %lu ms\r\n",
+                    (unsigned long)ms);
+    }
     cli_out(cli, "  ring to erase at boot: %s\r\n",
             (w->dirty == CFG_SECTOR_NONE) ? "none"
                                           : (w->dirty == CFG_RING_A) ? "A" : "B");

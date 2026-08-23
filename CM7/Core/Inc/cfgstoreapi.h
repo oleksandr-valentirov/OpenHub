@@ -22,6 +22,26 @@
  */
 int cfg_init(void);
 
+/**
+ * @brief What the boot erase did, if the last wrap left a ring to reclaim.
+ * @param ms_out  receives how long it took, or NULL
+ * @param ran     receives 1 when an erase actually happened, or NULL
+ * @return CFGF_OK when nothing was owed or the erase succeeded, else why it did not
+ *
+ * A boot erase that happened and said nothing is a decorative one.
+ */
+cfgflash_err_t cfg_boot_erase(uint32_t *ms_out, uint8_t *ran);
+
+/**
+ * @brief Whether an erase would have been permitted where the boot work runs.
+ * @retval 1  HSEM_ID_0 was free, so the boot erase path is reachable
+ * @retval 0  CM4 still held it, and every boot erase would refuse
+ *
+ * Read once at boot. Without it the boot erase is a path nothing can show is
+ * reachable until the day it is needed.
+ */
+int cfg_boot_erase_was_legal(void);
+
 /** @brief The reconstructed image. @return the RAM copy, never NULL */
 const cfg_snapshot_t *cfg_image(void);
 

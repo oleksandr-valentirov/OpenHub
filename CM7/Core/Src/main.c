@@ -215,22 +215,27 @@ Error_Handler();
   MX_UART4_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
-  /* Before the scheduler: recovery may stall the bank it executes from.
-   * radio_devices_docs/open_hub/arch/keystore.md */
-  (void)ks_init();
-  /* Reads only: the ring holds no snapshot until the migration writes one.
+  /* Stamped before CM4 is released: CM4 must not write a ring this zeroes.
+   * radio_devices_docs/open_hub/arch/ipc.md */
+  ipc_init();
+
+#if HUB_BOOT_HOLD_MS
+  /* Makes CM4's wait real, so its watchdog refresh can be read in both
+   * directions. radio_devices_docs/open_hub/arch/dual-core.md */
+  HAL_Delay(HUB_BOOT_HOLD_MS);
+#endif
+  /* CM4 is free from here, and an erase is legal from here. Everything CM4
+   * waits on is above. radio_devices_docs/open_hub/arch/dual-core.md */
+  HAL_HSEM_Release(HSEM_ID_0, 0);
+
+  /* Below the release, above the scheduler: where a 954 ms erase is free.
    * radio_devices_docs/open_hub/arch/config-store.md */
+  (void)ks_init();
   (void)cfgflash_init();
   (void)cfg_init();
 #if HUB_ERASE_TEST
-  /* CM4 arms IWDG2 then waits here without refreshing it.
-   * radio_devices_docs/open_hub/arch/config-store.md */
-  HAL_HSEM_Release(HSEM_ID_0, 0);
   erasetest_run();
 #endif
-  /* Stamped before CM4 is released from HSEM_ID_0.
-   * radio_devices_docs/open_hub/arch/ipc.md */
-  ipc_init();
 
   /* USER CODE END 2 */
 
@@ -497,12 +502,7 @@ void StartDefaultTask(void *argument)
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
   UNUSED(argument);
-#if HUB_BOOT_HOLD_MS
-  /* Makes CM4's wait real, so its watchdog refresh can be read in both
-   * directions. radio_devices_docs/open_hub/arch/dual-core.md */
-  osDelay(HUB_BOOT_HOLD_MS);
-#endif
-  HAL_HSEM_Release(HSEM_ID_0, 0);
+  /* The release moved to main(). radio_devices_docs/open_hub/arch/dual-core.md */
   /* Activate HSEM notification for Cortex-M7 */
   HAL_HSEM_ActivateNotification(__HAL_HSEM_SEMID_TO_MASK(HSEM_M4_TO_M7));
   /* Below the FreeRTOS syscall ceiling of 5, so the ISR may signal a task. */

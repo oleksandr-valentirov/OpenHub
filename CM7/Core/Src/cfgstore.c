@@ -8,10 +8,16 @@
 
 #include <string.h>
 
+#include "hsem_table.h"
+
 static cfg_snapshot_t image;
 static cfg_scan_t     scan;
 static uint16_t       since_snap;
 static uint32_t       next_seq = 1u;
+static cfgflash_err_t boot_erase = CFGF_OK;
+static uint32_t       boot_erase_ms;
+static uint8_t        boot_erased;
+static uint8_t        boot_sem_free;
 
 static const void *ring_ptr(uint8_t ring)
 {
@@ -23,12 +29,43 @@ int cfg_init(void)
 {
     int rc;
 
+    /* The post-condition of releasing HSEM_ID_0 in main().
+     * radio_devices_docs/open_hub/arch/dual-core.md */
+    boot_sem_free = (uint8_t)!HAL_HSEM_IsSemTaken(HSEM_ID_0);
+
     memset(&image, 0, sizeof(image));
     rc = cfg_journal_scan((const void *)CFG_JOURNAL_ADDR_A,
                           (const void *)CFG_JOURNAL_ADDR_B, &image, &scan);
     since_snap = scan.deltas;
     next_seq   = scan.seq + 1u;
+
+    /* The one window where 954 ms costs nothing: CM4 released and on bank 2,
+     * scheduler not started. radio_devices_docs/open_hub/arch/config-store.md */
+    if (scan.dirty != CFG_SECTOR_NONE) {
+        uint8_t sector = (scan.dirty == CFG_RING_A) ? CFG_JOURNAL_SECTOR_A
+                                                    : CFG_JOURNAL_SECTOR_B;
+
+        boot_erase = cfgflash_erase(sector, &boot_erase_ms);
+        if (boot_erase == CFGF_OK) {
+            scan.dirty  = CFG_SECTOR_NONE;
+            boot_erased = 1;
+        }
+    }
     return rc;
+}
+
+cfgflash_err_t cfg_boot_erase(uint32_t *ms_out, uint8_t *ran)
+{
+    if (ms_out != NULL)
+        *ms_out = boot_erase_ms;
+    if (ran != NULL)
+        *ran = boot_erased;
+    return boot_erase;
+}
+
+int cfg_boot_erase_was_legal(void)
+{
+    return boot_sem_free;
 }
 
 const cfg_snapshot_t *cfg_image(void)   { return &image; }
