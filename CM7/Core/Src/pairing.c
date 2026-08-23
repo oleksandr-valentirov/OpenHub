@@ -39,6 +39,10 @@ static int has_pubkey(const cfg_device_t *rec) {
 /* Long enough for two scalar multiplications, short enough to free the slot. */
 #define PAIR_PENDING_MS  12000u
 
+/* Half a superframe, so no boundary is missed.
+ * radio_devices_docs/open_hub/radio/pairing.md */
+#define PAIR_ASK_MS  ((SUPERFRAME_US / 1000u) / 2u)
+
 static uint8_t hub_pub[32];
 static uint8_t hub_pub_ready;
 
@@ -304,6 +308,7 @@ static struct {
     uint8_t  pending_arm;     /* the CLI asked; the derivation has not run yet */
     uint32_t pending_dev;
     uint32_t pending_ms;
+    uint32_t asked_ms;        /* when CM4 was last asked which superframe it is on */
 } pi;
 
 static pairing_init_stats_t pi_stats;
@@ -350,6 +355,7 @@ static void pair_init_derive(void) {
     pi.dev_id      = pi.pending_dev;
     pi.expires_ms  = (uint32_t)osKernelGetTickCount() + pi.pending_ms;
     pi.last_target = 0;
+    pi.asked_ms    = 0;
     pi.armed       = 1;
     pi_stats.z1_derivations++;
 }
@@ -371,6 +377,12 @@ static void pair_init_service(void) {
         pairing_disarm_init();
         return;
     }
+
+    /* The answer cannot change faster than this. ROADMAP item 71 */
+    if (pi.asked_ms != 0u &&
+        (uint32_t)(osKernelGetTickCount() - pi.asked_ms) < PAIR_ASK_MS)
+        return;
+    pi.asked_ms = (uint32_t)osKernelGetTickCount();
 
     if (hub_ipc_call(IPC_REQ_HOP_AT, 0, NULL, 0, &reply) != IPC_ST_OK ||
         reply.len < sizeof(h))
