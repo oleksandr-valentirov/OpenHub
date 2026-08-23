@@ -629,7 +629,7 @@ the toolchain file, so nothing listed it as a dependency edge. Fixed with a
 file interpolates.
 
 **Proven by mutation in both directions**, which is the only reason this is closed
-rather than believed: a second build with nothing touched links nothing; `touch
+rather than believed, and re-run as TR-H-1 of `bench/runs/2026-08-23-3`: a second build with nothing touched links nothing; `touch
 CM7/custom_m7_flash.ld` links **CM7 only**; `touch CM4/custom_m4_flash.ld` links
 **CM4 only**. A fix that made everything relink always would have passed the
 first check and been worthless.
@@ -1006,6 +1006,12 @@ spread, pre-registered as the second measure, did not narrow either.
 Arm B is six trials and not the ten pre-registered, because item 66 stopped the
 store mid-batch. Its four remaining trials are void and are not counted.
 
+**What stopped it is now known** and was not a broken store: the hub's RAM cache
+holds one entry per distinct id ever written and the batch had filled it. Every
+batch that draws a fresh identity per trial spends a cache entry it never gets
+back, so **this experiment's design is what exhausted the instrument** — worth
+knowing before the next batch of twenty is planned.
+
 **What the arms did not kill is the carrier.** `device afc` over each arm:
 
 | arm | frames | min | max | last |
@@ -1069,31 +1075,65 @@ still owed.
 
 `../radio_devices_docs/open_hub/arch/ipc.md`.
 
-### 66. The device store stops accepting writes and cannot say why — `blocking` `defect`
+### 66. The store holds 64 distinct device ids and the cache fits 64 — `blocking` `defect`
 
-`device add` began returning `not enrolled: flash write failed` partway through a
-batch on 2026-08-23 and has not accepted a write since, across a reset and a
-reflash of both cores. `device list` reads:
+**Retitled and re-scoped 2026-08-23 after it was measured.** This item said the
+store had stopped accepting writes and could not say why. **The store was never
+broken.** It has accepted every write it was ever given, including the ones it
+reported as failures.
+
+Measured on the board in run `bench/runs/2026-08-23-3`, three readings in one boot:
 
 ```
-1 enrolled, flash: 21 writes, 5 errors, 1736 slots left
-last flash error 0x00000000
-132 slot(s) hold records of an older format and are skipped
+1  device list          0 writes, 6 errors, 1735 slots left
+                        last refusal: boot found more device ids than the cache
+                        fits (0 of 6 errors were flash), HAL 0x00000000
+2  device add <new id>  Error: not enrolled: flash took it; the RAM cache is full
+3  device list          1 writes, 7 errors, 1734 slots left
 ```
 
-**It is not exhaustion.** 1736 of 2048 slots are free. Five writes of twenty-one
-failed, so it is intermittent rather than a wall, and the failures survive a
-power cycle because the state is in flash.
+Nothing writes to the store at boot, so **`writes = 0` in reading 1 is
+structural** — and `errors` was already 6. Every one came from the scan and none
+of them was flash. The `HAL 0x00000000` that blocked diagnosis for a day was the
+correct answer: no write had reached flash to have an error.
 
-**The diagnosis half is fixed, 2026-08-23, and it found more than it was sent
-for.** `last_flash_err` was declared with a comment saying it held
-`HAL_FLASH_GetError()` from the last failure and was **assigned nowhere** — the
-same shape as every other field in this project that nobody writes. It now records
-the HAL code and the stage that refused.
+**Four independent readings agree.** The named reason; the counters moving the way
+that reason requires and no other (`writes` +1, `flash_errors` unchanged, slots
+−1); `device add` of an id **already cached** succeeding on the same store in the
+same boot, which no misprint can produce; and the scan's error count tracking
+*distinct ids on flash minus 64* one for one across a reflash.
 
-Reading the path to fix it turned up the reason the number was unreadable even
-when it was right: **`errors` counts four unrelated conditions**, and three of them
-never touch flash.
+**What is actually wrong.** The cache holds one entry per **distinct id ever
+written**, capped at `KS_MAX_DEVICES` = 64, and this store has 64 — drawn by a day
+of enrolment batches that each took a fresh identity. The roster holds **one**
+device. `append()` was writing the record, counting it in `writes`, and then
+returning -1 because the cache would not take it, so the operator was told the
+write failed while the record sat on flash. `device add` now refuses before it
+writes (`f584daa`), which stops the store bleeding a slot per attempt.
+
+**The erase of bank 1 sectors 6 and 7 is not needed, and the hub's long-term key
+was never at risk.** That decision is withdrawn.
+
+**What is still open is a decision, and it is not the same one.** Enrolment of a
+new id is still refused, and no safe patch changes that:
+
+- *Drop deleted entries from the cache.* Cheapest, and it restarts `key_gen` at 1
+  for a re-enrolled device. CM4 scopes its replay floor to `key_gen`
+  (`CM4/Core/Src/radio.c:80`), so a repeating generation number is a replay
+  question and not a tidy-up. `tx_floor` has **no reader outside the keystore** and
+  costs nothing to lose, which is its own small finding.
+- *Compact the log* — read the live records and the hub key, erase, re-append.
+  **Not available**: an erase in bank 1 from CM7 hangs the core, and there is no
+  console route that exports the hub's private scalar, only one that generates one.
+- *External erase of sectors 6 and 7, then `device hubkey gen`.* Costs the hub a
+  new identity. On this bench, where the one enrolled device holds no key, that
+  costs nothing — but it is still the owner's call, and it is now a cheap choice
+  rather than a damaging one.
+
+**How the four conditions came to share one number**, kept because the shape
+recurs. `last_flash_err` was declared with a comment saying it held
+`HAL_FLASH_GetError()` and was **assigned nowhere**, so it read 0 for a failure and
+for no failure alike. And `errors` counted four unrelated conditions:
 
 | condition | flash touched | printed as |
 |---|---|---|
@@ -1102,33 +1142,13 @@ never touch flash.
 | the RAM cache is full | **the record landed** | flash write failed |
 | boot found more device ids than the cache fits | no | flash write failed |
 
-The third is a defect in its own right: `append()` writes the record, counts it in
-`writes`, then returns -1 because the cache would not take it, so the caller is told
-the write failed while the record is on flash and will be there after the next boot.
+Each has a name now — `ks_last_fail()`, `ks_fail_str()` — and `ks_flash_errors()`
+counts the subset flash saw. The console prints the reason **before** the HAL code,
+because a HAL code of zero is correct for three of the four.
 
-Each now has a name — `ks_last_fail()`, `ks_fail_str()` — and `ks_flash_errors()`
-counts the subset flash actually saw. `device list` and `device add` print the
-reason, then the HAL code, in that order, because a HAL code of 0 is the correct
-answer for three of the four.
+The 132 old-format slots are expected: the store steps over them by design and they
+cost a slot each. They are not implicated — they hold no device id, so they do not
+reach the cache.
 
-**So "5 errors" may never have been five failed writes.** Which of the four it was
-is a question the next boot of this store can answer, and could not before.
-
-The 132 old-format slots are expected — the store steps over them by design and
-they cost a slot each — but they have never been seen beside a write failure and
-they are the only unusual thing in the picture.
-
-**Recovery is not free and needs a decision.** This store is in bank 1, sectors 6
-and 7, and never erases anything: `keystore.md` is explicit that a full store is
-not recoverable by reboot, unlike CM4's. The only documented repair is
-`STM32_Programmer_CLI -c port=SWD sn=<probe> mode=UR -e 6 7`.
-
-**That erases the hub's own long-term X25519 key with it.** `ks_hub_key_get` and
-`ks_hub_key_set` keep it in this same log, so the repair gives the hub a **new
-identity**: every device that ever paired with it must re-enrol, and the public
-key the invitations carry changes. On a bench with nothing paired that is cheap,
-and it is not cheap anywhere else.
-
-Enrolment cannot be measured at all until this is cleared, so it blocks 63 and 60.
-
-`../radio_devices_docs/open_hub/arch/keystore.md`.
+`../radio_devices_docs/open_hub/arch/keystore.md`,
+`bench/runs/2026-08-23-3/RESULTS.md`.
