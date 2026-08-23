@@ -30,7 +30,7 @@
 /* Long enough for two scalar multiplications, short enough to free the slot. */
 #define PAIR_PENDING_MS  12000u
 
-static uint8_t hub_pub[33];
+static uint8_t hub_pub[32];
 static uint8_t hub_pub_ready;
 
 static struct {
@@ -38,6 +38,7 @@ static struct {
     uint32_t dev_id;
     uint32_t started_ms;
     uint8_t  dev_nonce[8];
+    uint8_t  dev_pub[KS_PUBKEY_BYTES];   /* carried to the store, learned here */
     crypto_pair_out_t out;
 } pending;
 
@@ -45,7 +46,7 @@ static pairing_stats_t stats;
 
 /* The transcript the live derive hashed, kept past its exchange.
  * radio_devices_docs/open_hub/radio/pairing.md */
-static uint8_t  last_t[119];
+static uint8_t  last_t[116];
 static uint8_t  last_t_valid;
 static uint32_t last_t_dev;
 static uint32_t last_t_sf;
@@ -55,7 +56,7 @@ static uint32_t last_t_sf;
 static int ensure_hub_pub(const uint8_t priv[32]) {
     if (hub_pub_ready)
         return 0;
-    if (crypto_p256_public(priv, hub_pub) != 0)
+    if (crypto_x25519_public(priv, hub_pub) != 0)
         return -1;
     hub_pub_ready = 1;
     return 0;
@@ -117,9 +118,9 @@ static void serve_pair_req(const ipc_msg_t *m) {
         goto refuse;
     }
 
-    /* Points, not hashes of them, constant time and before any curve work.
-     * radio_devices_docs/open_hub/radio/pairing.md */
-    if (!ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
+    /* A record with no key adopts the one on the wire; one with a key pins it.
+     * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
+    if (ks_has_pubkey(rec) && !ct_equal(e.pubkey, rec->pubkey, sizeof(e.pubkey))) {
         stats.bad_fingerprint++;
         /* The fingerprint of what arrived, which is what the operator can compare. */
         if (mbedtls_sha256(e.pubkey, sizeof(e.pubkey), fp, 0) == 0)
@@ -155,6 +156,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
     pending.dev_id     = e.dev_id;
     pending.started_ms = (uint32_t)osKernelGetTickCount();
     memcpy(pending.dev_nonce, e.dev_nonce, 8);
+    memcpy(pending.dev_pub, e.pubkey, sizeof(pending.dev_pub));
 
     memcpy(r.eph_pubkey, pending.out.eph_pub, sizeof(r.eph_pubkey));
     memcpy(r.confirm, pending.out.confirm_hub, sizeof(r.confirm));
@@ -208,7 +210,8 @@ static void serve_pair_conf(const ipc_msg_t *m) {
     }
 
     if (ks_pair_complete(e.dev_id, pending.out.key_session,
-                         pending.dev_nonce, pairing_epoch_now()) != 0) {
+                         pending.dev_nonce, pairing_epoch_now(),
+                         pending.dev_pub) != 0) {
         stats.store_failed++;
         status = IPC_ST_RADIO_ERR;
         goto refuse;
@@ -282,11 +285,10 @@ const pairing_stats_t *pairing_get_stats(void) {
     return &stats;
 }
 
-/* pair_v3's invitation, built here and keyed by CM4.
+/* pair_v4's invitation, built here and keyed by CM4.
  * radio_devices_docs/open_hub/radio/pairing.md */
 static struct {
     uint8_t  armed;
-    uint8_t  k_init[32];
     uint32_t dev_id;
     uint32_t expires_ms;
     uint32_t last_target;     /* the superframe of the last frame pushed */
@@ -311,7 +313,6 @@ void pairing_arm_init(uint32_t dev_id, uint32_t window_ms) {
 void pairing_disarm_init(void) {
     pi.armed = 0;
     pi.pending_arm = 0;
-    mbedtls_platform_zeroize(pi.k_init, sizeof(pi.k_init));
 }
 
 /* Once per window, never per frame, and z1_derivations measures the claim.
@@ -328,12 +329,9 @@ static void pair_init_derive(void) {
         pi_stats.derive_failed++;
         return;
     }
-    if (ks_hub_key_get(hub_priv) != 0) {
-        pi_stats.derive_failed++;
-        return;
-    }
-    if (crypto_pair_init_key(hub_priv, rec->pubkey, PAIRING_HUB_ID,
-                             pi.pending_dev, pi.k_init) != 0) {
+    /* Only the hub's own key: mode OPEN has no secret to derive a MAC key from.
+     * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
+    if (ks_hub_key_get(hub_priv) != 0 || ensure_hub_pub(hub_priv) != 0) {
         mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
         pi_stats.derive_failed++;
         return;
@@ -392,11 +390,10 @@ static void pair_init_service(void) {
     f.hub_id     = PAIRING_HUB_ID;
     f.dev_id     = pi.dev_id;
     f.superframe = target;
-    if (crypto_pair_init_mac(pi.k_init, (const uint8_t *)&f,
-                             sizeof(f) - RADIO_PAIR_INIT_MAC_LEN, f.mac) != 0) {
-        pi_stats.push_failed++;
-        return;
-    }
+    /* The device learns the hub here; the MAC is zero and says so. ADR-0024 */
+    f.mode = RADIO_ENROL_MODE_OPEN;
+    memcpy(f.hub_static, hub_pub, sizeof(f.hub_static));
+    memset(f.mac, 0, sizeof(f.mac));
     pi_stats.built++;
     memcpy(pi_stats.last_frame, &f, sizeof(f));
     pi_stats.last_len = (uint8_t)sizeof(f);
@@ -477,6 +474,9 @@ void PairingTask(void *argument) {
 
     (void)argument;
     doorbell_sem = osSemaphoreNew(1, 0, NULL);
+    /* Inside a wait that already happens, so it spends none of it.
+     * radio_devices_docs/open_hub/security/self-tests.md */
+    (void)crypto_selftest_fast();
     /* CM4 is not listening until LwIP is up and its radio has come up.
      * radio_devices_docs/open_hub/radio/pairing.md */
     osDelay(3000);

@@ -186,7 +186,9 @@ def c0_self_test():
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("path", help="a wideband .iq capture spanning several superframes")
+    # Optional so --self-test needs no capture.
+    ap.add_argument("path", nargs="?",
+                    help="a wideband .iq capture spanning several superframes")
     ap.add_argument("--device", type=int, default=1, help="the device slot to expect")
     # Half the slot pitch; wider and adjacent slots accept the same burst.
     ap.add_argument("--tol-us", type=float, default=None,
@@ -205,6 +207,8 @@ def main():
 
     if a.self_test:
         return c0_self_test()
+    if not a.path:
+        ap.error("a capture is required unless --self-test is given")
 
     c = dict(phy.constants())
     tol_max = c["RADIO_SLOT_US"] / 2.0

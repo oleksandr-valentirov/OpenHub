@@ -38,8 +38,8 @@ void  openhub_free(void *p);
 #define MBEDTLS_BIGNUM_C
 #define MBEDTLS_ECP_C
 #define MBEDTLS_ECDH_C
-/* P-256 only. ADR-0010 */
-#define MBEDTLS_ECP_DP_SECP256R1_ENABLED
+/* Curve25519 only; the device runs an independent implementation. ADR-0025 */
+#define MBEDTLS_ECP_DP_CURVE25519_ENABLED
 
 /* --- diagnostics ------------------------------------------------------- */
 

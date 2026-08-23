@@ -52,6 +52,13 @@ CASES = [
     ("micro sign is not foreign", {"a.c": "/* 700 " + MICRO + "s */\n"}, 0, None),
     ("CLAUDE.md is exempt", {"CLAUDE.md": CYR + "\n", "a.c": CLEAN_C}, 0, None),
     ("long block in .c", {"a.c": "/* " + LONG + " */\n"}, 1, "over 100"),
+    # Both halves under the limit and their join over it, or it cannot fail.
+    ("leading star is a dereference",
+     {"a.c": "void f(uint8_t *detail, int rc) {\n"
+             "    *detail = (uint8_t)((rc < 0) ? 0xFFu : rc);\n"
+             "    /* reported rather than rolled back, because the write "
+             "already happened */\n}\n"},
+     0, None),
     ("long trailing comment", {"a.c": "int x = 1;  /* " + LONG + " */\n"}, 1, "over 100"),
     ("long block in .ld", {"a.ld": "/* " + LONG + " */\n"}, 1, "over 100"),
     # The body must span lines, or the case cannot fail.

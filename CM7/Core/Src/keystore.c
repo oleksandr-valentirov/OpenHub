@@ -13,9 +13,9 @@
 #include "radio_slots.h"
 
 #define KS_MAGIC        0x534B484Fu   /* 'OHKS' little-endian */
-/* 4: fingerprint[32] -> pubkey[33] out of spare, for pair_v3's Z1. ADR-0021
+/* 5: pubkey is 32-byte X25519 and is empty at enrol. ADR-0024, ADR-0025
  * radio_devices_docs/open_hub/arch/keystore.md */
-#define KS_VERSION      4u
+#define KS_VERSION      5u
 
 #define KS_SECTOR_A     FLASH_SECTOR_6
 #define KS_SECTOR_B     FLASH_SECTOR_7
@@ -92,9 +92,11 @@ typedef struct ks_record_v3 {
 } ks_record_v3_t;
 _Static_assert(sizeof(ks_record_v3_t) == KS_RECORD_BYTES,
                "the v3 shim must describe the record that is actually in flash");
-_Static_assert(offsetof(ks_record_v3_t, root_key) + 1u ==
+/* v4's 33-byte pubkey moved root_key by one; ADR-0025's 32 moved it back.
+ * radio_devices_docs/open_hub/arch/keystore.md */
+_Static_assert(offsetof(ks_record_v3_t, root_key) ==
                offsetof(ks_record_t, root_key),
-               "the shim exists because root_key moved by exactly one byte");
+               "the v3 shim reads the same offsets again, and only the meaning differs");
 
 /* A key record this build cannot parse, read only through the shim above.
  * radio_devices_docs/open_hub/arch/keystore.md */
@@ -405,13 +407,12 @@ static int lowest_free_slot(uint32_t skip_dev_id, uint8_t *out) {
     return -1;
 }
 
-int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
-             uint8_t *slot_out) {
+int ks_enrol(uint32_t dev_id, uint8_t *slot_out) {
     const ks_record_t *have;
     ks_record_t r;
     uint8_t slot;
 
-    if (pubkey == NULL || slot_out == NULL)
+    if (slot_out == NULL)
         return -1;
     /* Zero is not a device id: it is what an uninitialised variable holds. */
     if (dev_id == 0u)
@@ -425,6 +426,7 @@ int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
          * radio_devices_docs/open_hub/arch/keystore.md */
         r = *have;
         r.rx_floor = 0;
+        memset(r.pubkey, 0, sizeof(r.pubkey));
         r.key_gen  = have->key_gen + 1u;
         memset(r.root_key, 0, sizeof(r.root_key));
         slot = have->slot;
@@ -441,7 +443,8 @@ int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
     r.state = KS_STATE_ENROLLED;
     /* Zero until the key exchange sets it: an enrolment carries no key. */
     r.rotate_epoch = 0;
-    memcpy(r.pubkey, pubkey, KS_PUBKEY_BYTES);
+    /* The device's key arrives in PAIR_REQ; enrolment is an id and nothing else. */
+    memset(r.pubkey, 0, KS_PUBKEY_BYTES);
 
     if (append(&r) != 0)
         return -4;
@@ -509,11 +512,12 @@ int ks_write_torn(void) {
 }
 
 int ks_pair_complete(uint32_t dev_id, const uint8_t session_key[16],
-                     const uint8_t dev_nonce[8], uint32_t rotate_epoch) {
+                     const uint8_t dev_nonce[8], uint32_t rotate_epoch,
+                     const uint8_t pubkey[KS_PUBKEY_BYTES]) {
     const ks_record_t *have = ks_find(dev_id);
     ks_record_t r;
 
-    if (session_key == NULL || dev_nonce == NULL)
+    if (session_key == NULL || dev_nonce == NULL || pubkey == NULL)
         return -1;
     /* Only an enrolled device may complete a pairing.
      * radio_devices_docs/open_hub/arch/keystore.md */
@@ -528,8 +532,20 @@ int ks_pair_complete(uint32_t dev_id, const uint8_t session_key[16],
     r.rx_floor     = 0;
     memcpy(r.session_key, session_key, 16);
     memcpy(r.last_nonce, dev_nonce, 8);
+    /* The one write of the device's key: a failed exchange leaves no trace.
+     * radio_devices_docs/radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md */
+    memcpy(r.pubkey, pubkey, KS_PUBKEY_BYTES);
 
     return (append(&r) == 0) ? 0 : -4;
+}
+
+int ks_has_pubkey(const ks_record_t *rec) {
+    if (rec == NULL)
+        return 0;
+    for (uint32_t i = 0; i < KS_PUBKEY_BYTES; i++)
+        if (rec->pubkey[i] != 0u)
+            return 1;
+    return 0;
 }
 
 int ks_net_key_get(uint8_t key[16]) {
@@ -568,14 +584,14 @@ int ks_hub_key_get(uint8_t priv[32]) {
     return 0;
 }
 
-int ks_hub_key_set(const uint8_t priv[32]) {
+static int hub_key_write(const uint8_t priv[32], int replacing_legacy) {
     ks_record_t r;
 
     if (priv == NULL)
         return -1;
     /* legacy_hub_valid too: absent and unreadable are opposite facts.
      * radio_devices_docs/open_hub/arch/keystore.md */
-    if (hub_key_valid || legacy_hub_valid)
+    if (hub_key_valid || (legacy_hub_valid && !replacing_legacy))
         return -2;
 
     memset(&r, 0, sizeof(r));
@@ -584,7 +600,20 @@ int ks_hub_key_set(const uint8_t priv[32]) {
     r.dev_id = 0;               /* never a device id; ks_enrol refuses zero */
     memcpy(r.root_key, priv, 32);
 
-    return (append(&r) == 0) ? 0 : -4;
+    if (append(&r) != 0)
+        return -4;
+    /* The unreadable record is stepped over from here on, not consulted. */
+    if (replacing_legacy)
+        legacy_hub_valid = 0;
+    return 0;
+}
+
+int ks_hub_key_set(const uint8_t priv[32]) {
+    return hub_key_write(priv, 0);
+}
+
+int ks_hub_key_set_replacing_legacy(const uint8_t priv[32]) {
+    return hub_key_write(priv, 1);
 }
 
 uint32_t ks_count(void) { return cached; }
@@ -592,6 +621,10 @@ uint32_t ks_writes(void) { return writes; }
 uint32_t ks_errors(void) { return errors; }
 uint32_t ks_last_flash_error(void) { return last_flash_err; }
 uint32_t ks_stale_format(void) { return stale_format; }
+
+uint8_t ks_exhausted(void) {
+    return exhausted;
+}
 
 uint32_t ks_slots_left(void) {
     uint32_t left = (next_slot < KS_SLOTS) ? KS_SLOTS - next_slot : 0u;

@@ -25,7 +25,7 @@ _Static_assert(sizeof(BUILD_ID) <= 32u, "BUILD_ID does not fit oht_hello_t.build
 #include "radio_slots.h"
 #include "rng.h"
 #include "hop_v1.h"
-#include "pair_v2.h"
+#include "pair_v4.h"
 #include "main.h"
 
 /* Sized to leave the whole body inside one segment, not to the protocol cap. */
@@ -553,18 +553,13 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
     }
 
     case OHT_CMD_DEVICE_ADD: {
-        oht_field_t f;
         uint8_t slot = 0;
         int rc;
 
+        /* An id and nothing else; the device's key arrives in PAIR_REQ. ADR-0024 */
         if (!arg_u32(body, len, 0x8000u, &u32v) || u32v == 0u)
             return OHT_RES_BAD_ARGS;
-        if (oht_find(body, len, 0x8003u, &f) != 1 || f.len != KS_PUBKEY_BYTES)
-            return OHT_RES_BAD_ARGS;
-        /* The console's prefix check: it catches a fingerprint sent as a key. */
-        if (f.raw[0] != 0x02u && f.raw[0] != 0x03u)
-            return OHT_RES_BAD_ARGS;
-        if (ks_enrol(u32v, f.raw, &slot) != 0)
+        if (ks_enrol(u32v, &slot) != 0)
             return OHT_RES_BUSY;
         rc = hub_ipc_call(IPC_REQ_ADD_DEVICE, 0, &u32v, sizeof(u32v), &reply);
         *detail = slot;
@@ -574,12 +569,20 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
         return OHT_RES_OK;
     }
 
-    case OHT_CMD_DEVICE_REMOVE:
+    case OHT_CMD_DEVICE_REMOVE: {
+        int rc;
+
         if (!arg_u32(body, len, 0x8000u, &u32v) || u32v == 0u)
             return OHT_RES_BAD_ARGS;
         if (ks_forget(u32v) != 0)
             return OHT_RES_NO_SUCH_DEVICE;
-        return OHT_RES_OK;
+        /* Half a removal; the radio has its own entry.
+         * radio_devices_docs/open_hub/arch/ipc.md */
+        rc = hub_ipc_call(IPC_REQ_REMOVE_DEVICE, 0, &u32v, sizeof(u32v), &reply);
+        *detail = (uint8_t)((rc < 0) ? 0xFFu : rc);
+        /* Reported, not rolled back: the store write happened. */
+        return (rc == IPC_ST_OK) ? OHT_RES_OK : OHT_RES_RADIO_ERR;
+    }
 
     case OHT_CMD_SET_LNA: {
         int rc;

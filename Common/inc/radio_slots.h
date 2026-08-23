@@ -140,7 +140,7 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
 /* Every frame the exchange puts on air, in bytes.
  * radio_devices_docs/radio/tdma.md */
 
-/* pair_v3's invitation, which unlike the rest is recurring air. ADR-0021 */
+/* pair_v4's invitation, which unlike the rest is recurring air. ADR-0021 */
 
 /* Every 4th superframe: 0.156%, less than the join beacon it replaces. ADR-0021 */
 
@@ -148,9 +148,13 @@ _Static_assert(RADIO_DUTY_PPM(RADIO_SLOT_OPPS) > RADIO_DUTY_LIMIT_PPM,
  * radio_devices_docs/open_hub/radio/pairing.md */
 #define RADIO_PAIR_WINDOW_MS    60000u
 #define RADIO_PAIR_INIT_EVERY   4u
-#define RADIO_PAIR_INIT_BYTES   28u
-#define RADIO_PAIR_REQ_BYTES    57u
-#define RADIO_PAIR_RSP_BYTES    59u
+/* The device must not answer before the hub has turned its radio around.
+ * radio_devices_docs/radio/pairing.md */
+#define RADIO_PAIR_REQ_LEAD_US  30000u
+
+#define RADIO_PAIR_INIT_BYTES   61u
+#define RADIO_PAIR_REQ_BYTES    56u
+#define RADIO_PAIR_RSP_BYTES    58u
 #define RADIO_PAIR_CONF_BYTES   26u
 #define RADIO_PAIR_ACCEPT_BYTES 50u
 

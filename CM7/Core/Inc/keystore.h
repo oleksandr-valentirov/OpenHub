@@ -13,7 +13,7 @@
  */
 
 #define KS_FINGERPRINT_BYTES  32u   /* SHA-256 of the point; displayed, not stored */
-#define KS_PUBKEY_BYTES       33u   /* compressed SEC1 - ADR-0018 */
+#define KS_PUBKEY_BYTES       32u   /* X25519 u-coordinate - ADR-0025 */
 #define KS_ROOT_KEY_BYTES     32u
 #define KS_MAX_DEVICES        64u
 
@@ -49,11 +49,11 @@ typedef struct ks_record {
     uint32_t rotate_epoch;                      /**< superframe / SUPERFRAME_PER_DAY at pairing */
     uint32_t rx_floor;                          /**< scoped to key_gen, never to a device */
     uint32_t tx_floor;                          /**< carried forward across pairings */
-    uint8_t  pubkey[KS_PUBKEY_BYTES];           /**< the device's static key, compressed */
+    uint8_t  pubkey[KS_PUBKEY_BYTES];           /**< zero until PAIR_REQ brings it - ADR-0024 */
     uint8_t  root_key[KS_ROOT_KEY_BYTES];       /**< HKDF root; zero until pairing lands */
     uint8_t  session_key[16];                   /**< stored, not re-derived: Z is not kept */
     uint8_t  last_nonce[8];                     /**< the last accepted; a repeat is refused */
-    uint8_t  spare[3];                          /**< named padding, so a field can be added */
+    uint8_t  spare[4];                          /**< named padding, so a field can be added */
     uint32_t crc;
 } ks_record_t;
 
@@ -77,7 +77,7 @@ uint8_t ks_init(void);
  * Re-enrolling drops the session key and bumps key_gen, which unpairs a working
  * device. radio_devices_docs/open_hub/arch/keystore.md
  */
-int ks_enrol(uint32_t dev_id, const uint8_t pubkey[KS_PUBKEY_BYTES],
+int ks_enrol(uint32_t dev_id,
              uint8_t *slot_out);
 
 /**
@@ -94,13 +94,18 @@ int ks_forget(uint32_t dev_id);
  * @param session_key   stored rather than re-derived, because Z is not kept
  * @param dev_nonce     the last accepted nonce; a repeat is refused afterwards
  * @param rotate_epoch  the epoch the key belongs to
+ * @param pubkey        the device's key as PAIR_REQ carried it
  * @retval  0  the record reached flash
  * @retval !=0 it did not, and the device must not be treated as paired
  *
  * radio_devices_docs/open_hub/arch/keystore.md
  */
 int ks_pair_complete(uint32_t dev_id, const uint8_t session_key[16],
-                     const uint8_t dev_nonce[8], uint32_t rotate_epoch);
+                     const uint8_t dev_nonce[8], uint32_t rotate_epoch,
+                     const uint8_t pubkey[KS_PUBKEY_BYTES]);
+
+/** @brief Nonzero once a device's key is known; an enrolment alone has none. */
+int ks_has_pubkey(const ks_record_t *rec);
 
 /**
  * @brief The network hop key, created on first use and shared by every device.
@@ -130,6 +135,9 @@ int ks_hub_key_get(uint8_t priv[32]);
  * radio_devices_docs/open_hub/arch/keystore.md
  */
 int ks_hub_key_set(const uint8_t priv[32]);
+
+/** @brief Same, over a record of a retired format a curve change has orphaned. */
+int ks_hub_key_set_replacing_legacy(const uint8_t priv[32]);
 
 /**
  * @brief Records the cache holds, tombstones included.
@@ -205,3 +213,17 @@ int      ks_legacy_commit(void);
  * @return records still writable, which is the number the exhausted path acts on
  */
 uint32_t ks_slots_left(void);
+
+/**
+ * @brief Whether the log has stopped accepting records for good.
+ * @retval 1  full or refusing writes; recovery is an external erase
+ * @retval 0  still writable
+ *
+ * Distinct from ks_slots_left() == 0: a flash that refused one write is
+ * exhausted with slots still counted free.
+ */
+uint8_t ks_exhausted(void);
+
+/* Below this a full roster cannot be re-enrolled and re-paired.
+ * radio_devices_docs/open_hub/arch/keystore.md */
+#define KS_SLOTS_LOW  (2u * KS_MAX_DEVICES)

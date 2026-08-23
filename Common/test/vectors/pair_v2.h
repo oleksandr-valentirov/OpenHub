@@ -4,8 +4,8 @@
 
 #include <stdint.h>
 
-#define PAIR_VECTORS_VERSION 2
-#define PAIR_VECTORS_DIGEST  "16fe5691c58d40a7"
+#define PAIR_V2_VECTORS_VERSION 2
+#define PAIR_V2_VECTORS_DIGEST  "16fe5691c58d40a7"
 #define PAIR_REQ_SUPERFRAME  0x1a2b3c4du
 
 static const uint8_t PV_DEV_NONCE[8] = {

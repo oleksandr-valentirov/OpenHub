@@ -25,12 +25,10 @@
 #include "hubipc.h"
 #include "pairing.h"
 #include "hop_v1.h"
-#include "wire_v3.h"
+#include "wire_v4.h"
+#include "pair_v4.h"
 /* For the fingerprint device list computes from the stored key. */
 #include "mbedtls/sha256.h"
-#include "pair_v2.h"
-#include "pair_v3.h"
-#include "pair_prov.h"
 #include "radio_slots.h"
 #include "radio_protocol.h"
 #include "rng.h"
@@ -167,27 +165,6 @@ static int parse_hex(const char *s, uint32_t *out) {
     return 0;
 }
 
-/* Fixed-length hex into bytes, rejecting anything but exactly 2*len digits. */
-static int parse_hex_bytes(const char *s, uint8_t *out, size_t len) {
-    size_t i;
-
-    if (s == NULL || strlen(s) != len * 2u)
-        return 1;
-    for (i = 0; i < len * 2u; i++) {
-        char c = s[i];
-        uint8_t nib;
-
-        if (c >= '0' && c <= '9')      nib = (uint8_t)(c - '0');
-        else if (c >= 'a' && c <= 'f') nib = (uint8_t)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'F') nib = (uint8_t)(c - 'A' + 10);
-        else return 1;
-
-        if ((i & 1u) == 0u) out[i / 2u]  = (uint8_t)(nib << 4);
-        else                out[i / 2u] |= nib;
-    }
-    return 0;
-}
-
 /* The console's half of the mailbox; rfm_reply belongs to this task.
  * radio_devices_docs/open_hub/arch/ipc.md */
 static int rfm_request(uint8_t type, uint8_t arg, const uint8_t *payload, uint8_t len) {
@@ -215,6 +192,21 @@ static int cmd_status(cli_data_t *cli, int argc, char **argv) {
     /* Which build this is, so a bench comparison is not answered from memory.
      * radio_devices_docs/open_hub/testing/on-target.md */
     cli_out(cli, "\r\nbuild CM7 %s\r\n", BUILD_ID);
+    {
+        crypto_test_t which;
+        int rc = crypto_selftest_fast_rc(&which);
+
+        /* Unrun is not a pass, so it has its own word rather than a zero. */
+        if (rc == CRYPTO_SELFTEST_UNRUN)
+            cli_out(cli, "boot self-tests not run yet\r\n");
+        else if (rc == 0)
+            cli_out(cli, "boot self-tests %u/%u ok; the other %u are `crypto`\r\n",
+                    CRYPTO_TEST_FAST_COUNT, CRYPTO_TEST_FAST_COUNT,
+                    (unsigned)CRYPTO_TEST_COUNT - CRYPTO_TEST_FAST_COUNT);
+        else
+            cli_out(cli, "boot self-tests FAILED at %s, rc=%d\r\n",
+                    crypto_test_name(which), rc);
+    }
     count = uxTaskGetSystemState(tasks, CLI_MAX_TASKS, NULL);
     cli_out(cli, "\r\n%-16s %-5s %-4s %s\r\n", "task", "state", "prio", "stack free");
     for (UBaseType_t i = 0; i < count; i++) {
@@ -235,7 +227,9 @@ static int cmd_lwip(cli_data_t *cli, int argc, char **argv) {
 
     cli_out(cli, "\r\n%-7s %6s %6s %6s %6s %6s\r\n",
             "proto", "recv", "xmit", "drop", "chkerr", "err");
-    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "link",
+    /* Nothing calls LINK_STATS_INC in the CubeMX driver.
+     * radio_devices_docs/open_hub/network/ethernet.md */
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u   never incremented\r\n", "link",
             (unsigned)lwip_stats.link.recv, (unsigned)lwip_stats.link.xmit,
             (unsigned)lwip_stats.link.drop, (unsigned)lwip_stats.link.chkerr,
             (unsigned)lwip_stats.link.err);
@@ -247,7 +241,8 @@ static int cmd_lwip(cli_data_t *cli, int argc, char **argv) {
             (unsigned)lwip_stats.ip.recv, (unsigned)lwip_stats.ip.xmit,
             (unsigned)lwip_stats.ip.drop, (unsigned)lwip_stats.ip.chkerr,
             (unsigned)lwip_stats.ip.err);
-    cli_out(cli, "%-7s %6u %6u %6u %6u %6u\r\n", "icmp",
+    /* Inbound echo only: the ping command uses a raw PCB and bypasses this. */
+    cli_out(cli, "%-7s %6u %6u %6u %6u %6u   inbound echo only\r\n", "icmp",
             (unsigned)lwip_stats.icmp.recv, (unsigned)lwip_stats.icmp.xmit,
             (unsigned)lwip_stats.icmp.drop, (unsigned)lwip_stats.icmp.chkerr,
             (unsigned)lwip_stats.icmp.err);
@@ -341,6 +336,9 @@ static int cmd_crypto(cli_data_t *cli, int argc, char **argv) {
         cli_out(cli, "\r\n");
     }
     cli_out(cli, "%d/%d passed\r\n", CRYPTO_TEST_COUNT - failures, CRYPTO_TEST_COUNT);
+    /* Which of these the board already ran without being asked. */
+    cli_out(cli, "drbg, hkdf, gcm and gcm lengths also run at boot;"
+                 " the x25519 ones do not\r\n");
     return 0;
 }
 
@@ -882,12 +880,6 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "hop_v1     %-18s %-18s %s\r\n", HOP_VECTORS_DIGEST, v.hop,
             strcmp(HOP_VECTORS_DIGEST, v.hop) == 0 ? "ok" : "MISMATCH");
     cli_out(cli, "wire       %-18s %-18s\r\n", WIRE_VECTORS_DIGEST, "-");
-    /* CM7-only sets, listed anyway: an omission reads as a set that does not exist.
-     * radio_devices_docs/open_hub/arch/build-and-generation.md */
-    cli_out(cli, "pair_v%-3d  %-18s %-18s\r\n", PAIR_V3_VECTORS_VERSION,
-            PAIR_V3_VECTORS_DIGEST, "-");
-    cli_out(cli, "pair_prov  %-18s %-18s\r\n", PAIR_PROV_VECTORS_DIGEST, "-");
-
     if (strcmp(PAIR_VECTORS_DIGEST, v.pair) != 0 ||
         strcmp(HOP_VECTORS_DIGEST, v.hop) != 0)
         cli_out(cli, "\r\nOne core is stale. Flash both, then reset.\r\n");
@@ -1030,6 +1022,12 @@ static int cmd_device_list(cli_data_t *cli) {
                 (unsigned)r->slot, ks_state_name(r->state));
         /* Display only, eight bytes of it; the check above compares the point.
          * radio_devices_docs/open_hub/cli.md */
+        if (!ks_has_pubkey(r)) {
+            /* Not "the hash of nothing": a record with no key has no fingerprint.
+             * ADR-0024 */
+            cli_out(cli, "(no key yet)\r\n");
+            continue;
+        }
         {
             uint8_t fp[KS_FINGERPRINT_BYTES];
 
@@ -1050,6 +1048,12 @@ static int cmd_device_list(cli_data_t *cli) {
     if (ks_errors())
         cli_out(cli, "last flash error 0x%08lx\r\n",
                 (unsigned long)ks_last_flash_error());
+    /* Two independent conditions, nested until now.
+     * radio_devices_docs/open_hub/arch/keystore.md */
+    if (ks_slots_left() < KS_SLOTS_LOW)
+        cli_out(cli, "warning: %lu slot(s) left, under the %u a full roster"
+                     " needs; the log never erases\r\n",
+                (unsigned long)ks_slots_left(), (unsigned)KS_SLOTS_LOW);
     if (ks_stale_format())
         cli_out(cli, "%lu slot(s) hold records of an older format and are skipped\r\n",
                 (unsigned long)ks_stale_format());
@@ -1059,28 +1063,12 @@ static int cmd_device_list(cli_data_t *cli) {
 /* Enrol, then open the window, in that order.
  * radio_devices_docs/open_hub/cli.md */
 static int cmd_device_add(cli_data_t *cli, char **argv) {
-    uint8_t pubkey[KS_PUBKEY_BYTES];
     uint32_t dev_id = 0;
     uint8_t slot = 0;
     int rc;
 
     if (parse_hex(argv[2], &dev_id)) {
         cli_out(cli, "\r\nError: device id must be hex\r\n");
-        return 0;
-    }
-    if (parse_hex_bytes(argv[3], pubkey, sizeof(pubkey))) {
-        cli_out(cli, "\r\nError: public key must be exactly %u hex digits"
-                     " (compressed SEC1, as the device prints it)\r\n",
-                (unsigned)(KS_PUBKEY_BYTES * 2u));
-        return 0;
-    }
-    /* A prefix check, not validation: it catches a fingerprint pasted here.
-     * radio_devices_docs/open_hub/cli.md */
-    if (pubkey[0] != 0x02u && pubkey[0] != 0x03u) {
-        cli_out(cli, "\r\nError: not a compressed point - first byte is %02x,"
-                     " expected 02 or 03.\r\n"
-                     "  the device prints the key above the fingerprint;"
-                     " this argument is the key\r\n", pubkey[0]);
         return 0;
     }
 
@@ -1100,12 +1088,28 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         }
     }
 
-    rc = ks_enrol(dev_id, pubkey, &slot);
+    /* Before the attempt: a full log is standing, not transient.
+     * radio_devices_docs/open_hub/arch/keystore.md */
+    if (ks_exhausted() || ks_slots_left() == 0u) {
+        cli_out(cli, "\r\nError: the key store is full - %lu slot(s) left,"
+                     " %lu hold a retired format.\r\n"
+                     "  It is an append-only log and never erases, so nothing"
+                     " here reclaims them:\r\n"
+                     "  'device remove' appends a tombstone and costs one more."
+                     " Recovery is an\r\n"
+                     "  external erase of sectors 6 and 7 - never from CM7.\r\n",
+                (unsigned long)ks_slots_left(), (unsigned long)ks_stale_format());
+        return 0;
+    }
+
+    rc = ks_enrol(dev_id, &slot);
     if (rc != 0) {
         const char *why = "flash write failed - see 'device list'";
 
         if (rc == -2) why = "device id 0 is not usable";
         else if (rc == -3) why = "no free uplink slot";
+        else if (rc == -4 && ks_exhausted())
+            why = "the key store filled during this write; it never erases";
         cli_out(cli, "\r\nError: not enrolled: %s\r\n", why);
         return 0;
     }
@@ -1123,11 +1127,17 @@ static int cmd_device_add(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nenrolled 0x%08lx in slot %u, pairing window open\r\n",
                 (unsigned long)dev_id, (unsigned)slot);
     }
+    /* Warned while there is still room to act, not when the next add refuses. */
+    if (ks_slots_left() < KS_SLOTS_LOW)
+        cli_out(cli, "warning: %lu key-store slot(s) left, under the %u a full"
+                     " roster needs. The log never erases.\r\n",
+                (unsigned long)ks_slots_left(), (unsigned)KS_SLOTS_LOW);
     return 0;
 }
 
 static int cmd_device_remove(cli_data_t *cli, char **argv) {
     uint32_t dev_id = 0;
+    int rc;
 
     if (parse_hex(argv[2], &dev_id)) {
         cli_out(cli, "\r\nError: device id must be hex\r\n");
@@ -1137,9 +1147,22 @@ static int cmd_device_remove(cli_data_t *cli, char **argv) {
         cli_out(cli, "\r\nError: not enrolled, or flash write failed\r\n");
         return 0;
     }
-    /* CM4 keeps its own entry and is not told. ROADMAP item 56
+    /* The store forgetting is half of it; the radio has its own entry.
      * radio_devices_docs/open_hub/arch/ipc.md */
-    cli_out(cli, "\r\nremoved 0x%08lx\r\n", (unsigned long)dev_id);
+    rc = rfm_request(IPC_REQ_REMOVE_DEVICE, 0, (const uint8_t *)&dev_id, sizeof(dev_id));
+    cli_out(cli, "\r\nremoved 0x%08lx from the key store - a tombstone was"
+                 " appended, so this\r\n"
+                 "  spent a slot rather than freeing one. %lu left.\r\n",
+            (unsigned long)dev_id, (unsigned long)ks_slots_left());
+    if (rc < 0)
+        cli_out(cli, "  but CM4 did not answer: it may still serve this device"
+                     " until the hub resets\r\n");
+    else if (rc != IPC_ST_OK)
+        cli_out(cli, "  but CM4 refused, status %d: it may still serve this"
+                     " device\r\n", rc);
+    else
+        cli_out(cli, "  radio: %s\r\n",
+                rfm_reply.payload[0] ? "slot released" : "held no entry for it");
     return 0;
 }
 
@@ -1427,19 +1450,19 @@ static int cmd_device_transcript(cli_data_t *cli) {
 
 /* The hub's own long-term identity; devices hold the public half out of band. */
 static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
-    uint8_t priv[32], pub[33];
+    uint8_t priv[32], pub[32];
     int rc;
 
     /* Recovered keys are shown, never written: the store cannot witness itself.
      * radio_devices_docs/open_hub/arch/keystore.md */
     if (argc == 3 && strcmp(argv[2], "recover") == 0) {
-        uint8_t lpriv[32], lpub[33];
+        uint8_t lpriv[32], lpub[32];
 
         if (ks_legacy_hub_key_get(lpriv) != 0) {
             cli_out(cli, "\r\nno hub key of an older format was found\r\n");
             return 0;
         }
-        rc = crypto_p256_public(lpriv, lpub);
+        rc = crypto_x25519_public(lpriv, lpub);
         memset(lpriv, 0, sizeof(lpriv));
         if (rc != 0) {
             cli_out(cli, "\r\nError: recovered a key but could not derive its"
@@ -1447,7 +1470,7 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
             return 0;
         }
         cli_out(cli, "\r\nrecovered hub public key:\r\n  ");
-        for (int b = 0; b < 33; b++)
+        for (int b = 0; b < 32; b++)
             cli_out(cli, "%02X", lpub[b]);
         cli_out(cli, "\r\n\r\nCompare this against the hub key a paired device"
                      " holds.\r\nIf it matches: 'device hubkey commit'."
@@ -1464,14 +1487,24 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
             cli_out(cli, "\r\n%d record(s) migrated forward\r\n", rc);
         return 0;
     }
-    if (argc == 3 && strcmp(argv[2], "gen") == 0) {
+    int legacy_discarded = 0;
+
+    if (argc == 4 && strcmp(argv[2], "gen") == 0 &&
+        strcmp(argv[3], "discard-legacy") == 0) {
+        /* A curve change has already orphaned the roster the guard protects.
+         * radio_devices_docs/radio/decisions/0025-x25519-replaces-p256.md */
+        legacy_discarded = 1;
+    }
+    if ((argc == 3 || legacy_discarded) && strcmp(argv[2], "gen") == 0) {
         /* A key this build cannot read is not an absent key.
          * radio_devices_docs/open_hub/arch/keystore.md */
-        if (ks_legacy_pending()) {
+        if (ks_legacy_pending() && !legacy_discarded) {
             cli_out(cli, "\r\nError: a hub key of an older format is present"
                          " and has not been recovered.\r\n  'device hubkey"
                          " recover' first - generating now would orphan every"
-                         " paired device.\r\n");
+                         " paired device.\r\n  If the curve moved under them"
+                         " they are orphaned already: 'device hubkey gen"
+                         " discard-legacy'\r\n");
             return 0;
         }
         if (ks_hub_key_get(priv) == 0) {
@@ -1481,12 +1514,13 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
                          " public key and would stop trusting it.\r\n");
             return 0;
         }
-        rc = crypto_p256_keygen(priv, pub);
+        rc = crypto_x25519_keygen(priv, pub);
         if (rc != 0) {
             cli_out(cli, "\r\nError: keygen failed, rc=%d\r\n", rc);
             return 0;
         }
-        rc = ks_hub_key_set(priv);
+        rc = legacy_discarded ? ks_hub_key_set_replacing_legacy(priv)
+                              : ks_hub_key_set(priv);
         memset(priv, 0, sizeof(priv));
         if (rc != 0) {
             cli_out(cli, "\r\nError: generated but not stored, rc=%d -"
@@ -1503,17 +1537,17 @@ static int cmd_device_hubkey(cli_data_t *cli, int argc, char **argv) {
         cli_out(cli, "\r\nno hub key yet - run 'device hubkey gen' once\r\n");
         return 0;
     }
-    rc = crypto_p256_public(priv, pub);
+    rc = crypto_x25519_public(priv, pub);
     memset(priv, 0, sizeof(priv));
     if (rc != 0) {
         cli_out(cli, "\r\nError: stored key is unusable, rc=%d\r\n", rc);
         return 0;
     }
 
-    /* Printed in full: this value is provisioned, not compared.
-     * radio_devices_docs/open_hub/cli.md */
-    cli_out(cli, "\r\nhub public key (compressed, provision this to devices):\r\n");
-    for (int i = 0; i < 33; i++)
+    /* A device learns this from the invitation: compare it, never type it.
+     * ADR-0024 */
+    cli_out(cli, "\r\nhub public key (x25519, what the invitation carries):\r\n");
+    for (int i = 0; i < 32; i++)
         cli_out(cli, "%02x", pub[i]);
     cli_out(cli, "\r\n");
     return 0;
@@ -1578,7 +1612,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         }
         rc = rfm_request(IPC_REQ_ADD_DEVICE, 0, (const uint8_t *)&dev_id,
                          sizeof(dev_id));
-        /* pair_v3's invitation rides the same window the join beacon does. */
+        /* pair_v4's invitation rides the same window the join beacon does. */
         if (rc == IPC_ST_OK)
             pairing_arm_init(dev_id, RADIO_PAIR_WINDOW_MS);
         cli_out(cli, rc == IPC_ST_OK ? "\r\nwindow open for 0x%08lx\r\n"
@@ -1705,7 +1739,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(argv[1], "add") == 0 && argc == 4)
+    if (strcmp(argv[1], "add") == 0 && argc == 3)
         return cmd_device_add(cli, argv);
 
     if (strcmp(argv[1], "remove") == 0 && argc == 3)
@@ -1758,7 +1792,7 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
 
     cli_out(cli,
         "\r\ndevice <cmd> <args>\r\n"
-        "add <id> <pubkey>       - enrol and open a pairing window\r\n"
+        "add <id>                - enrol and open a pairing window\r\n"
         "hubkey recover|commit   - carry a hub key across a format change\r\n"
         "remove <id>             - forget a device\r\n"
         "dlnonce                 - read the downlink nonce guard, sealing nothing\r\n"

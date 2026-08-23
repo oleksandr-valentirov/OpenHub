@@ -225,8 +225,10 @@ def check(files, only=None):
             st = line.strip()
             # A USER CODE marker is structure, not a comment: it must not open a block.
             marker = "USER CODE BEGIN" in st or "USER CODE END" in st
+            # A star continues something or it is a dereference.
             iscomment = not marker and (st.startswith(pfx) or (pfx == "//" and
-                                        (st.startswith("/*") or st.startswith("*"))))
+                                        (st.startswith("/*") or
+                                         (incomment and st.startswith("*")))))
             # A /* */ body counts to its close, or a continuation dodges the limit
             # by not opening with a star.
             if pfx in ("//", "/*"):
@@ -276,7 +278,7 @@ def main():
     changed = "--changed" in sys.argv
     files = tracked(changed)
     longb, own, cyr, brief, docs = check(files, touched_lines() if changed else None)
-    scope = "lines changed against HEAD" if changed else "all tracked files"
+    scope = "lines changed against HEAD" if changed else "every file a human owns"
     print("scope: %s (%d), generated and vendored excluded\n" % (scope, len(files)))
     for title, items in (("non-English outside CLAUDE.md", cyr),
                          ("comment blocks over 100 characters", longb),

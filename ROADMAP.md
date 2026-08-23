@@ -762,3 +762,43 @@ not assuming.
   reset spends the one honest test of it on nobody watching.
 
 `open_hub/testing/sdr.md`.
+
+### 57. Duty cycle cannot be attributed to one transmitter — `debt`
+
+`dutycycle.py` scans the whole captured band, and the 1% limit is **per
+transmitter**. A wideband capture holds the hub, both devices and the foreign
+traffic seen on grid channels 9, 10, 16, 17 and 18, so its total is a ceiling for
+any one of them and cannot be compared against a per-transmitter prediction.
+
+Everything needed already exists elsewhere: `airgrid.py` classifies each burst by
+grid position — beacon, downlink, `uplink<n>` — and C6 already measures mean air
+time per position against `phy.air_us(payload)`. What is missing is summing that
+per transmitter over the capture duration.
+
+Until it exists, the regression's duty-cycle check runs on a single-transmitter
+capture with the other side holding transmit, which spends a bench agreement on
+something arithmetic should cover.
+
+`specs/06-regression.md` §6.1.
+
+### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
+
+One exchange holds the join channel for **~214 300 us** to the confirmation, and
+`RADIO_JOIN_LEN_US` is 116 000 with `RADIO_JOIN_RX_US` at 100 000. Measured and
+summed on 2026-08-23; the two compute terms are ~60 000 us on CM7 and ~82 000 us
+on the device, both for two X25519.
+
+It shows as `req 7 -> rsp 7 -> conf 3 -> accept 3`: every request answered, four
+of seven exchanges dying between the response and the confirmation, and a fresh
+enrolment succeeding 1 of 5 once any device is already paired against 1 of 1 when
+none is.
+
+`begin_quiesce()` is the mechanism meant to buy the air and cannot: a quiesce
+starts at the **next** superframe boundary and the exchange starts 126 ms before
+one, so the response goes out before the clear air begins. `RADIO_QUIESCE_MIN_GAP`
+then refuses back-to-back enrolments outright — `pairings that got no clear air`.
+
+The region cannot simply grow: only 116 400 us remain between
+`RADIO_JOIN_OFFSET_US` and the end guard. This needs a decision, not a constant.
+
+`../radio_devices_docs/radio/pairing.md` § the exchange no longer fits the region.

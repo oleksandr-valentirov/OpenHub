@@ -94,7 +94,7 @@ uint32_t pairing_doorbells(uint32_t *timeouts);
 void    pairing_set_report_every(uint8_t n);
 
 /**
- * @brief Arms pair_v3's invitation for one device.
+ * @brief Arms pair_v4's invitation for one device.
  * @param dev_id     the enrolled device to invite
  * @param window_ms  how long the window stays open
  *
@@ -113,7 +113,7 @@ typedef struct pairing_init_stats {
     uint32_t push_failed;
     uint32_t derive_failed;
     uint32_t last_superframe;
-    uint8_t  last_frame[28]; /**< what the live path built, never a second builder */
+    uint8_t  last_frame[61]; /**< what the live path built, never a second builder */
     uint8_t  last_len;
     uint8_t  armed;
 } pairing_init_stats_t;

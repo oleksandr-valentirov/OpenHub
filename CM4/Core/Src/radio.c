@@ -4,6 +4,7 @@
  *
  * radio_devices_docs/open_hub/radio/superloop.md
  */
+#include <stddef.h>
 #include <string.h>
 
 #include "radio.h"
@@ -18,7 +19,7 @@
 #include "radio_phy.h"
 #include "hop.h"
 #include "hop_v1.h"
-#include "pair_v2.h"
+#include "pair_v4.h"
 #include "calib.h"
 #include "build_id.h"
 
@@ -114,6 +115,7 @@ static void exchange_service(void);
 static void uplink_service(void);
 static void downlink_service(void);
 static int  install_device(const ipc_device_keys_t *k);
+static int  remove_device(uint32_t dev_id);
 
 
 static rfm69_dev_t radio;
@@ -214,7 +216,7 @@ static uint8_t  dl_next_slot;
 static uint32_t dl_sent, dl_seal_err, dl_tx_err, dl_no_device, dl_served;
 static uint32_t dl_prf_err, dl_last_hz, dl_last_sf;
 
-/* pair_v3's invitation. Opaque here: CM4 keys the bytes it was given. ADR-0021 */
+/* pair_v4's invitation. Opaque here: CM4 keys the bytes it was given. ADR-0021 */
 static uint8_t  pi_frame[RADIO_PAIR_INIT_MAX];
 static uint8_t  pi_len;
 static uint32_t pi_superframe;      /* 0 when nothing is queued */
@@ -1290,7 +1292,19 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         }
         break;
     }
-    case IPC_REQ_REMOVE_DEVICE:
+    case IPC_REQ_REMOVE_DEVICE: {
+        uint32_t dev_id;
+
+        if (req->len < sizeof(dev_id)) {
+            status = IPC_ST_BAD_ARG;
+            break;
+        }
+        memcpy(&dev_id, req->payload, sizeof(dev_id));
+        /* 1 removed, 0 nothing here; never held is not an error. */
+        reply = (remove_device(dev_id) == 0) ? 1u : 0u;
+        len = 1;
+        break;
+    }
     default:
         status = IPC_ST_UNKNOWN_REQ;
         break;
@@ -1584,13 +1598,13 @@ static int pair_tx(const void *payload, uint8_t len) {
 /* Split out so the self-test compares what transmits, not a second assembly.
  * radio_devices_docs/radio/crypto/wire-crypto.md */
 static void build_pair_rsp(radio_pair_rsp_t *f, uint32_t hid, uint32_t did,
-                           const uint8_t eph[33], const uint8_t confirm[16]) {
+                           const uint8_t eph[32], const uint8_t confirm[16]) {
     memset(f, 0, sizeof(*f));
     f->type    = RADIO_FRAME_PAIR_RSP;
-    f->version = RADIO_PROTO_VERSION;
+    f->version = RADIO_PAIR_VERSION;
     f->hub_id  = hid;
     f->dev_id  = did;
-    memcpy(f->eph_pubkey, eph, 33);
+    memcpy(f->eph_pubkey, eph, 32);
     memcpy(f->confirm, confirm, 16);
 }
 
@@ -1598,7 +1612,7 @@ static void build_pair_accept_hdr(radio_pair_accept_t *f, uint32_t hid, uint32_t
                                   uint32_t superframe, uint8_t retry) {
     memset(f, 0, sizeof(*f));
     f->type       = RADIO_FRAME_PAIR_ACCEPT;
-    f->version    = RADIO_PROTO_VERSION;
+    f->version    = RADIO_PAIR_VERSION;
     f->hub_id     = hid;
     f->dev_id     = did;
     f->superframe = superframe;
@@ -1611,8 +1625,10 @@ static int frame_selftest(void) {
     radio_pair_rsp_t rsp;
     radio_pair_accept_t acc;
 
+    /* Offsets from the struct: the points changed width and literals did not. */
     build_pair_rsp(&rsp, 0x33442211u, 0x0000002Au,
-                   PV_FRAME_RSP + 10, PV_FRAME_RSP + 43);
+                   PV_FRAME_RSP + offsetof(radio_pair_rsp_t, eph_pubkey),
+                   PV_FRAME_RSP + offsetof(radio_pair_rsp_t, confirm));
     if (memcmp(&rsp, PV_FRAME_RSP, sizeof(rsp)) != 0)
         return -1;
 
@@ -1709,6 +1725,26 @@ static int install_device(const ipc_device_keys_t *k) {
             return -1;
     }
     return 0;
+}
+
+/* The mirror of install_device: `used` was set in one place and cleared nowhere.
+ * radio_devices_docs/open_hub/arch/ipc.md */
+static int remove_device(uint32_t dev_id) {
+    if (dev_id == 0u)
+        return -1;
+    for (uint8_t i = 0; i < RADIO_MAX_DEVICES; i++) {
+        dev_entry_t *d = &devices[i];
+
+        if (!d->used || d->dev_id != dev_id)
+            continue;
+        /* Zeroed the way install leaves it, so no half-removed entry exists. */
+        memset(d, 0, sizeof(*d));
+        d->arrival_sync_us = IPC_ARRIVAL_SYNC_NONE;
+        if (device_count > 0u)
+            device_count--;
+        return 0;
+    }
+    return -1;
 }
 
 static void exchange_service(void) {
@@ -2109,7 +2145,7 @@ static void handle_join_frame(void) {
     rx_last_rssi       = (int8_t)(rssi_x2 / 2);
     rx_last_superframe = frame_counter;
 
-    if (len < 2u || rx_buffer[1] != RADIO_PROTO_VERSION) {
+    if (len < 2u || rx_buffer[1] != RADIO_PAIR_VERSION) {
         pair_reqs_dropped++;
         reqs_drop_last = RADIO_DROP_VERSION;
         return;

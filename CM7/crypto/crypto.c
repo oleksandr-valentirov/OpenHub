@@ -18,10 +18,8 @@
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 
-#include "wire_v3.h"
-#include "pair_v2.h"
-#include "pair_v3.h"
-#include "pair_prov.h"
+#include "wire_v4.h"
+#include "pair_v4.h"
 #include "radio_protocol.h"
 
 #define CRYPTO_MISMATCH (-1)
@@ -65,13 +63,21 @@ int crypto_random(void *buf, size_t len) {
     return mbedtls_ctr_drbg_random(&drbg, (unsigned char *)buf, len);
 }
 
+/* RFC 7748 5 clamps the scalar; mbedTLS refuses one that arrives unclamped.
+ * radio_devices_docs/radio/crypto/wire-crypto.md */
+static void clamp_scalar(const uint8_t in[32], uint8_t out[32]) {
+    memcpy(out, in, 32);
+    out[0]  = (uint8_t)(out[0] & 248u);
+    out[31] = (uint8_t)((out[31] & 127u) | 64u);
+}
+
 /* mbedTLS takes its randomness as a callback of this shape. */
 static int rng_cb(void *ctx, unsigned char *out, size_t len) {
     (void)ctx;
     return crypto_random(out, len);
 }
 
-int crypto_p256_keygen(uint8_t priv[32], uint8_t pub[33]) {
+int crypto_x25519_keygen(uint8_t priv[32], uint8_t pub[32]) {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point Q;
     mbedtls_mpi d;
@@ -85,7 +91,7 @@ int crypto_p256_keygen(uint8_t priv[32], uint8_t pub[33]) {
     mbedtls_ecp_point_init(&Q);
     mbedtls_mpi_init(&d);
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
 
     /* rng_cb reaches the guarded hardware draw.
@@ -93,11 +99,12 @@ int crypto_p256_keygen(uint8_t priv[32], uint8_t pub[33]) {
     rc = mbedtls_ecdh_gen_public(&grp, &d, &Q, rng_cb, NULL);
     if (rc != 0) goto done;
 
-    rc = mbedtls_mpi_write_binary(&d, priv, 32);
+    /* Little-endian both: RFC 7748 numbers a scalar and a u-coordinate that way. */
+    rc = mbedtls_mpi_write_binary_le(&d, priv, 32);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_COMPRESSED,
-                                        &olen, pub, 33);
-    if (rc == 0 && olen != 33)
+    rc = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                        &olen, pub, 32);
+    if (rc == 0 && olen != 32)
         rc = CRYPTO_MISMATCH;
 
 done:
@@ -106,12 +113,13 @@ done:
     mbedtls_ecp_group_free(&grp);
     if (rc != 0) {
         memset(priv, 0, 32);
-        memset(pub, 0, 33);
+        memset(pub, 0, 32);
     }
     return rc;
 }
 
-int crypto_p256_public(const uint8_t priv[32], uint8_t pub[33]) {
+int crypto_x25519_public(const uint8_t priv[32], uint8_t pub[32]) {
+    uint8_t k[32];
     mbedtls_ecp_group grp;
     mbedtls_ecp_point Q;
     mbedtls_mpi d;
@@ -125,19 +133,20 @@ int crypto_p256_public(const uint8_t priv[32], uint8_t pub[33]) {
     mbedtls_ecp_point_init(&Q);
     mbedtls_mpi_init(&d);
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_read_binary(&d, priv, 32);
+    clamp_scalar(priv, k);
+    rc = mbedtls_mpi_read_binary_le(&d, k, 32);
     if (rc != 0) goto done;
-    /* Rejects zero and anything at or above the group order.
+    /* Checks the clamping RFC 7748 requires; an unclamped scalar is refused.
      * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_ecp_check_privkey(&grp, &d);
     if (rc != 0) goto done;
     rc = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, rng_cb, NULL);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_COMPRESSED,
-                                        &olen, pub, 33);
-    if (rc == 0 && olen != 33)
+    rc = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                        &olen, pub, 32);
+    if (rc == 0 && olen != 32)
         rc = CRYPTO_MISMATCH;
 
 done:
@@ -145,7 +154,7 @@ done:
     mbedtls_ecp_point_free(&Q);
     mbedtls_ecp_group_free(&grp);
     if (rc != 0)
-        memset(pub, 0, 33);
+        memset(pub, 0, 32);
     return rc;
 }
 
@@ -167,17 +176,17 @@ static void pair_salt(uint8_t salt[20], uint32_t hub_id, uint32_t dev_id,
 }
 
 /* Both hub keys are bound; hub_static is never transmitted. */
-static void pair_transcript(uint8_t t[119], uint32_t hub_id, uint32_t dev_id,
+static void pair_transcript(uint8_t t[116], uint32_t hub_id, uint32_t dev_id,
                             uint32_t req_superframe, const uint8_t dev_nonce[8],
-                            const uint8_t hub_pub[33], const uint8_t eph_pub[33],
-                            const uint8_t dev_pub[33]) {
+                            const uint8_t hub_pub[32], const uint8_t eph_pub[32],
+                            const uint8_t dev_pub[32]) {
     be32(t, hub_id);
     be32(t + 4, dev_id);
     be32(t + 8, req_superframe);
     memcpy(t + 12, dev_nonce, 8);
-    memcpy(t + 20, hub_pub, 33);
-    memcpy(t + 53, eph_pub, 33);
-    memcpy(t + 86, dev_pub, 33);
+    memcpy(t + 20, hub_pub, 32);
+    memcpy(t + 52, eph_pub, 32);
+    memcpy(t + 84, dev_pub, 32);
 }
 
 static int hkdf16(const uint8_t *z, const uint8_t salt[20], const char *info,
@@ -188,10 +197,10 @@ static int hkdf16(const uint8_t *z, const uint8_t salt[20], const char *info,
                         (const unsigned char *)info, strlen(info), out, len);
 }
 
-static int confirm(const uint8_t key[32], const uint8_t t[119], uint8_t out[16]) {
+static int confirm(const uint8_t key[32], const uint8_t t[116], uint8_t out[16]) {
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     uint8_t full[32];
-    int rc = mbedtls_md_hmac(md, key, 32, t, 119, full);
+    int rc = mbedtls_md_hmac(md, key, 32, t, 116, full);
 
     if (rc == 0)
         memcpy(out, full, 16);
@@ -199,56 +208,41 @@ static int confirm(const uint8_t key[32], const uint8_t t[119], uint8_t out[16])
     return rc;
 }
 
-/* pair_v3's invitation key: Z1 alone. Derive once per device. ADR-0021 */
-int crypto_pair_init_key(const uint8_t hub_priv[32], const uint8_t dev_pub[33],
-                         uint32_t hub_id, uint32_t dev_id, uint8_t k_init[32]) {
-    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+int crypto_x25519_ecdh(const uint8_t priv[32], const uint8_t peer_pub[32],
+                       uint8_t shared[32]) {
+    uint8_t k[32];
     mbedtls_ecp_group grp;
-    mbedtls_ecp_point D;
+    mbedtls_ecp_point P;
     mbedtls_mpi d, z;
-    uint8_t z1[32];
-    uint8_t salt[8];
     int rc;
 
-    memset(k_init, 0, 32);
+    if (priv == NULL || peer_pub == NULL || shared == NULL)
+        return -1;
+
+    memset(shared, 0, 32);
     mbedtls_ecp_group_init(&grp);
-    mbedtls_ecp_point_init(&D);
+    mbedtls_ecp_point_init(&P);
     mbedtls_mpi_init(&d);
     mbedtls_mpi_init(&z);
-    memset(z1, 0, sizeof(z1));
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_point_read_binary(&grp, &D, dev_pub, 33);
+    rc = mbedtls_ecp_point_read_binary(&grp, &P, peer_pub, 32);
     if (rc != 0) goto done;
-    /* read_binary accepts an x with no square root; this is the only rejection.
-     * radio_devices_docs/open_hub/security/self-tests.md */
-    rc = mbedtls_ecp_check_pubkey(&grp, &D);
+    clamp_scalar(priv, k);
+    rc = mbedtls_mpi_read_binary_le(&d, k, 32);
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_read_binary(&d, hub_priv, 32);
+    rc = mbedtls_ecdh_compute_shared(&grp, &z, &P, &d, rng_cb, NULL);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_check_privkey(&grp, &d);
-    if (rc != 0) goto done;
-    rc = mbedtls_ecdh_compute_shared(&grp, &z, &D, &d, rng_cb, NULL);
-    if (rc != 0) goto done;
-    rc = mbedtls_mpi_write_binary(&z, z1, 32);
-    if (rc != 0) goto done;
+    rc = mbedtls_mpi_write_binary_le(&z, shared, 32);
 
-    salt[0] = (uint8_t)(hub_id >> 24); salt[1] = (uint8_t)(hub_id >> 16);
-    salt[2] = (uint8_t)(hub_id >> 8);  salt[3] = (uint8_t)hub_id;
-    salt[4] = (uint8_t)(dev_id >> 24); salt[5] = (uint8_t)(dev_id >> 16);
-    salt[6] = (uint8_t)(dev_id >> 8);  salt[7] = (uint8_t)dev_id;
-
-    rc = mbedtls_hkdf(md, salt, sizeof(salt), z1, sizeof(z1),
-                      (const uint8_t *)"openhub/v3/init", 15, k_init, 32);
 done:
-    if (rc != 0)
-        memset(k_init, 0, 32);
-    mbedtls_platform_zeroize(z1, sizeof(z1));
     mbedtls_mpi_free(&z);
     mbedtls_mpi_free(&d);
-    mbedtls_ecp_point_free(&D);
+    mbedtls_ecp_point_free(&P);
     mbedtls_ecp_group_free(&grp);
+    if (rc != 0)
+        memset(shared, 0, 32);
     return rc;
 }
 
@@ -269,18 +263,19 @@ int crypto_pair_init_mac(const uint8_t k_init[32], const uint8_t *hdr,
 
 /* The ephemeral is supplied rather than drawn, so a self-test can pin only it.
  * radio_devices_docs/open_hub/security/self-tests.md */
-static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33],
-                           const uint8_t dev_pub[33], const uint8_t eph_priv[32],
-                           const uint8_t eph_pub[33],
+static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
+                           const uint8_t dev_pub[32], const uint8_t eph_priv[32],
+                           const uint8_t eph_pub[32],
                            uint32_t hub_id, uint32_t dev_id,
                            uint32_t req_superframe, const uint8_t dev_nonce[8],
                            crypto_pair_out_t *out) {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point D;
     mbedtls_mpi d, z;
+    uint8_t k[32];
     uint8_t zz[64];
     uint8_t salt[20];
-    uint8_t t[119];
+    uint8_t t[116];
     uint8_t ck_hub[32], ck_dev[32];
     int rc;
 
@@ -291,33 +286,35 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     mbedtls_mpi_init(&z);
     memset(zz, 0, sizeof(zz));
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_point_read_binary(&grp, &D, dev_pub, 33);
+    rc = mbedtls_ecp_point_read_binary(&grp, &D, dev_pub, 32);
     if (rc != 0) goto done;
-    /* read_binary succeeds on an x with no square root and returns a garbage Y.
+    /* Kept as the one shape check; X25519 has no off-curve point to reject.
      * radio_devices_docs/open_hub/security/self-tests.md */
     rc = mbedtls_ecp_check_pubkey(&grp, &D);
     if (rc != 0) goto done;
 
     /* Z1, the static-static term: the entire authentication of the hub. */
-    rc = mbedtls_mpi_read_binary(&d, hub_priv, 32);
+    clamp_scalar(hub_priv, k);
+    rc = mbedtls_mpi_read_binary_le(&d, k, 32);
     if (rc != 0) goto done;
     rc = mbedtls_ecp_check_privkey(&grp, &d);
     if (rc != 0) goto done;
     rc = mbedtls_ecdh_compute_shared(&grp, &z, &D, &d, rng_cb, NULL);
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_write_binary(&z, zz, 32);
+    rc = mbedtls_mpi_write_binary_le(&z, zz, 32);
     if (rc != 0) goto done;
 
     /* Z2: the ephemeral term, which is the hub's contribution of freshness. */
-    rc = mbedtls_mpi_read_binary(&d, eph_priv, 32);
+    clamp_scalar(eph_priv, k);
+    rc = mbedtls_mpi_read_binary_le(&d, k, 32);
     if (rc != 0) goto done;
     rc = mbedtls_ecp_check_privkey(&grp, &d);
     if (rc != 0) goto done;
     rc = mbedtls_ecdh_compute_shared(&grp, &z, &D, &d, rng_cb, NULL);
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_write_binary(&z, zz + 32, 32);
+    rc = mbedtls_mpi_write_binary_le(&z, zz + 32, 32);
     if (rc != 0) goto done;
 
     /* Reusing the static key as the ephemeral would make Z1 == Z2.
@@ -342,7 +339,7 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[33]
     rc = confirm(ck_dev, t, out->confirm_dev);
     if (rc != 0) goto done;
 
-    memcpy(out->eph_pub, eph_pub, 33);
+    memcpy(out->eph_pub, eph_pub, 32);
 
 done:
     mbedtls_platform_zeroize(zz, sizeof(zz));
@@ -357,12 +354,12 @@ done:
     return rc;
 }
 
-int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[33],
-                       const uint8_t dev_pub[33],
+int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
+                       const uint8_t dev_pub[32],
                        uint32_t hub_id, uint32_t dev_id,
                        uint32_t req_superframe, const uint8_t dev_nonce[8],
                        crypto_pair_out_t *out) {
-    uint8_t eph_priv[32], eph_pub[33];
+    uint8_t eph_priv[32], eph_pub[32];
     int rc;
 
     if (hub_priv == NULL || hub_pub == NULL || dev_pub == NULL ||
@@ -370,7 +367,7 @@ int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[33],
         return -1;
 
     memset(out, 0, sizeof(*out));
-    rc = crypto_p256_keygen(eph_priv, eph_pub);
+    rc = crypto_x25519_keygen(eph_priv, eph_pub);
     if (rc == 0)
         rc = pair_derive_eph(hub_priv, hub_pub, dev_pub, eph_priv, eph_pub,
                              hub_id, dev_id, req_superframe, dev_nonce, out);
@@ -476,14 +473,6 @@ done:
 
 /* Two key pairs agree, an honest key validates, a tampered one is rejected.
  * radio_devices_docs/open_hub/security/self-tests.md */
-static const uint8_t peer_pubkey[65] = {
-    0x04, 0xff, 0xa6, 0x58, 0x76, 0xc5, 0x3c, 0xec, 0x3e, 0x37, 0xff, 0xe4,
-    0x75, 0xa6, 0x8b, 0x07, 0xc7, 0x74, 0x3a, 0x72, 0xd2, 0x48, 0x10, 0xfb,
-    0x5f, 0x8b, 0xe4, 0x0b, 0x3e, 0x85, 0x4e, 0x79, 0xfe, 0x38, 0x1d, 0xbe,
-    0x7c, 0xa6, 0x3d, 0x2f, 0x8b, 0x4a, 0xaa, 0x9d, 0x1d, 0x82, 0x23, 0x4d,
-    0x77, 0xc8, 0x45, 0x3b, 0x18, 0xdf, 0x66, 0xd2, 0x5b, 0xa8, 0x40, 0x45,
-    0x47, 0xb1, 0xf8, 0xf4, 0x14
-};
 
 static int test_pairing_cost(void) {
     mbedtls_ecp_group grp;
@@ -497,9 +486,9 @@ static int test_pairing_cost(void) {
     mbedtls_mpi_init(&dhub);
     mbedtls_mpi_init(&z);
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
-    rc = mbedtls_ecp_point_read_binary(&grp, &Qpeer, peer_pubkey, sizeof(peer_pubkey));
+    rc = mbedtls_ecp_point_read_binary(&grp, &Qpeer, V_DEV_PUB, sizeof(V_DEV_PUB));
     if (rc != 0) goto done;
 
     /* The three operations a hub performs for one pairing, and nothing else. */
@@ -521,18 +510,10 @@ done:
     return rc;
 }
 
-/* The whole pairing derivation against the published pair_v2 set.
- * radio_devices_docs/open_hub/security/self-tests.md */
-static const uint8_t PV_HUB_EPH_PRIV[32] = {
-    0x4b, 0x3a, 0x29, 0x18, 0x07, 0xf6, 0xe5, 0xd4,
-    0xc3, 0xb2, 0xa1, 0x90, 0x7e, 0x6d, 0x5c, 0x4b,
-    0x3a, 0x29, 0x18, 0x07, 0x06, 0x05, 0x04, 0x03,
-    0x02, 0x01, 0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a
-};
 
-static int test_pair_v2(void) {
+static int test_pair_v4(void) {
     crypto_pair_out_t o;
-    uint8_t salt[20], t[119];
+    uint8_t salt[20], t[116];
     int rc;
 
     /* The two builders first, in isolation, and by bytes rather than by length.
@@ -541,16 +522,16 @@ static int test_pair_v2(void) {
     if (memcmp(salt, PV_SALT, sizeof(PV_SALT)) != 0) return CRYPTO_MISMATCH;
 
     pair_transcript(t, 0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
-                    PV_DEV_NONCE, V_HUB_PUB_C, PV_HUB_EPH_PUB, V_DEV_PUB_C);
+                    PV_DEV_NONCE, V_HUB_PUB, PV_HUB_EPH_PUB, V_DEV_PUB);
     if (memcmp(t, PV_TRANSCRIPT, sizeof(PV_TRANSCRIPT)) != 0) return CRYPTO_MISMATCH;
 
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
     if (rc != 0) return rc;
 
-    if (memcmp(o.eph_pub, PV_HUB_EPH_PUB, 33) != 0) return CRYPTO_MISMATCH;
+    if (memcmp(o.eph_pub, PV_HUB_EPH_PUB, 32) != 0) return CRYPTO_MISMATCH;
     if (memcmp(o.key_session, PV_KEY_SESSION, 16) != 0) return CRYPTO_MISMATCH;
     if (memcmp(o.confirm_hub, PV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
     if (memcmp(o.confirm_dev, PV_CONFIRM_DEV, 16) != 0) return CRYPTO_MISMATCH;
@@ -558,18 +539,18 @@ static int test_pair_v2(void) {
     /* Reflection: the two confirmations must not be interchangeable. */
     if (memcmp(o.confirm_hub, o.confirm_dev, 16) == 0) return CRYPTO_MISMATCH;
 
-    /* The fingerprint domain: compressed SEC1, not 0x04||X||Y and not bare X.
+    /* The fingerprint domain: the 32-byte u-coordinate as it goes on the wire.
      * radio_devices_docs/open_hub/security/self-tests.md */
     {
         uint8_t fp[32];
-        if (mbedtls_sha256(V_DEV_PUB_C, 33, fp, 0) != 0) return CRYPTO_MISMATCH;
+        if (mbedtls_sha256(V_DEV_PUB, 32, fp, 0) != 0) return CRYPTO_MISMATCH;
         if (memcmp(fp, PV_FINGERPRINT, sizeof(PV_FINGERPRINT)) != 0)
             return CRYPTO_MISMATCH;
     }
 
-    /* A key not on the curve, refused before any scalar multiplication.
+    /* X25519 returns zero here rather than failing, so the derivation refuses.
      * radio_devices_docs/open_hub/security/self-tests.md */
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_REJECT_C,
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_REJECT_U,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
@@ -598,7 +579,7 @@ static int test_ecdh(void) {
     mbedtls_mpi_init(&za);
     mbedtls_mpi_init(&zb);
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
 
     rc = mbedtls_ecdh_gen_public(&grp, &da, &Qa, rng_cb, NULL);
@@ -615,12 +596,16 @@ static int test_ecdh(void) {
 
     if (mbedtls_mpi_cmp_mpi(&za, &zb) != 0) { rc = CRYPTO_MISMATCH; goto done; }
 
-    /* Move the point off the curve and require the check to catch it. */
-    if (mbedtls_mpi_add_int(&Qa.MBEDTLS_PRIVATE(Y), &Qa.MBEDTLS_PRIVATE(Y), 1) != 0) {
+    /* Every u is valid, so what is asserted is that the peer's key is read.
+     * radio_devices_docs/open_hub/security/self-tests.md */
+    if (mbedtls_ecp_check_pubkey(&grp, &Qa) != 0) { rc = CRYPTO_MISMATCH; goto done; }
+    if (mbedtls_mpi_add_int(&Qa.MBEDTLS_PRIVATE(X), &Qa.MBEDTLS_PRIVATE(X), 1) != 0) {
         rc = CRYPTO_MISMATCH;
         goto done;
     }
-    rc = (mbedtls_ecp_check_pubkey(&grp, &Qa) == 0) ? CRYPTO_MISMATCH : 0;
+    rc = mbedtls_ecdh_compute_shared(&grp, &za, &Qa, &db, rng_cb, NULL);
+    if (rc != 0) goto done;
+    rc = (mbedtls_mpi_cmp_mpi(&za, &zb) == 0) ? CRYPTO_MISMATCH : 0;
 
 done:
     mbedtls_mpi_free(&zb);
@@ -651,19 +636,19 @@ static int test_vectors(void) {
     mbedtls_mpi_init(&z);
     mbedtls_gcm_init(&gcm);
 
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
+    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (rc != 0) goto done;
 
-    /* SEC1 uncompressed point in, X-coordinate-only secret out. */
+    /* One u-coordinate in, one u-coordinate out; RFC 7748 has no other form. */
     rc = mbedtls_ecp_point_read_binary(&grp, &Q, V_DEV_PUB, sizeof(V_DEV_PUB));
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_read_binary(&d, V_HUB_PRIV, sizeof(V_HUB_PRIV));
+    rc = mbedtls_mpi_read_binary_le(&d, V_HUB_PRIV, sizeof(V_HUB_PRIV));
     if (rc != 0) goto done;
     rc = mbedtls_ecdh_compute_shared(&grp, &z, &Q, &d, rng_cb, NULL);
     if (rc != 0) goto done;
-    rc = mbedtls_mpi_write_binary(&z, buf, sizeof(buf));
+    rc = mbedtls_mpi_write_binary_le(&z, buf, sizeof(buf));
     if (rc != 0) goto done;
-    if (memcmp(buf, V_ECDH_X, sizeof(V_ECDH_X)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
+    if (memcmp(buf, V_ECDH_SHARED, sizeof(V_ECDH_SHARED)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
 
     md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (md == NULL) { rc = CRYPTO_MISMATCH; goto done; }
@@ -789,77 +774,97 @@ done:
 
 /* Can this build read a compressed SEC1 point? It decides the wire format.
  * ADR-0018, radio_devices_docs/open_hub/security/self-tests.md */
-static int test_point_compress(void) {
-    mbedtls_ecp_group grp;
-    mbedtls_ecp_point Q;
-    uint8_t buf[32];
+static int test_low_order(void) {
+    uint8_t z[32];
+    uint8_t pub[32];
     int rc;
 
-    mbedtls_ecp_group_init(&grp);
-    mbedtls_ecp_point_init(&Q);
-
-    rc = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
-    if (rc != 0) goto done;
-
-    /* Against the shared vector, never against our own arithmetic. */
-    rc = mbedtls_ecp_point_read_binary(&grp, &Q, V_DEV_PUB_C, sizeof(V_DEV_PUB_C));
-    if (rc != 0) goto done;
-
-    rc = mbedtls_mpi_write_binary(&Q.MBEDTLS_PRIVATE(X), buf, sizeof(buf));
-    if (rc != 0) goto done;
-    if (memcmp(buf, V_DEV_PUB_X, sizeof(V_DEV_PUB_X)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
-
-    /* Y is recovered rather than transmitted, so it is the half worth checking. */
-    rc = mbedtls_mpi_write_binary(&Q.MBEDTLS_PRIVATE(Y), buf, sizeof(buf));
-    if (rc != 0) goto done;
-    if (memcmp(buf, V_DEV_PUB_Y, sizeof(V_DEV_PUB_Y)) != 0) { rc = CRYPTO_MISMATCH; goto done; }
-
-    if (mbedtls_ecp_check_pubkey(&grp, &Q) != 0) { rc = CRYPTO_MISMATCH; goto done; }
-
-    /* The hub key carries the other parity prefix, 0x03 against 0x02. */
-    {
-        mbedtls_ecp_point H;
-        mbedtls_ecp_point_init(&H);
-        rc = mbedtls_ecp_point_read_binary(&grp, &H, V_HUB_PUB_C, sizeof(V_HUB_PUB_C));
-        if (rc == 0) {
-            rc = mbedtls_mpi_write_binary(&H.MBEDTLS_PRIVATE(Y), buf, sizeof(buf));
-            if (rc == 0 && memcmp(buf, V_HUB_PUB_Y, sizeof(V_HUB_PUB_Y)) != 0)
-                rc = CRYPTO_MISMATCH;
-        }
-        mbedtls_ecp_point_free(&H);
-        if (rc != 0) goto done;
-    }
-
-    /* Real ECDH against the decompressed point, not a comparison of Y to bytes.
+    /* Any 32 bytes is a u-coordinate; there is no off-curve point to reject.
      * radio_devices_docs/open_hub/security/self-tests.md */
+    rc = crypto_x25519_ecdh(V_HUB_PRIV, V_DEV_PUB, z);
+    if (rc != 0) return rc;
+    if (memcmp(z, V_ECDH_SHARED, 32) != 0) return CRYPTO_MISMATCH;
+
+    /* The one refusal that remains, and it is about the output, not the input. */
+    if (crypto_x25519_ecdh(V_HUB_PRIV, V_REJECT_U, z) == 0) return CRYPTO_MISMATCH;
+    /* And nothing stale is left where a secret would have gone. */
+    for (int i = 0; i < 32; i++)
+        if (z[i] != 0) return CRYPTO_MISMATCH;
+
+    /* An unclamped scalar must still work: X25519 clamps, it does not refuse.
+     * radio_devices_docs/radio/crypto/wire-crypto.md */
     {
-        mbedtls_mpi d, z;
-        mbedtls_mpi_init(&d);
-        mbedtls_mpi_init(&z);
-        rc = mbedtls_mpi_read_binary(&d, V_HUB_PRIV, sizeof(V_HUB_PRIV));
-        if (rc == 0)
-            rc = mbedtls_ecdh_compute_shared(&grp, &z, &Q, &d, rng_cb, NULL);
-        if (rc == 0)
-            rc = mbedtls_mpi_write_binary(&z, buf, sizeof(buf));
-        if (rc == 0 && memcmp(buf, V_ECDH_X, sizeof(V_ECDH_X)) != 0)
-            rc = CRYPTO_MISMATCH;
-        mbedtls_mpi_free(&z);
-        mbedtls_mpi_free(&d);
-        if (rc != 0) goto done;
+        uint8_t raw[32];
+        memcpy(raw, V_HUB_PRIV, 32);
+        raw[0]  |= 0x07u;
+        raw[31] |= 0x80u;
+        if (crypto_x25519_public(raw, pub) != 0) return CRYPTO_MISMATCH;
+        if (memcmp(pub, V_HUB_PUB, 32) != 0) return CRYPTO_MISMATCH;
     }
+    return 0;
+}
 
-    /* x = 1 has no square root on P-256; a perturbed valid key would not test this.
+static int test_pair_prov(void) {
+    crypto_pair_out_t o, o2;
+    int rc;
+
+    /* The transcript hashes the REQUEST's superframe, and nothing else does.
      * radio_devices_docs/open_hub/security/self-tests.md */
-    mbedtls_ecp_point_free(&Q);
-    mbedtls_ecp_point_init(&Q);
-    rc = mbedtls_ecp_point_read_binary(&grp, &Q, V_REJECT_C, sizeof(V_REJECT_C));
-    if (rc != 0) { rc = CRYPTO_MISMATCH; goto done; }   /* it must not fail here */
-    rc = (mbedtls_ecp_check_pubkey(&grp, &Q) == 0) ? CRYPTO_MISMATCH : 0;
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
+                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
+                         0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
+                         PV_DEV_NONCE, &o);
+    if (rc != 0) return rc;
+    if (memcmp(o.confirm_hub, PV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
 
-done:
-    mbedtls_ecp_point_free(&Q);
-    mbedtls_ecp_group_free(&grp);
-    return rc;
+    /* A different superframe must produce a different confirmation. */
+    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
+                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
+                         0x33442211u, 0x0000002Au, PAIR_INIT_SUPERFRAME,
+                         PV_DEV_NONCE, &o2);
+    if (rc != 0) return rc;
+    if (memcmp(o2.confirm_hub, o.confirm_hub, 16) == 0) return CRYPTO_MISMATCH;
+    if (memcmp(o2.transcript, o.transcript, sizeof(o.transcript)) == 0)
+        return CRYPTO_MISMATCH;
+    return 0;
+}
+
+/* RFC 7748 6.1, which neither firmware wrote: keygen and ECDH, both directions.
+ * radio_devices_docs/open_hub/security/self-tests.md */
+static int test_x25519(void) {
+    static const uint8_t a_priv[32] = {
+        0x77,0x07,0x6d,0x0a,0x73,0x18,0xa5,0x7d,0x3c,0x16,0xc1,0x72,0x51,0xb2,0x66,0x45,
+        0xdf,0x4c,0x2f,0x87,0xeb,0xc0,0x99,0x2a,0xb1,0x77,0xfb,0xa5,0x1d,0xb9,0x2c,0x2a };
+    static const uint8_t a_pub[32] = {
+        0x85,0x20,0xf0,0x09,0x89,0x30,0xa7,0x54,0x74,0x8b,0x7d,0xdc,0xb4,0x3e,0xf7,0x5a,
+        0x0d,0xbf,0x3a,0x0d,0x26,0x38,0x1a,0xf4,0xeb,0xa4,0xa9,0x8e,0xaa,0x9b,0x4e,0x6a };
+    static const uint8_t b_priv[32] = {
+        0x5d,0xab,0x08,0x7e,0x62,0x4a,0x8a,0x4b,0x79,0xe1,0x7f,0x8b,0x83,0x80,0x0e,0xe6,
+        0x6f,0x3b,0xb1,0x29,0x26,0x18,0xb6,0xfd,0x1c,0x2f,0x8b,0x27,0xff,0x88,0xe0,0xeb };
+    static const uint8_t b_pub[32] = {
+        0xde,0x9e,0xdb,0x7d,0x7b,0x7d,0xc1,0xb4,0xd3,0x5b,0x61,0xc2,0xec,0xe4,0x35,0x37,
+        0x3f,0x83,0x43,0xc8,0x5b,0x78,0x67,0x4d,0xad,0xfc,0x7e,0x14,0x6f,0x88,0x2b,0x4f };
+    static const uint8_t shared[32] = {
+        0x4a,0x5d,0x9d,0x5b,0xa4,0xce,0x2d,0xe1,0x72,0x8e,0x3b,0xf4,0x80,0x35,0x0f,0x25,
+        0xe0,0x7e,0x21,0xc9,0x47,0xd1,0x9e,0x33,0x76,0xf0,0x9b,0x3c,0x1e,0x16,0x17,0x42 };
+    uint8_t pub[32], z[32];
+    int rc;
+
+    rc = crypto_x25519_public(a_priv, pub);
+    if (rc != 0) return rc;
+    if (memcmp(pub, a_pub, 32) != 0) return CRYPTO_MISMATCH;
+    rc = crypto_x25519_public(b_priv, pub);
+    if (rc != 0) return rc;
+    if (memcmp(pub, b_pub, 32) != 0) return CRYPTO_MISMATCH;
+
+    /* Both directions: one of them agreeing by luck is not the same claim. */
+    rc = crypto_x25519_ecdh(a_priv, b_pub, z);
+    if (rc != 0) return rc;
+    if (memcmp(z, shared, 32) != 0) return CRYPTO_MISMATCH;
+    rc = crypto_x25519_ecdh(b_priv, a_pub, z);
+    if (rc != 0) return rc;
+    if (memcmp(z, shared, 32) != 0) return CRYPTO_MISMATCH;
+    return 0;
 }
 
 const char *crypto_test_name(crypto_test_t t) {
@@ -867,77 +872,48 @@ const char *crypto_test_name(crypto_test_t t) {
     case CRYPTO_TEST_DRBG: return "ctr-drbg seed+draw";
     case CRYPTO_TEST_HKDF: return "hkdf-sha256 rfc5869";
     case CRYPTO_TEST_GCM:  return "aes-128-gcm+tamper";
-    case CRYPTO_TEST_ECDH: return "p-256 ecdh+validate";
+    case CRYPTO_TEST_ECDH: return "x25519 keygen+ecdh";
     case CRYPTO_TEST_GCMLEN: return "gcm lengths 1..32";
     case CRYPTO_TEST_VECTORS: return "wire vectors (primitives)";
-    case CRYPTO_TEST_COMPRESS: return "compressed pt + reject";
-    case CRYPTO_TEST_PAIRCOST: return "p-256 hub pairing share";
-    case CRYPTO_TEST_PAIRV2: return "pair_v2 derive+confirm";
-    case CRYPTO_TEST_PAIRV3: return "pair_v3 init key+mac";
+    case CRYPTO_TEST_LOWORDER: return "low-order reject + clamp";
+    case CRYPTO_TEST_PAIRCOST: return "x25519 hub pairing share";
+    case CRYPTO_TEST_PAIRV4: return "pair_v4 derive+confirm";
+    case CRYPTO_TEST_X25519: return "x25519 rfc7748";
     case CRYPTO_TEST_PAIRPROV: return "superframe provenance";
-    default:               return "?";
+    default: return "?";
     }
 }
 
-/* pair_prov's consumer: pair_v2 with only the superframe moved.
+/* The four measured at 1 ms together, against 3320 for all eleven.
  * radio_devices_docs/open_hub/security/self-tests.md */
-static int test_pair_prov(void) {
-    crypto_pair_out_t o;
-    int rc;
+static const crypto_test_t fast_tests[] = {
+    CRYPTO_TEST_DRBG, CRYPTO_TEST_HKDF, CRYPTO_TEST_GCM, CRYPTO_TEST_GCMLEN
+};
 
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
-                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
-                         0x33442211u, 0x0000002Au, PROV_REQ_SUPERFRAME,
-                         PV_DEV_NONCE, &o);
-    if (rc != 0) return rc;
-    if (memcmp(o.transcript, PROV_TRANSCRIPT, sizeof(PROV_TRANSCRIPT)) != 0)
-        return CRYPTO_MISMATCH;
-    if (memcmp(o.key_session, PROV_KEY_SESSION, 16) != 0) return CRYPTO_MISMATCH;
-    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
-    if (memcmp(o.confirm_dev, PROV_CONFIRM_DEV, 16) != 0) return CRYPTO_MISMATCH;
+/* The console quotes a count; this is what stops the two from drifting apart. */
+_Static_assert(sizeof(fast_tests) / sizeof(fast_tests[0]) == CRYPTO_TEST_FAST_COUNT,
+               "the published fast-test count is not the set that runs");
 
-    /* The decoy must produce the published wrong answer exactly.
-     * radio_devices_docs/open_hub/security/self-tests.md */
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB_C, V_DEV_PUB_C,
-                         PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
-                         0x33442211u, 0x0000002Au, PROV_BEACON_SUPERFRAME,
-                         PV_DEV_NONCE, &o);
-    if (rc != 0) return rc;
-    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB_IF_BEACON, 16) != 0)
-        return CRYPTO_MISMATCH;
-    if (memcmp(o.confirm_hub, PROV_CONFIRM_HUB, 16) == 0) return CRYPTO_MISMATCH;
+static int fast_rc = CRYPTO_SELFTEST_UNRUN;
+static crypto_test_t fast_failed;
+
+int crypto_selftest_fast(void) {
+    fast_rc = 0;
+    for (unsigned i = 0; i < sizeof(fast_tests) / sizeof(fast_tests[0]); i++) {
+        int rc = crypto_run_test(fast_tests[i]);
+        if (rc != 0) {
+            fast_failed = fast_tests[i];
+            fast_rc = rc;
+            return rc;
+        }
+    }
     return 0;
 }
 
-/* The consumer pair_v3.h did not have, running the same functions the transmit
- * path calls. radio_devices_docs/open_hub/security/self-tests.md */
-static int test_pair_v3(void) {
-    uint8_t k[32], mac[12];
-    int rc;
-
-    /* The same symbols as pair_v2's test, not merely the same values. */
-    rc = crypto_pair_init_key(V_HUB_PRIV, V_DEV_PUB_C,
-                              0x33442211u, 0x0000002Au, k);
-    if (rc != 0) return rc;
-    if (memcmp(k, PV3_INIT_KEY, 32) != 0) return CRYPTO_MISMATCH;
-    /* And that Z1 is the value pair_v2 already publishes. */
-    if (sizeof(PV3_INIT_Z1) != 32) return CRYPTO_MISMATCH;
-
-    rc = crypto_pair_init_mac(k, PV3_INIT_HEADER, sizeof(PV3_INIT_HEADER), mac);
-    if (rc != 0) return rc;
-    if (memcmp(mac, PV3_INIT_MAC, 12) != 0) return CRYPTO_MISMATCH;
-    if (memcmp(PV3_INIT_FRAME + sizeof(PV3_INIT_HEADER), mac, 12) != 0)
-        return CRYPTO_MISMATCH;
-
-    rc = crypto_pair_init_mac(k, PV3_INIT_FRAME_NEXT_SF,
-                              sizeof(PV3_INIT_HEADER), mac);
-    if (rc != 0) return rc;
-    if (memcmp(PV3_INIT_FRAME_NEXT_SF + sizeof(PV3_INIT_HEADER), mac, 12) != 0)
-        return CRYPTO_MISMATCH;
-    /* The two frames differ only in the superframe; equal MACs would be a hole. */
-    if (memcmp(PV3_INIT_MAC, mac, 12) == 0)
-        return CRYPTO_MISMATCH;
-    return 0;
+int crypto_selftest_fast_rc(crypto_test_t *which) {
+    if (which != NULL)
+        *which = fast_failed;
+    return fast_rc;
 }
 
 int crypto_run_test(crypto_test_t t) {
@@ -954,10 +930,10 @@ int crypto_run_test(crypto_test_t t) {
     case CRYPTO_TEST_ECDH: rc = test_ecdh(); break;
     case CRYPTO_TEST_GCMLEN: rc = test_gcm_lengths(); break;
     case CRYPTO_TEST_VECTORS: rc = test_vectors(); break;
-    case CRYPTO_TEST_COMPRESS: rc = test_point_compress(); break;
+    case CRYPTO_TEST_LOWORDER: rc = test_low_order(); break;
     case CRYPTO_TEST_PAIRCOST: rc = test_pairing_cost(); break;
-    case CRYPTO_TEST_PAIRV2: rc = test_pair_v2(); break;
-    case CRYPTO_TEST_PAIRV3: rc = test_pair_v3(); break;
+    case CRYPTO_TEST_PAIRV4: rc = test_pair_v4(); break;
+    case CRYPTO_TEST_X25519: rc = test_x25519(); break;
     case CRYPTO_TEST_PAIRPROV: rc = test_pair_prov(); break;
     default:               rc = CRYPTO_MISMATCH; break;
     }

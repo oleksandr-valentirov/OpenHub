@@ -15,10 +15,10 @@
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
 /* 3 widened the payload, which is exactly what the half-flash gate is for.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      4u
+#define IPC_VERSION      5u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
-#define RADIO_PAIR_INIT_MAX  32u
+#define RADIO_PAIR_INIT_MAX  64u
 /* Was 64. SRAM4 pays 3 rings x 8 slots for every byte of it.
  * radio_devices_docs/open_hub/arch/ipc.md */
 #define IPC_PAYLOAD_MAX  96u
@@ -180,12 +180,12 @@ typedef struct ipc_pair_req_evt {
     uint32_t dev_id;
     uint32_t superframe;     /**< the counter the device echoed back */
     uint8_t  dev_nonce[8];   /**< the device's contribution of freshness */
-    uint8_t  pubkey[33];     /**< the device's static key, compressed SEC1 */
+    uint8_t  pubkey[32];     /**< the device's static key, x25519 u, little-endian */
 } __attribute__((packed)) ipc_pair_req_evt_t;
 
 /* ... and its reply: the body of PAIR_RSP, which CM4 frames and transmits. */
 typedef struct ipc_pair_rsp_evt {
-    uint8_t eph_pubkey[33];
+    uint8_t eph_pubkey[32]; /**< x25519 u, little-endian - RFC 7748 */
     uint8_t confirm[16];
 } __attribute__((packed)) ipc_pair_rsp_evt_t;
 

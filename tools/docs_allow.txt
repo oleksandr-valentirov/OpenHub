@@ -57,3 +57,7 @@ open_hub/network/telemetry.md:rssi_up_sync_dbm  # schema field, OHT_F_DEVICE_RSS
 open_hub/network/telemetry.md:snapshot_ask_ms   # schema field, OHT_F_LINK_SNAPSHOT_ASK_MS here
 open_hub/network/telemetry.md:dev_app           # schema command, OHT_CMD_DEV_APP here
 open_hub/network/telemetry.md:not_implemented   # schema result, OHT_RES_NOT_IMPLEMENTED here
+radio/phy.md:link_v4  # three correct historical citations: the pre-v4 wire, and what v4 grew
+radio/decisions/0022-boot-epoch-in-the-nonce.md:store_reserve_counter  # named as the scheme ADR-0023 removed
+radio/decisions/0023-the-hub-supplies-the-transmit-floor.md:store_reserve_counter  # named as what this record deletes
+radio/decisions/0022-boot-epoch-in-the-nonce.md:reserve_extend  # named as the discarded lower bound ADR-0023 fixed

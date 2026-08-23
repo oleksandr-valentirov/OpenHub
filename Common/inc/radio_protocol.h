@@ -27,11 +27,18 @@ enum {
     RADIO_FRAME_PAIR_ACCEPT = 0x06,   /**< hub -> device, sealed: the slot grant */
     RADIO_FRAME_UPLINK      = 0x07,   /**< device -> hub, sealed, in its own slot */
     RADIO_FRAME_DOWNLINK    = 0x08,   /**< hub -> device, sealed, in the downlink region */
-    RADIO_FRAME_PAIR_INIT   = 0x09    /**< hub -> device, join channel, MACed (pair_v3) */
+    RADIO_FRAME_PAIR_INIT   = 0x09    /**< hub -> device, join channel, MACed (pair_v4) */
 };
 
-/** @brief The version byte the pairing exchange carries. ADR-0012 */
+/** @brief The version byte the two beacons carry; ADR-0025 did not move them. */
 #define RADIO_PROTO_VERSION          2u
+
+/**
+ * @brief The four exchange frames' own version: their points shrank. ADR-0025
+ *
+ * radio_devices_docs/radio/pairing.md
+ */
+#define RADIO_PAIR_VERSION           3u
 
 /**
  * @brief The data frames' own version, bumped whenever a sealed body's layout moves.
@@ -88,10 +95,16 @@ typedef struct radio_join_beacon {
 _Static_assert(sizeof(radio_data_beacon_t) == 14, "data beacon is 14 bytes on the wire");
 _Static_assert(sizeof(radio_join_beacon_t) == 14, "join beacon is 14 bytes on the wire");
 
-/** @brief 3, while the rest of the exchange carries RADIO_PROTO_VERSION = 2. ADR-0021 */
-#define RADIO_PAIR_INIT_VERSION  3u
+/** @brief 4, while the rest of the exchange carries RADIO_PROTO_VERSION = 3. ADR-0024 */
+#define RADIO_PAIR_INIT_VERSION  4u
 
-/** @brief pair_v3's invitation, addressed to a named device. ADR-0021 */
+/** @brief Fixed at provisioning and never negotiated on the air. ADR-0024 */
+enum {
+    RADIO_ENROL_MODE_OPEN   = 0x00,   /**< the device id is the whole anchor; mac is zero */
+    RADIO_ENROL_MODE_SECRET = 0x01    /**< reserved: mac keyed by a provisioned secret */
+};
+
+/** @brief pair_v4's invitation, addressed to a named device. ADR-0021 */
 typedef struct radio_pair_init {
     uint8_t  type;              /**< RADIO_FRAME_PAIR_INIT */
     uint8_t  version;           /**< RADIO_PAIR_INIT_VERSION */
@@ -99,16 +112,21 @@ typedef struct radio_pair_init {
     uint32_t hub_id;
     uint32_t dev_id;            /**< addressed: only this device may answer */
     uint32_t superframe;
-    uint8_t  mac[12];
+    uint8_t  mode;              /**< RADIO_ENROL_MODE_*, and the device's own must match */
+    uint8_t  hub_static[32];    /**< X25519 u-coordinate, little-endian - RFC 7748 */
+    uint8_t  mac[12];           /**< all zero under RADIO_ENROL_MODE_OPEN */
 } __attribute__((packed)) radio_pair_init_t;
 
-_Static_assert(sizeof(radio_pair_init_t) == 28, "pair init is 28 bytes on the wire");
+_Static_assert(sizeof(radio_pair_init_t) == 61, "pair init is 61 bytes on the wire");
 _Static_assert(RADIO_PAIR_INIT_VERSION != RADIO_PROTO_VERSION,
-               "pair_v3's invitation is deliberately a different version byte "
+               "pair_v4's invitation is deliberately a different version byte "
                "from the pair_v2 frames that follow it");
 _Static_assert(RADIO_LINK_VERSION != RADIO_PROTO_VERSION &&
-               RADIO_LINK_VERSION != RADIO_PAIR_INIT_VERSION,
-               "the three version bytes must stay tellable apart on the wire");
+               RADIO_LINK_VERSION != RADIO_PAIR_INIT_VERSION &&
+               RADIO_LINK_VERSION != RADIO_PAIR_VERSION &&
+               RADIO_PAIR_VERSION != RADIO_PROTO_VERSION &&
+               RADIO_PAIR_VERSION != RADIO_PAIR_INIT_VERSION,
+               "the four version bytes must stay tellable apart on the wire");
 /** @brief The split the MAC covers, written as an offset rather than a sum. */
 #define RADIO_PAIR_INIT_MAC_LEN  12u
 _Static_assert(offsetof(radio_pair_init_t, mac) ==
@@ -128,10 +146,10 @@ typedef struct radio_pair_req {
     uint32_t dev_id;
     uint32_t superframe;
     uint8_t  dev_nonce[8];  /**< the device's only freshness; zero is refused */
-    uint8_t  pubkey[33];    /**< compressed SEC1 point - ADR-0018 */
+    uint8_t  pubkey[32];    /**< X25519 u-coordinate, little-endian - ADR-0025 */
 } __attribute__((packed)) radio_pair_req_t;
 
-_Static_assert(sizeof(radio_pair_req_t) == 57, "pair request is 57 bytes on the wire");
+_Static_assert(sizeof(radio_pair_req_t) == 56, "pair request is 56 bytes on the wire");
 
 /**
  * @brief The direction byte of the GCM nonce, pinned here and neither value zero.
@@ -158,7 +176,7 @@ typedef struct radio_pair_rsp {
     uint8_t  version;
     uint32_t hub_id;
     uint32_t dev_id;
-    uint8_t  eph_pubkey[33];    /**< compressed SEC1 - ADR-0018 */
+    uint8_t  eph_pubkey[32];    /**< X25519 u-coordinate, little-endian - ADR-0025 */
     uint8_t  confirm[16];       /**< HMAC(confirm_key_hub, transcript), truncated */
 } __attribute__((packed)) radio_pair_rsp_t;
 
@@ -288,7 +306,7 @@ enum {
 };
 
 /* Literals, here, in the header both ends compile. ADR-0012 */
-_Static_assert(sizeof(radio_pair_rsp_t)    == 59, "pair response is 59 bytes on the wire");
+_Static_assert(sizeof(radio_pair_rsp_t)    == 58, "pair response is 58 bytes on the wire");
 _Static_assert(sizeof(radio_pair_conf_t)   == 26, "pair confirm is 26 bytes on the wire");
 _Static_assert(sizeof(radio_pair_grant_t)  == 19, "pair grant is 19 bytes sealed");
 _Static_assert(sizeof(radio_pair_accept_t) == 50, "pair accept is 50 bytes on the wire");

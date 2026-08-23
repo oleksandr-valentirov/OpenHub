@@ -4,8 +4,8 @@
 
 #include <stdint.h>
 
-#define WIRE_VECTORS_VERSION 3
-#define WIRE_VECTORS_DIGEST  "ce2b96fe30597b58"
+#define WIRE_V3_VECTORS_VERSION 3
+#define WIRE_V3_VECTORS_DIGEST  "ce2b96fe30597b58"
 
 static const uint8_t V_HUB_PRIV[32] = {
     0x1f, 0x2e, 0x3d, 0x4c, 0x5b, 0x6a, 0x79, 0x88, 0x97, 0xa6, 0xb5, 0xc4,
