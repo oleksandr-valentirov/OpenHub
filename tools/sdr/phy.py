@@ -31,10 +31,16 @@ _NAMES = (
     "RADIO_UPLINK_OFFSET_US", "RADIO_UPLINK_BYTES", "RADIO_UPLINK_AIR_US",
     "RADIO_SLOT_COUNT", "RADIO_SLOT_STRIDE", "RADIO_SLOT_OPPS",
     "RADIO_US_PER_BYTE", "RADIO_FRAME_OVERHEAD_B", "RADIO_AIR_START_TO_SYNC_US",
+    "RADIO_PREAMBLE_BYTES", "RADIO_SYNC_BYTES", "RADIO_LENGTH_BYTES",
+    "RADIO_CRC_BYTES", "RADIO_MAX_PAYLOAD_B", "RADIO_SHAPING_BT_X10",
+    "RADIO_CRC_POLY", "RADIO_CRC_SEED", "RADIO_JOIN_OFFSET_US", "RADIO_JOIN_RX_US",
 )
 
 # No macro carries the beacon's length, so it comes off the wire struct.
 _SIZEOF = ("radio_data_beacon_t", "radio_uplink_t", "radio_downlink_t")
+
+# Brace initialisers, printed byte by byte rather than with the %lld above.
+_ARRAYS = ("RADIO_SYNC_WORD",)
 
 
 @functools.lru_cache(maxsize=1)
@@ -47,6 +53,11 @@ def constants():
         src.append('    printf("%s=%%lld\\n", (long long)(%s));' % (n, n))
     for s in _SIZEOF:
         src.append('    printf("sizeof %s=%%lld\\n", (long long)sizeof(%s));' % (s, s))
+    for a in _ARRAYS:
+        src.append('    { static const unsigned char v[] = %s;' % a)
+        src.append('      printf("%s=");' % a)
+        src.append('      for (size_t i = 0; i < sizeof(v); i++) printf("%02x", v[i]);')
+        src.append('      printf("\\n"); }')
     src += ["    return 0;", "}"]
 
     with tempfile.TemporaryDirectory() as d:
@@ -59,8 +70,13 @@ def constants():
             raise RuntimeError("the headers did not compile; a name below has moved "
                                "or changed shape:\n" + cc.stderr)
         out = subprocess.run([str(exe)], capture_output=True, text=True, check=True)
-    return {k: int(v) for k, v in
-            (ln.split("=", 1) for ln in out.stdout.splitlines() if "=" in ln)}
+    vals = {}
+    for ln in out.stdout.splitlines():
+        if "=" not in ln:
+            continue
+        k, v = ln.split("=", 1)
+        vals[k] = bytes.fromhex(v) if k in _ARRAYS else int(v)
+    return vals
 
 
 def profile():
@@ -72,6 +88,16 @@ def profile():
 
 def bitrate():
     return constants()["RADIO_BITRATE_BPS"]
+
+
+def sync_word():
+    """The bytes the part matches on, straight out of RADIO_SYNC_WORD."""
+    return constants()["RADIO_SYNC_WORD"]
+
+
+def shaping_bt():
+    """Gaussian BT, held in the header as an integer tenth."""
+    return constants()["RADIO_SHAPING_BT_X10"] / 10.0
 
 
 def deviation():
@@ -107,5 +133,5 @@ def uplink_slots(device):
 
 if __name__ == "__main__":
     for k, v in constants().items():
-        print("%-28s %d" % (k, v))
+        print("%-28s %s" % (k, v.hex(" ") if isinstance(v, bytes) else v))
     sys.stderr.write("\nread through cc from %s\n" % _INC)

@@ -25,6 +25,7 @@ says which package is missing rather than letting the capture fail obscurely.
 """
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -269,6 +270,42 @@ class BladeRf(Backend):
         return ("bladeRF RX gain is a unified dB figure (roughly 5-60 dB on the "
                 "bladeRF 1). AGC is switched off explicitly by capture.py, so "
                 "the number asked for is the number used.")
+
+    # Image directory the Ubuntu bladerf-fpga-hosted* packages write to.
+    fpga_dir = "/usr/share/Nuand/bladeRF"
+
+    def ensure_tx_fpga(self, serial=None):
+        """Reload the FPGA from the host image if the board configured itself.
+
+        The image this board autoloads from its own SPI flash receives but will
+        not transmit: a plain tone times out in the USB transfer layer, while
+        the identical version loaded from the host streams cleanly. The failure
+        is silent - frames simply never leave - so every transmit path checks
+        this first rather than reporting an empty air.
+        radio_devices_docs/open_hub/testing/sdr.md
+        """
+        def cli(*script):
+            cmd = ["bladeRF-cli"]
+            if serial:
+                cmd += ["-d", "*:serial=%s" % serial]
+            for line in script:
+                cmd += ["-e", line]
+            return subprocess.run(cmd, capture_output=True, text=True).stdout
+
+        out = cli("info", "version")
+        if "configured by USB host" in out:
+            return None
+        m = re.search(r"FPGA size:\s*(\d+)\s*KLE", out)
+        if not m:
+            raise SystemExit("cannot read the bladeRF's FPGA size; is it plugged in?")
+        image = "%s/hostedx%s.rbf" % (self.fpga_dir, m.group(1))
+        if not os.path.exists(image):
+            raise SystemExit("%s is missing: apt install bladerf-fpga-hostedx%s"
+                             % (image, m.group(1)))
+        cli("load fpga %s" % image)
+        if "configured by USB host" not in cli("version"):
+            raise SystemExit("the FPGA would not load from %s" % image)
+        return image
 
 
 BACKENDS = (RtlSdr(), BladeRf())
