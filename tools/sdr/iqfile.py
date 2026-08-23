@@ -1,29 +1,107 @@
-"""Shared loading and burst detection for the raw u8 IQ captures."""
+"""Shared loading and burst detection for the IQ captures.
+
+Two receivers write two sample formats - the RTL-SDR unsigned 8-bit, the
+bladeRF signed 12-in-16 - and which one a file holds is read from its `.meta`,
+never guessed from the file. A capture written before the format line existed
+is unsigned 8-bit, because that is the only thing that wrote one; that is what
+`sdrdev.DEFAULT_FORMAT` says and it is the reason the older captures in this
+directory still load.
+
+Samples come back in the source's own ADC counts rather than normalised. That
+is deliberate: `hops.py` decides whether a burst clipped by asking whether
+samples sit on the outermost code, and the outermost code is a property of the
+part. Normalising here would move that judgement into a scale factor and hide
+it. Ask `rail_threshold()` for the number instead of writing one down.
+"""
 import os
 
 import numpy as np
 
+import sdrdev
+
+# Everything else in a .meta is an integer.
+_STR_KEYS = ("format", "backend", "serial")
+
 
 def read_meta(path):
-    meta = {"centre": None, "rate": 250000, "signal": None, "offset": 100000}
+    meta = {"centre": None, "rate": 250000, "signal": None, "offset": 100000,
+            "format": sdrdev.DEFAULT_FORMAT, "backend": None, "serial": None,
+            "gain": None, "bandwidth": None}
     mpath = path + ".meta"
     if os.path.exists(mpath):
         for line in open(mpath):
             k, _, v = line.strip().partition("=")
-            if k in meta:
-                meta[k] = int(v)
+            if k in _STR_KEYS:
+                meta[k] = v
+            elif k in meta:
+                try:
+                    meta[k] = int(v)
+                except ValueError:
+                    meta[k] = float(v)
     return meta
+
+
+def rail_threshold(meta):
+    """|sample| at or above this sat on an ADC rail, in this file's own counts.
+
+    127.0 on the RTL-SDR, 2047.0 on the bladeRF. Reading a level off a clipped
+    burst measures the receiver rather than the transmitter, and a 30 dB
+    transmitter change once read as +0.07 dB for exactly this reason - so the
+    threshold has to follow the file, not the tool that last worked.
+    """
+    return sdrdev.fmt(meta["format"])["rail"]
+
+
+def fullscale(meta):
+    """Magnitude of the outermost code, once centred."""
+    return sdrdev.fmt(meta["format"])["fullscale"]
+
+
+def load_raw(path, meta=None):
+    """Interleaved real samples in the file's own counts, centred, plus its meta.
+
+    Interleaved rather than complex because the rail test counts I and Q
+    separately - either one hitting a rail clips the sample.
+    """
+    meta = read_meta(path) if meta is None else meta
+    f = sdrdev.fmt(meta["format"])
+    raw = np.fromfile(path, dtype=np.dtype(f["dtype"])).astype(np.float32)
+    if f["centre"]:
+        raw -= f["centre"]
+    return raw, meta
 
 
 def load(path, shift_to_dc=True):
     """Return (complex64 samples at baseband, sample rate)."""
-    meta = read_meta(path)
-    raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
+    raw, meta = load_raw(path)
     x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
     if shift_to_dc and meta["offset"]:
         n = np.arange(len(x), dtype=np.float64)
         x *= np.exp(-2j * np.pi * meta["offset"] * n / meta["rate"]).astype(np.complex64)
     return x, meta["rate"]
+
+
+def write_meta(path, centre, rate, signal, offset, sample_format,
+               backend=None, serial=None, gain=None, bandwidth=None):
+    """Write the sidecar that tells every other tool how to read the capture.
+
+    The backend, serial and gain are provenance, not decoration: a level quoted
+    without naming the instrument it came off is half a fact, and two receivers
+    on one bench is exactly when that stops being a slogan.
+    """
+    with open(path + ".meta", "w") as fh:
+        fh.write(f"centre={int(centre)}\nrate={int(rate)}\n"
+                 f"signal={int(signal)}\noffset={int(offset)}\n"
+                 f"format={sample_format}\n")
+        if backend:
+            fh.write(f"backend={backend}\n")
+        if serial:
+            fh.write(f"serial={serial}\n")
+        if gain is not None:
+            fh.write(f"gain={gain}\n")
+        if bandwidth is not None:
+            fh.write(f"bandwidth={int(bandwidth)}\n")
+    return path + ".meta"
 
 
 def lowpass(x, rate, cutoff, taps=129):

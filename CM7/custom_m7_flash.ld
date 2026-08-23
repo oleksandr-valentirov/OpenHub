@@ -123,10 +123,27 @@ SECTIONS
   _sidata = LOADADDR(.data);
 
   /* Initialized data sections goes into RAM, load LMA copy after code */
+
+  /* Executed from ITCM, loaded from flash. See config-store.md */
+  .itcmfunc :
+  {
+    . = ALIGN(4);
+    _sitcmfunc = .;
+    *(.itcmfunc)
+    *(.itcmfunc*)
+    . = ALIGN(4);
+    _eitcmfunc = .;
+  } >ITCMRAM AT> FLASH
+  _siitcmfunc = LOADADDR(.itcmfunc);
+
   .data : 
   {
     . = ALIGN(4);
     _sdata = .;        /* create a global symbol at data start */
+    /* Inside .data, so the existing startup copy carries it.
+       radio_devices_docs/open_hub/arch/config-store.md */
+    *(.ramfunc)
+    *(.ramfunc*)
     *(.data)           /* .data sections */
     *(.data*)          /* .data* sections */
 

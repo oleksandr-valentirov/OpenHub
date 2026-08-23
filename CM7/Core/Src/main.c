@@ -25,6 +25,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "keystore.h"
+#include "erasetest.h"
 #include "cli.h"
 #include <string.h>
 #include "lwip/udp.h"
@@ -216,6 +217,12 @@ Error_Handler();
   /* Before the scheduler: recovery may stall the bank it executes from.
    * radio_devices_docs/open_hub/arch/keystore.md */
   (void)ks_init();
+#if HUB_ERASE_TEST
+  /* CM4 arms IWDG2 then waits here without refreshing it.
+   * radio_devices_docs/open_hub/arch/config-store.md */
+  HAL_HSEM_Release(HSEM_ID_0, 0);
+  erasetest_run();
+#endif
   /* Stamped before CM4 is released from HSEM_ID_0.
    * radio_devices_docs/open_hub/arch/ipc.md */
   ipc_init();

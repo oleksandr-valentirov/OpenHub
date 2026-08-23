@@ -14,6 +14,7 @@ import numpy as np
 
 import iqfile
 import phy
+import sdrdev
 
 
 def spectrogram(x, rate, nfft):
@@ -111,13 +112,12 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
     spacing = c["RADIO_CH_SPACING_HZ"] if spacing is None else spacing
     count = c["RADIO_GRID_COUNT"] if count is None else count
 
-    meta = iqfile.read_meta(path)
-    raw = np.fromfile(path, dtype=np.uint8).astype(np.float32) - 127.5
-    # Per burst, never per file: a clipped burst divides down by the duty cycle.
+    raw, meta = iqfile.load_raw(path)
+    # Per burst, never per file, and the rail is the receiver's not the tool's.
     # radio_devices_docs/open_hub/testing/sdr.md
-    railed = np.abs(raw) >= 127.0
+    railed = np.abs(raw) >= iqfile.rail_threshold(meta)
     x = (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
-    x -= x.mean()                      # kill the RTL-SDR centre spike
+    x -= x.mean()                      # kill the receiver's centre spike
     rate, centre = meta["rate"], meta["centre"]
 
     P, freqs = spectrogram(x, rate, nfft)
@@ -188,6 +188,7 @@ def detect(path, nfft=2048, snr=15.0, bridge_ms=5.0, min_ms=2.0,
         quiet[2 * r["s"] * nfft:2 * r["e"] * nfft] = False
     return {"x": x, "rate": rate, "centre": centre, "slot_s": slot_s,
             "floor": floor, "bursts": recs, "P": P, "freqs": freqs,
+            "meta": meta,
             "clip_file": float(railed.mean()),
             "clip_quiet": float(railed[quiet].mean()) if quiet.any() else 0.0}
 
@@ -234,8 +235,8 @@ def main():
           f"{100*d['clip_file']:.4f} %")
     if worst > 1e-4:
         print(f"WARNING: a burst is clipping the ADC - no dB column below may be "
-              f"read as a transmitted level. Recapture at a lower manual gain "
-              f"(rtl_sdr -g 0 means AUTOMATIC, not zero).")
+              f"read as a transmitted level. Recapture at a lower manual gain.")
+        print(f"         {sdrdev.gain_note_for(d['meta'])}")
     print()
     print(f"{'t (ms)':>10} {'air (ms)':>9} {'MHz':>11} {'ch':>5} {'dB':>6} {'clip%':>7}"
           f" {'com kHz':>8} {'2tone kHz':>10} {'sep kHz':>8}  gap")

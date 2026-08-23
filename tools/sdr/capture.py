@@ -1,46 +1,36 @@
 #!/usr/bin/env python3
-"""Capture IQ from an RTL-SDR into a raw u8 file that the other tools here read.
+"""Capture IQ from whichever SDR is on the bench, into a file the other tools read.
 
-Tuning sits deliberately off-channel: the RTL-SDR has a large DC spike at its
-centre frequency, which would swamp a signal parked exactly on it.
+The receiver is chosen by asking `sdrdev` what is plugged in, not by assuming.
+Which one was used, at what gain, in what sample format, is written into the
+`.meta` beside the capture - so a file that outlives the session still names
+the instrument it came off.
+
+Tuning sits deliberately off-channel. Both receivers here are zero-IF and both
+put a DC spike at their centre frequency, which would otherwise sit on top of
+the carrier. The offset is recorded and undone by the other tools.
 """
 import argparse
 import contextlib
 import fcntl
 import os
-import shutil
 import subprocess
 import sys
 import time
 
+import iqfile
 import phy
-
-# Far enough from the DC spike, close enough that both FSK tones still fit.
-# radio_devices_docs/open_hub/testing/sdr.md
-DEFAULT_OFFSET = 60_000
-
-# The only rates the RTL2832U produces; one in the gap captures anyway.
-# radio_devices_docs/open_hub/testing/sdr.md
-RATE_RANGES = ((225_001, 300_000), (900_001, 3_200_000))
-
-
-def check_rate(rate):
-    rate = int(rate)
-    if any(lo <= rate <= hi for lo, hi in RATE_RANGES):
-        return rate
-    ranges = " or ".join(f"{lo}-{hi}" for lo, hi in RATE_RANGES)
-    sys.exit(f"sample rate {rate} is not one the RTL2832U can produce ({ranges} Hz).\n"
-             f"rtl_sdr would warn and capture at the wrong rate instead of stopping.")
-
-# One dongle, claimed exclusively, and two sessions that both reach for it.
-# radio_devices_docs/open_hub/testing/sdr.md
-LOCK_PATH = os.environ.get("OPENHUB_SDR_LOCK", "/tmp/openhub-rtlsdr.lock")
+import sdrdev
 
 
 @contextlib.contextmanager
-def sdr_lock(label, wait_s):
-    """Hold the dongle for the duration of a capture, or say who has it."""
-    fh = open(LOCK_PATH, "a+")
+def sdr_lock(path, label, wait_s, what):
+    """Hold one receiver for the duration of a capture, or say who has it.
+
+    The lock is per receiver, not per bench, and the RTL-SDR's path is unchanged
+    from when it was the only one. radio_devices_docs/open_hub/testing/sdr.md
+    """
+    fh = open(path, "a+")
     deadline = time.time() + wait_s
     while True:
         try:
@@ -51,8 +41,8 @@ def sdr_lock(label, wait_s):
                 fh.seek(0)
                 holder = fh.read().strip() or "another process"
                 fh.close()
-                sys.exit(f"RTL-SDR busy: {holder}\n"
-                         f"Wait, or raise --wait. Lock: {LOCK_PATH}")
+                sys.exit(f"{what} busy: {holder}\n"
+                         f"Wait, or raise --wait. Lock: {path}")
             time.sleep(0.5)
 
     fh.seek(0)
@@ -69,32 +59,65 @@ def sdr_lock(label, wait_s):
         fh.close()
 
 
-def capture(path, freq, rate, seconds, gain, offset=DEFAULT_OFFSET,
-            label="capture", wait_s=0.0):
-    if shutil.which("rtl_sdr") is None:
-        sys.exit("rtl_sdr not found - install rtl-sdr")
+# The capture's time axis is not what the .meta would claim. Fatal, not printed.
+# radio_devices_docs/open_hub/testing/sdr.md
+_RATE_LIES = ("Failed to set sample rate", "Failed to set samplerate",
+              "unable to set samplerate")
+# A bladeRF 1 with no FPGA image enumerates, opens, and reads as a dead antenna.
+# radio_devices_docs/open_hub/testing/sdr.md
+_NOT_READY = ("FPGA is not configured", "Operation timed out",
+              "No devices available")
+
+
+def capture(path, freq, rate, seconds, gain, offset=None, label="capture",
+            wait_s=0.0, prefer=None, bandwidth=None):
+    backend, devices = sdrdev.select(prefer)
+    serial = devices[0]["serial"] if devices else None
+    model = devices[0]["model"] if devices else backend.label
+    if offset is None:
+        offset = backend.default_offset
+
+    rate, why = backend.check_rate(rate)
+    if why:
+        sys.exit(why + "\nA rate the part cannot produce is not refused by every "
+                       "driver - some warn and capture at another rate, and the "
+                       ".meta then claims a time axis the file does not have.")
+    bad = backend.check_freq(freq - offset)
+    if bad:
+        sys.exit(bad)
+
     centre = int(freq - offset)
-    rate = check_rate(rate)
-    count = int(rate * seconds)  # rtl_sdr counts complex samples, not bytes
-    cmd = ["rtl_sdr", "-f", str(centre), "-s", str(int(rate)),
-           "-g", str(gain), "-n", str(count), path]
-    print(" ".join(cmd), file=sys.stderr)
-    with sdr_lock(label, wait_s):
-        proc = subprocess.run(cmd, stderr=subprocess.PIPE)
-    err = proc.stderr.decode(errors="replace")
-    # Written before the returncode is judged, so the explanation survives.
-    # radio_devices_docs/open_hub/testing/sdr.md
-    sys.stderr.write(err)
-    if proc.returncode != 0:
-        sys.exit(f"rtl_sdr exited {proc.returncode}")
-    # Fatal, not printed: a meta file claiming a wrong rate outlives the capture.
-    # radio_devices_docs/open_hub/testing/sdr.md
-    if "Failed to set sample rate" in err:
-        sys.exit("rtl_sdr could not set the sample rate; the capture's time axis "
-                 "would be wrong. Refusing to write a .meta that claims otherwise.")
-    meta = path + ".meta"
-    with open(meta, "w") as fh:
-        fh.write(f"centre={centre}\nrate={int(rate)}\nsignal={int(freq)}\noffset={int(offset)}\n")
+    print(f"{model} (sn={serial or 'n/a'}): {rate/1e6:.3f} Msps, "
+          f"centre {centre/1e6:.3f} MHz, {seconds:g} s, gain {gain}, "
+          f"format {backend.sample_format}", file=sys.stderr)
+
+    cmds = backend.capture_cmd(path, centre, rate, seconds, gain,
+                               serial=serial, bandwidth=bandwidth)
+    with sdr_lock(backend.lock_path(), label, wait_s, backend.label):
+        for cmd in cmds:
+            print(" ".join(cmd), file=sys.stderr)
+            proc = subprocess.run(cmd, stderr=subprocess.PIPE)
+            err = proc.stderr.decode(errors="replace")
+            # Written before the returncode is judged, so it survives.
+            # radio_devices_docs/open_hub/testing/sdr.md
+            sys.stderr.write(err)
+            if proc.returncode != 0:
+                hint = ""
+                if any(p in err for p in _NOT_READY):
+                    hint = (f"\n{backend.label} enumerated but would not stream. "
+                            f"On a bladeRF 1 the FPGA image is loaded at every "
+                            f"power-up: install bladerf-fpga-hostedx40 (or "
+                            f"-hostedx115) and check `bladeRF-cli -e info`.")
+                sys.exit(f"{cmd[0]} exited {proc.returncode}{hint}")
+            if any(p in err for p in _RATE_LIES):
+                sys.exit(f"{backend.label} could not set the sample rate; the "
+                         f"capture's time axis would be wrong. Refusing to write "
+                         f"a .meta that claims otherwise.")
+
+    meta = iqfile.write_meta(path, centre, rate, freq, offset,
+                             backend.sample_format, backend=backend.key,
+                             serial=serial, gain=gain,
+                             bandwidth=backend.effective_bandwidth(rate, bandwidth))
     print(f"wrote {path} and {meta}", file=sys.stderr)
     return meta
 
@@ -107,23 +130,36 @@ def main():
     ap.add_argument("-s", "--rate", type=float, default=250e3, help="sample rate in Hz")
     ap.add_argument("-t", "--seconds", type=float, default=5.0)
     ap.add_argument("-g", "--gain", type=float, default=30)
-    ap.add_argument("--offset", type=float, default=DEFAULT_OFFSET,
+    ap.add_argument("-d", "--device", default="auto",
+                    choices=["auto"] + [b.key for b in sdrdev.BACKENDS],
+                    help="which receiver to use; auto picks the widest ready one")
+    ap.add_argument("--bandwidth", type=float, default=None,
+                    help="analog filter width, Hz (bladeRF only; defaults to the "
+                         "sample rate so the whole captured span is passed)")
+    ap.add_argument("--offset", type=float, default=None,
                     help="tune this far below the signal to dodge the DC spike")
     ap.add_argument("--label", default=os.environ.get("OPENHUB_SDR_LABEL", "capture"),
-                    help="who is holding the dongle, shown to whoever is blocked")
+                    help="who is holding the receiver, shown to whoever is blocked")
     ap.add_argument("--wait", type=float, default=0.0,
-                    help="seconds to wait for the dongle before giving up")
+                    help="seconds to wait for the receiver before giving up")
     a = ap.parse_args()
 
     # An offset past the Nyquist edge clips one tone and reads as silence.
     # radio_devices_docs/open_hub/testing/sdr.md
+    offset = a.offset
+    if offset is None:
+        try:
+            offset = sdrdev.select(a.device)[0].default_offset
+        except SystemExit:
+            offset = sdrdev.RtlSdr.default_offset
     edge = a.rate / 2.0
-    if a.offset + phy.demod_cutoff() >= edge * 0.95:
-        print(f"warning: signal at +{a.offset/1e3:.0f} kHz is within 5% of the "
+    if offset + phy.demod_cutoff() >= edge * 0.95:
+        print(f"warning: signal at +{offset/1e3:.0f} kHz is within 5% of the "
               f"{edge/1e3:.0f} kHz band edge at {a.rate/1e3:.0f} kS/s.\n"
               f"         An FSK tone will be clipped. Raise --rate, or lower "
               f"--offset.", file=sys.stderr)
-    capture(a.path, a.freq, a.rate, a.seconds, a.gain, a.offset, a.label, a.wait)
+    capture(a.path, a.freq, a.rate, a.seconds, a.gain, a.offset, a.label,
+            a.wait, prefer=a.device, bandwidth=a.bandwidth)
 
 
 if __name__ == "__main__":

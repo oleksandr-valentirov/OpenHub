@@ -15,6 +15,7 @@ import sys
 import numpy as np
 
 import iqfile
+import sdrdev
 
 
 def main():
@@ -34,13 +35,14 @@ def main():
     rate = meta["rate"]
     centre = meta["signal"] - meta["offset"]
 
-    raw = np.fromfile(a.src, dtype=np.uint8)
+    # Through the shared reader, so a 12-bit capture is not misread as bytes.
+    raw, _ = iqfile.load_raw(a.src, meta)
     i0 = max(0, int((a.at - a.span / 2) / 1e3 * rate) * 2)
     i1 = min(len(raw), int((a.at + a.span / 2) / 1e3 * rate) * 2)
     if i1 - i0 < 1024:
         sys.exit("cut is empty - check --at against the capture length")
 
-    x = raw[i0:i1].astype(np.float32) - 127.5
+    x = raw[i0:i1]
     x = (x[0::2] + 1j * x[1::2]).astype(np.complex64)
 
     # The wanted channel to DC before the anti-alias filter, never after.
@@ -56,16 +58,19 @@ def main():
         x = x[::a.decimate]
         rate //= a.decimate
 
-    scale = 120.0 / max(1e-9, float(np.abs(x).max()))
+    # Written back in the source's format, not quantised down to 8 bits.
+    f = sdrdev.fmt(meta["format"])
+    scale = f["write_target"] / max(1e-9, float(np.abs(x).max()))
     out = np.empty(len(x) * 2, dtype=np.float32)
     out[0::2] = x.real * scale
     out[1::2] = x.imag * scale
-    np.clip(out + 127.5, 0, 255).astype(np.uint8).tofile(a.dst)
+    np.clip(out + f["centre"], f["code_min"], f["code_max"]) \
+        .astype(np.dtype(f["dtype"])).tofile(a.dst)
 
     # offset=0: the channel is at DC now, so nothing downstream should shift it.
-    with open(a.dst + ".meta", "w") as fh:
-        fh.write(f"centre={int(a.freq)}\nrate={int(rate)}\n"
-                 f"signal={int(a.freq)}\noffset=0\n")
+    iqfile.write_meta(a.dst, a.freq, rate, a.freq, 0, meta["format"],
+                      backend=meta.get("backend"), serial=meta.get("serial"),
+                      gain=meta.get("gain"))
     print(f"{a.dst}: {a.span:.0f} ms at {a.freq / 1e6:.3f} MHz, {rate / 1e3:.0f} kS/s")
 
 

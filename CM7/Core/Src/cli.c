@@ -21,6 +21,7 @@
 #include "shared_memory.h"
 #include "ipc.h"
 #include "keystore.h"
+#include "erasetest.h"
 #include "crypto.h"
 #include "hubipc.h"
 #include "pairing.h"
@@ -82,6 +83,7 @@ static int cmd_lwip(cli_data_t *cli, int argc, char **argv);
 static int cmd_rng(cli_data_t *cli, int argc, char **argv);
 static int cmd_ipc(cli_data_t *cli, int argc, char **argv);
 static int cmd_crypto(cli_data_t *cli, int argc, char **argv);
+static int cmd_erasetest(cli_data_t *cli, int argc, char **argv);
 static int cmd_timing(cli_data_t *cli, int argc, char **argv);
 static int cmd_hopprf(cli_data_t *cli, int argc, char **argv);
 static int cmd_devices(cli_data_t *cli, int argc, char **argv);
@@ -99,6 +101,7 @@ static const cli_cmd_t commands[] = {
     {"rng",     0, 1, cmd_rng,     "[count]",                "draw random words, report RNG health"},
     {"ipc",     0, 0, cmd_ipc,     "",                       "cross-core mailbox state"},
     {"crypto",  0, 0, cmd_crypto,  "",                       "run the crypto self-tests"},
+    {"erasetest", 0, 0, cmd_erasetest, "",                "the bank 1 erase measurement"},
     {"timing",  0, 0, cmd_timing,  "",                       "superframe grid and beacon jitter"},
     {"hopprf",  1, 1, cmd_hopprf,  "<32 hex chars>",         "run the hop PRF on CM4"},
     {"telem",   0, 4, cmd_telemetry, "[server <ip> <port> [token] | on | off | now]",
@@ -315,6 +318,41 @@ static int cmd_ipc(cli_data_t *cli, int argc, char **argv) {
 
 
 /* The only on-target check available while there is no device to talk to. */
+
+/* Reports what boot measured; never erases.
+ * radio_devices_docs/open_hub/arch/config-store.md */
+static int cmd_erasetest(cli_data_t *cli, int argc, char **argv) {
+    erasetest_t e;
+    uint32_t khz;
+
+    UNUSED(argc);
+    UNUSED(argv);
+    erasetest_get(&e);
+    if (!e.ran) {
+        cli_out(cli, "\r\nnot built into this image\r\n");
+        return 0;
+    }
+    khz = e.cpu_hz ? (e.cpu_hz / 1000u) : 1u;
+    cli_out(cli, "\r\nsector 3, bank 1, erased from CM7 before the scheduler\r\n");
+    cli_out(cli, "  last step        0x%02X %s\r\n", (unsigned)e.mark,
+            (e.mark == 0xFFu) ? "(finished)" : "(DIED HERE)");
+    cli_out(cli, "  CR1/SR1 before   %08lX %08lX   at %lu Hz\r\n",
+            (unsigned long)e.cr1_before, (unsigned long)e.sr_before,
+            (unsigned long)e.cpu_hz);
+    cli_out(cli, "  arm            pattern  erased  spins      ms   CR1      SR1\r\n");
+    cli_out(cli, "  A ITCM         %-7u  %-6s  %-9lu  %-4lu  %08lX %08lX\r\n",
+            (unsigned)e.prog_a, e.erased_a ? "yes" : "NO",
+            (unsigned long)e.spins_a, (unsigned long)(e.cycles_a / khz),
+            (unsigned long)e.cr1_a, (unsigned long)e.sr_a);
+    cli_out(cli, "  B AXI SRAM     %-7u  %-6s  %-9lu  %-4lu  %08lX %08lX\r\n",
+            (unsigned)e.prog_b, e.erased_b ? "yes" : "NO",
+            (unsigned long)e.spins_b, (unsigned long)(e.cycles_b / khz),
+            (unsigned long)e.cr1_b, (unsigned long)e.sr_b);
+    /* Spins are polls a running core made; a stalled one makes none. */
+    cli_out(cli, "  pattern: 1 laid, 2 already there, 0 could not\r\n");
+    return 0;
+}
+
 static int cmd_crypto(cli_data_t *cli, int argc, char **argv) {
     int failures = 0;
 

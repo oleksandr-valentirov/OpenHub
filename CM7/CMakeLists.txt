@@ -117,6 +117,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/hubipc.c
     Core/Src/pairing.c
     Core/Src/keystore.c
+    Core/Src/erasetest.c
     Core/Src/newlib_stubs.c
     Core/Src/networking.c
     Core/Src/telemetry.c
@@ -146,7 +147,13 @@ endif()
 
 # Deliberately not named mbedtls_config.h, which would resolve to mbedTLS's own.
 # radio_devices_docs/open_hub/security/crypto-architecture.md
+
+# Opt-in: it programs and erases sector 3 at boot.
+# radio_devices_docs/open_hub/arch/config-store.md
+set(HUB_ERASE_TEST 0 CACHE STRING "run the bank 1 erase measurement at boot")
+
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    HUB_ERASE_TEST=${HUB_ERASE_TEST}
     MBEDTLS_CONFIG_FILE="openhub_mbedtls_config.h")
 
 # Third-party code keeps its own warnings and is optimised even in Debug.

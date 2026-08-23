@@ -18,7 +18,7 @@ import phy
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("path", help="raw u8 IQ capture from capture.py")
+    ap.add_argument("path", help="IQ capture from capture.py; format read from its .meta")
     # Read from Common/inc, so the PHY moves these and nobody has to remember.
     # radio_devices_docs/open_hub/testing/sdr.md
     ap.add_argument("-b", "--bitrate", type=float, default=phy.bitrate())
