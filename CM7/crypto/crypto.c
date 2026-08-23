@@ -603,7 +603,7 @@ done:
     return rc;
 }
 
-/* wire_v3's primitives, not pairing outputs - the name is the coverage.
+/* wire_v4's primitives, not pairing outputs - the name is the coverage.
  * radio_devices_docs/open_hub/security/self-tests.md */
 static int test_vectors(void) {
     mbedtls_ecp_group grp;
@@ -789,7 +789,7 @@ static int test_low_order(void) {
     return 0;
 }
 
-static int test_pair_prov(void) {
+static int test_superframe_provenance(void) {
     crypto_pair_out_t o, o2;
     int rc;
 
@@ -919,7 +919,7 @@ int crypto_run_test(crypto_test_t t) {
     case CRYPTO_TEST_PAIRCOST: rc = test_pairing_cost(); break;
     case CRYPTO_TEST_PAIRV4: rc = test_pair_v4(); break;
     case CRYPTO_TEST_X25519: rc = test_x25519(); break;
-    case CRYPTO_TEST_PAIRPROV: rc = test_pair_prov(); break;
+    case CRYPTO_TEST_PAIRPROV: rc = test_superframe_provenance(); break;
     default:               rc = CRYPTO_MISMATCH; break;
     }
     crypto_stage = 20u + (uint32_t)t;

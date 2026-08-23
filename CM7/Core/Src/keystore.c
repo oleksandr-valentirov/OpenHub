@@ -92,7 +92,7 @@ typedef struct ks_record_v3 {
 } ks_record_v3_t;
 _Static_assert(sizeof(ks_record_v3_t) == KS_RECORD_BYTES,
                "the v3 shim must describe the record that is actually in flash");
-/* v4's 33-byte pubkey moved root_key by one; ADR-0025's 32 moved it back.
+/* The v4 record's 33-byte pubkey moved root_key by one; ADR-0025's 32 moved it back.
  * radio_devices_docs/open_hub/arch/keystore.md */
 _Static_assert(offsetof(ks_record_v3_t, root_key) ==
                offsetof(ks_record_t, root_key),

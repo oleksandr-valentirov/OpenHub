@@ -64,3 +64,6 @@ radio/decisions/0022-boot-epoch-in-the-nonce.md:reserve_extend  # named as the d
 open_hub/security/self-tests.md:crypto_pair_init_key  # the page names the function ADR-0024 removed with its design, in the past tense
 open_hub/security/self-tests.md:crypto_pair_init_mac  # same passage: named as what outlived the design uncalled and was removed 2026-08-23
 radio/decisions/0025-x25519-replaces-p256.md:crypto_p256_decompress  # an ADR must be able to name the function it replaced
+radio/crypto/wire-crypto.md:wire_v1  # the retirement section names deleted sets in the past tense, by design
+radio/crypto/wire-crypto.md:wire_v2  # same paragraph: both were removed 2026-08-22 and are named as history
+radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rule was already following

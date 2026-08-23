@@ -102,7 +102,9 @@ def value_digest(rows):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--version", type=int, default=1,
+    # Required: a bare run wrote a stray v1 set.
+    # radio_devices_docs/radio/crypto/wire-crypto.md
+    ap.add_argument("--version", type=int, required=True,
                     help="vector set number; bump it to change any parameter")
     ap.add_argument("--force", action="store_true",
                     help="overwrite a differing set of the same version. Only safe "
