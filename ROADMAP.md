@@ -193,71 +193,66 @@ if either board reaches fewer than 8 cycles.
 
 `radio/phy.md`, `open_hub/radio/configuration.md`.
 
-### 23. The hub's channel filter has never had more than 1 kHz of margin — `blocking` `contract`
+### 23. RegRxBw is single-sided, and the hub's filter was never the suspect — `closed 2026-08-24`
 
-**Retitled 2026-08-23.** This item was about the *device's* filter being 5 kHz too
-narrow. The device's is still short and still loses nothing; what changed is that
-the hub's own filter turns out to be the one with no room, and it is the receiver
-on the losing side of items 30, 60 and 63.
+**Settled by measurement on 2026-08-24, and the answer reverses the item.** This
+entry asked whether `RegRxBw` is a single-sideband or a double-sided figure,
+said the answer moves every margin in K2 by a factor of two, and asked for a
+sweep rather than a datasheet sentence about a different part. The sweep ran.
 
-`rfm69_rx_bandwidth_to_reg` picks **the narrowest encodable setting at least as
-wide as it is asked for**, and this project has always asked for
-`RADIO_RX_BW_MIN_HZ`. So the margin is whatever the encoding rounds up by, and
-nothing has ever chosen it:
+`tools/sdr/inject.py` transmits a hub-legal frame from the bladeRF at a chosen
+carrier offset; `device rxbw` moves the hub's filter without a reflash. Holding
+the transmitter still and stepping the filter down, 300 frames per point:
 
-    regime                      asked      encoded    slack
-    25 kbps, RegRxBw 0x8A      99 000     100 000    1 000 Hz
-    50 kbps, RegRxBw 0x82     124 000     125 000    1 000 Hz
+    RegRxBw   set Hz    frames accepted        noise floor
+    0x82      125 000   13, 10                 -92 dBm
+    0x8A      100 000   11, 18                 -92, -93
+    0x92       83 333   14, 12                 -93, -94
+    0x83       62 500   13, 26                 -95
+    0x8B       50 000   13, 8, 13, 27          -96
+    0x93       41 666   7, 6, 9, 12            -98
+    0x84       31 250   16, 43                 -96, -79
+    0x8C       25 000   25, 14                 -78
+    0x94       20 833   **0, 0**               -73
 
-Both regimes, one kilohertz, by accident of the encoder's step. Against that, the
-carrier error the slack is supposed to cover:
+**Reception collapses to zero between 25 000 and 20 833 Hz, and the zero
+reproduced.** Not a reduced rate: zero sync matches, which is the counter below
+every other counter, with healthy neighbours either side.
 
-    RADIO_CARRIER_ERR_HZ                   12 000    the allowance
-    hub RegFei, max over arrivals          12 329    already past it
-    device afc, max over arrivals          19 287    item 63's arms
-    required at 19 287                    138 574    13 574 Hz more than the hub has
+That is where a *single-sided* half-width falls below the modulation's own
+deviation. The signal's occupied bandwidth was measured off a loopback capture
+rather than assumed: -3 dB at +25.0 kHz, which is `RADIO_DEVIATION_HZ`, and
+-30 dB at +50.1 kHz, which is Carson from the headers. A filter of +/-20.8 kHz
+excludes the tones at +/-25 kHz; one of +/-25 kHz just contains them.
 
-**The population is censored and that is the whole caveat**: those are the frames
-whose sync word matched. What a missing frame needed is not in the sample and
-cannot be, so this bounds nothing — it establishes only that the allowance is
-being spent by the frames that *succeeded*.
+The double-sided reading is refused by three separate settings. It would make
+50 000 mean +/-25 kHz, cutting exactly on the tones, and 62 500 mean +/-31 kHz -
+both far too narrow for a +/-50 kHz signal. Both work as well as 125 000.
 
-The next encodable step is **166.7 kHz**, which covers 33 333 Hz of carrier error
-for **0.97 dB** of noise bandwidth against roughly 50 dB of margin at bench range.
-`rfm69_set_rx_bandwidth_hz` writes `RegAfcBw` to the same value, so widening moves
-the AFC's acquisition filter with the channel filter — an AFC asked to pull in
-19 kHz through a filter sized for 12 is the mechanism, and one write changes both.
+**So the hub's filter is 125 000 Hz single-sided, 250 000 Hz across, and it has
+75 000 Hz of carrier-error room rather than the 1 000 Hz this item claimed.**
+Against a worst measured AFC excursion of about 19 kHz, the hub's channel filter
+cannot be what loses four frames in five.
 
-**Two things argue against, and both belong in the pre-registration.**
+Three things follow, and only the first is closed by this entry.
 
-The cross-direction reading: the device's filter is **7 358 Hz short** of the same
-budget and lost 0 of 19 beacons, while the hub's clears it by 342 Hz and loses four
-frames in five. Both receivers face the same relative offset by symmetry — one
-crystal pair, one difference — so **filter width alone cannot produce that
-asymmetry.** Either something else is also wrong, or one of these numbers does not
-mean what it is being read to mean.
+**The carrier arm should not be run.** Widening to 166.7 kHz was the cheapest
+thing that could have moved K2. It would buy nothing: the room is already there.
+`specs/03-roadmap.md` phase 3 step 0 comes off the list.
 
-Which is the second: **nobody has checked whether `RegRxBw` is a single-sideband
-or a double-sided figure.** Every margin above assumes double-sided. Nothing in the
-driver, the skill, `radio_phy.h` or `radio_devices_docs/radio/` says which, and the
-answer moves all of it by a factor of two. Settle it with a sweep — narrow the
-setting until reception breaks and read the breakpoint against a known offset —
-not by reading a datasheet sentence about a different part.
+**The cross-direction paradox dissolves, and it was never a paradox.** This item
+could not explain how the device's 117 300 Hz filter loses nothing while the
+hub's 125 000 Hz loses four in five, "by symmetry both receivers face the same
+relative offset". The two numbers were never comparable: the SX126x's table is a
+double-sideband figure and the RFM69's is single-sided. The device's filter is
+the narrower of the two in reality - +/-58.65 kHz against the hub's +/-125 kHz.
 
-**The allowance itself contradicts its own design page** and that is an ADR, not an
-experiment: `phy.md` says the modulation tolerates ±20 ppm at both ends, which is
-40 ppm relative and **34 660 Hz** at 866.5 MHz, against a constant of 12 000 —
-13.8 ppm. Three times over, since the constant was written, sizing both filters.
-166.7 kHz does not reach the page's figure either; it is 2.7 kHz short of it. The
-next free ADR number is in the workspace `CLAUDE.md` and nowhere else.
+**`RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement**, so it asks for twice
+what the part needs and its `_Static_assert` has been passing for the wrong
+reason. It is in `Common/inc`, which binds both firmwares, so it is a contract
+change and not a unilateral one - **new item 73**.
 
-The constants are named apart, `RADIO_RX_BW_HUB_HZ` and `RADIO_RX_BW_DEV_HZ`,
-against a shared `RADIO_RX_BW_MIN_HZ`. **Only the hub's is asserted**, because
-asserting the device's fails both builds today and the configuration change is
-the device's to make. The device cannot follow the hub's number in any case: the
-SX126x table steps 117 300 to 156 200.
-
-`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md` § phase 1.
+`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md`.
 
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
@@ -484,6 +479,48 @@ refresh load-bearing rather than dormant.
 
 `../radio_devices_docs/open_hub/arch/dual-core.md` § the wait between step 3 and
 step 4, § what the two arms measured. `bench/journal/2026-08-23-architect.md`.
+### 72. The ADR-0027 migration left every reader on the retired keystore — `closed 2026-08-24`
+
+The store's writers moved to the ring and its readers did not, in `cli.c`,
+`telemetry.c` and `pairing.c`. `cfg_pair_complete()` wrote a pairing into the
+ring and `ks_find()` then looked for it in a log whose sectors belong to that
+ring, so **no PAIR_REQ could pass the enrolment gate and no pairing could
+complete**. `device window` refused every device that `device list` printed.
+
+Found while arming the hub's receiver for an injection, not by review, and it
+matters beyond itself: **any measurement taken against items 60 or 63 on that
+firmware would have measured the store rather than the receiver.**
+
+Closed by moving the lookups to `cfg_find` / `cfg_at` / `cfg_live_devices`, and
+by deleting rather than migrating the guards that describe an append-only log -
+including two that told the operator to erase sectors 6 and 7, which are now the
+ring's. Verified with a real four-frame exchange: node `22CDEC51` pairs into
+slot 2 and both sides say so.
+
+`radio_devices_docs/open_hub/arch/config-store.md`.
+
+### 71. The invitation asked CM4 the superframe fifty times a second — `closed 2026-08-24`
+
+`pair_init_service()` issued an `IPC_REQ_HOP_AT` on every pass of its 20 ms
+loop, for the whole 60 s window, for a number that changes once every 2 s. Each
+call holds the mailbox mutex across a CM4 transaction, and every other CM7
+caller waits behind it.
+
+Ten `device afc` calls, counting those that were not refused with *another CM7
+caller held the mailbox*:
+
+    window idle      before 10/10      after 10/10
+    window armed     before  0/10      after 10/10
+
+**It had never run**: `pair_init_derive()` failed at the same `ks_find()` as
+item 72, so `pi.armed` was never set. Repairing the store is what exposed it,
+which is the general shape worth remembering - a defect that is unreachable is
+not a defect that is absent.
+
+Rate-limited to half a superframe. This was also load CM4's superloop carried
+during exactly the window in which it must hear a `PAIR_REQ`, so it stands
+beside items 60 and 63 as a mechanism and not only as a console complaint.
+
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
 Found 2026-08-21 by the device session dropping its transmit power from +14 to
@@ -897,6 +934,27 @@ belongs with the other prerequisites, not after them.
 ---
 
 ## Contract debts
+
+### 73. `RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement — `contract`
+
+    #define RADIO_RX_BW_MIN_HZ  (2u * (RADIO_DEVIATION_HZ + RADIO_BITRATE_BPS / 2u + \
+                                       RADIO_CARRIER_ERR_HZ))
+
+Item 23 measured `RegRxBw` to be single-sided, so the doubling asks the hub for
+twice the width the part needs, and `_Static_assert(RADIO_RX_BW_HUB_HZ >
+RADIO_RX_BW_MIN_HZ)` has been passing for the wrong reason.
+
+**It is not one edit.** The macro is in `Common/inc`, the device's
+`RADIO_RX_BW_DEV_HZ` is an SX126x number and that table *is* double-sideband, so
+one expression cannot be right for both sides at once. The two constants need
+separate minima named for which convention each part uses, which is a contract
+change and belongs to both sessions.
+
+Nothing is broken today: the hub runs 125 000 Hz single-sided against a need of
+about 50 000, which is why this is a debt and not a defect. It is filed so that
+the next person to compute a margin from this macro does not compute it twice.
+
+`radio_devices_docs/radio/phy.md`.
 
 ### 15. The data beacon is unauthenticated — `contract`
 
