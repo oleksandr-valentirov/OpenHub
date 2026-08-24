@@ -928,7 +928,53 @@ belongs with the other prerequisites, not after them.
 
 ## Contract debts
 
-### 81. `hop_prf_selftest` stops one layer short of the deck — `debt`
+### 81. `hop_prf_selftest` stops one layer short of the deck — `debt` `built 2026-08-24, not yet run on the board`
+
+**Built.** `hop_prf_selftest` is now `hop_selftest` and carries three stages:
+FIPS-197 C.1, the PRF block, and — new — **the deck itself**, `hop_init` and
+`hop_channel` over `HV_DECK0`, `HV_DECK1` and all ten `HV_SAMPLE_SF`, keyed with
+`HV_HOP_KEY` through the real CRYP rather than a replay. `_Static_assert` ties
+`HOP_VEC_COUNT` to `RADIO_HOP_COUNT`, which nothing did before.
+
+**On this board it is a strictly larger check than any host suite can run.**
+`Common/test/test_hop.c` replays `HV_STREAM0`/`HV_STREAM1`, so it exercises the
+shuffle and not the PRF, and `test_pinned_samples` **skips every sample past
+cycle 1** — `56`, `1000`, `100000` and `4294967295`, the counter's last value
+before it wraps. Those four have never been executed anywhere. The board has a
+real AES, so it runs all ten.
+
+| | on this board before | after |
+|---|---|---|
+| assertions against `hop_v1` | **2** — two AES blocks | **68** — 2 + 56 deck slots + 10 samples |
+| samples past cycle 1 | 0 | **4**, which no host suite can reach |
+| would catch a defect in `hop.c` | **no** — it never called it | yes |
+| cost | — | **+408 B** text and rodata |
+
+**The failing stage survives to the console.** The hop layers report 51..61 rather
+than collapsing into one number, because *a deck says the sequence is wrong and
+not which half is wrong* — the split this entry was written about. `cli.c` names
+which self-test refused.
+
+**Verified on a host proxy, and not yet on the board.** `Common/src/hop.c` was
+built as a shared object and driven with a real AES from `cryptography` — the
+same library the generators use, and an independent route to the same deck. It
+reproduces **56 of 56 deck slots and 10 of 10 samples**, so the assertions are
+satisfiable and correct; if the board refuses, the silicon or the toolchain is
+the suspect and not the test. Two mutations of `hop.c` were refused: the cycle's
+low byte dropped from the PRF input, and the second PRF block never keyed.
+
+**Neither self-test gates anything** — `aead_selftest_rc` is reported through
+`ipc` and printed by `cli.c`, and no transmit path consults it. So a failure here
+is a number on a console, which is worth knowing before trusting it as a guard.
+
+**What is left is the board.** It needs a hub reset, which is announced in
+`bench/RESOURCES.md` before it happens, and two nodes are currently paired and
+reporting.
+
+**The harness that verified this is in no tree.** It drives *both* firmwares'
+`hop.c` and belongs to neither, which is the cross-tree question ADR-0028's
+library eventually answers.
+
 
 `hop_prf_selftest()` runs at init and checks two things against `hop_v1.h`:
 FIPS-197 C.1, and the hop PRF block — `aes_ecb_block(HV_HOP_KEY, HV_PRF_IN)`

@@ -1135,8 +1135,11 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             (unsigned long)x.uplink_frames, (unsigned long)x.uplink_ok,
             (unsigned long)x.uplink_bad_slot, (unsigned long)x.uplink_bad_frame,
             (unsigned long)x.uplink_bad_tag, (unsigned long)x.uplink_replay);
+    /* 51..61 are the hop layers; everything else is the frame cipher. Item 81. */
     if (x.aead_selftest != 0u)
-        cli_out(cli, "WARNING: frame cipher self-test failed (check %u)\r\n",
+        cli_out(cli, "WARNING: %s self-test failed (check %u)\r\n",
+                (x.aead_selftest >= 51u && x.aead_selftest <= 61u)
+                    ? "hop deck" : "frame cipher",
                 x.aead_selftest);
 
     {

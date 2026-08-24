@@ -375,10 +375,22 @@ static void hop_key_placeholder(void) {
         net_hop_key[i] = (uint8_t)((hub_id >> (8u * (i & 3u))) ^ (0x5Au + i));
 }
 
-/* The PRF against a host-computed block, at boot, after the frame cipher had CRYP.
+/* The vectors pin one channel count; the grid must still be it. ROADMAP item 81. */
+_Static_assert(HOP_VEC_COUNT == RADIO_HOP_COUNT,
+               "hop_v1 describes a deck this grid no longer draws");
+
+/* The published key, so the deck stage runs the real PRF rather than a replay. */
+static int hop_prf_kat(void *ctx, const uint8_t in[16], uint8_t out[16]) {
+    (void)ctx;
+    return aes_ecb_block(HV_HOP_KEY, in, out);
+}
+
+/* Both layers against hop_v1, at boot, after the frame cipher had CRYP.
  * radio_devices_docs/radio/hopping.md */
-static int hop_prf_selftest(void) {
+static int hop_selftest(void) {
     uint8_t out[16];
+    hop_ctx_t kat;
+    uint8_t ch;
 
     /* FIPS-197 C.1 on CRYP: the hardware arm the host vector cannot supply.
      * radio_devices_docs/radio/hopping.md */
@@ -391,7 +403,33 @@ static int hop_prf_selftest(void) {
      * radio_devices_docs/radio/hopping.md */
     if (aes_ecb_block(HV_HOP_KEY, HV_PRF_IN, out) != 0)
         return -3;
-    return (memcmp(out, HV_PRF_OUT, sizeof(out)) == 0) ? 0 : -4;
+    if (memcmp(out, HV_PRF_OUT, sizeof(out)) != 0)
+        return -4;
+
+    /* The deck, which the PRF stage above cannot see. ROADMAP item 81. */
+    if (hop_init(&kat, hop_prf_kat, NULL, HOP_VEC_COUNT) != 0)
+        return -5;
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++) {
+        if (hop_channel(&kat, i, &ch) != 0)
+            return -6;
+        if (ch != HV_DECK0[i])
+            return -7;
+    }
+    for (uint32_t i = 0; i < HOP_VEC_COUNT; i++) {
+        if (hop_channel(&kat, HOP_VEC_COUNT + i, &ch) != 0)
+            return -8;
+        if (ch != HV_DECK1[i])
+            return -9;
+    }
+
+    /* Cycles the deck stage never reaches, so the counter split is checked too. */
+    for (unsigned i = 0; i < sizeof(HV_SAMPLE_CH); i++) {
+        if (hop_channel(&kat, HV_SAMPLE_SF[i], &ch) != 0)
+            return -10;
+        if (ch != HV_SAMPLE_CH[i])
+            return -11;
+    }
+    return 0;
 }
 
 static uint32_t slot_hz(uint32_t slot) {
@@ -424,8 +462,12 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
      * radio_devices_docs/radio/crypto/wire-crypto.md */
     aead_selftest_rc = aead_selftest();
     /* After the frame cipher, so the PRF runs from the adversarial CRYP state. */
-    if (aead_selftest_rc == 0 && hop_prf_selftest() != 0)
-        aead_selftest_rc = -20;
+    if (aead_selftest_rc == 0) {
+        /* 51..61 carry the stage, so a failure names its layer. Item 81. */
+        int hop_rc = hop_selftest();
+        if (hop_rc != 0)
+            aead_selftest_rc = -50 + hop_rc;
+    }
     if (aead_selftest_rc == 0 && frame_selftest() != 0)
         aead_selftest_rc = -30;
 

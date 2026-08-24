@@ -73,3 +73,4 @@ radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rul
 radio/phy-seam.md:timebase_now  # the clock backend's read, proposed name for the two the trees disagree on
 radio/phy-seam.md:crypto_hkdf_sha256  # the key schedule's seam, mbedTLS supplies it here and sha256.c there
 radio/phy-seam.md:crypto_hmac_sha256  # same seam: both trees already have a working implementation to bind
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:hop_prf_selftest  # named as the two-stage check item 81 replaced with hop_selftest
