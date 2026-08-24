@@ -171,6 +171,7 @@ static void test_prf_call_cost(void) {
 
 static void test_pinned_samples(void) {
     hop_ctx_t c;
+    unsigned checked = 0, beyond = 0;
 
     /* Far-apart superframes, the counter's last value included.
      * radio_devices_docs/radio/hopping.md */
@@ -179,11 +180,21 @@ static void test_pinned_samples(void) {
         uint32_t sf = HV_SAMPLE_SF[i];
         uint8_t v = 0xFF;
 
-        if (sf / HOP_VEC_COUNT > 1u)
-            continue;                      /* outside the replayed cycles */
+        if (sf / HOP_VEC_COUNT > 1u) {
+            beyond++;                      /* outside the replayed cycles */
+            continue;
+        }
         CHECK(hop_channel(&c, sf, &v) == 0, "sf %u", sf);
         CHECK(v == HV_SAMPLE_CH[i], "sf %u: %u != %u", sf, v, HV_SAMPLE_CH[i]);
+        checked++;
     }
+
+    /* The denominator, so a green line is not read as the whole sample set.
+     * radio_devices_docs/open_hub/testing/host-tests.md */
+    printf("  samples %u of %u checked; %u past cycle 1 need a real AES,"
+           " which is the board's hop_selftest\n",
+           checked, (unsigned)sizeof(HV_SAMPLE_CH), beyond);
+    CHECK(checked != 0u, "every sample was skipped: this check had no population");
 }
 
 int main(void) {
