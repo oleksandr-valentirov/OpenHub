@@ -181,7 +181,9 @@ unilaterally.
   [`radio/decisions/`](../radio_devices_docs/radio/decisions/) and
   [`open_hub/decisions/`](../radio_devices_docs/open_hub/decisions/). Numbers were
   **not** reassigned when the docs moved, so `ADR-0021` in a source comment still
-  resolves. The next record is ADR-0022 wherever it lands.
+  resolves. **The next free number lives in the workspace `CLAUDE.md` and nowhere
+  else** — this line used to carry a copy of it, and three indexes once said
+  0022, 0027 and 0027 for one sequence.
 
 Source comments cite a page by its full path, `radio_devices_docs/radio/pairing.md`,
 and a decision as `ADR-0021` — the numbers are stable, so both still resolve.

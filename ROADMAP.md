@@ -15,11 +15,14 @@ sentence, so nothing anywhere disagrees when it goes stale. Name the file, the
 symbol, the commit or the ADR instead. The `device` items below are the exception
 and are hints rather than identifiers.
 
-**Cleaned 2026-08-23**: four closed entries retired, their reasoning left on
-`open_hub/arch/build-and-generation.md`, `open_hub/arch/ipc.md` and
-`open_hub/arch/keystore.md`; the front-end experiment the device session had been
-carrying moved to `open_hub/radio/configuration.md`; and every item re-filed under
-the heading its tag names.
+**Cleaned twice.** The first pass retired four closed entries, moved the front-end
+experiment the device session had been carrying to
+`open_hub/radio/configuration.md`, and re-filed every item under the heading its
+tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
+the store's reader/writer split, the mailbox flood, the device's own send count,
+and the boot erase — leaving their reasoning on `radio/phy.md`,
+`open_hub/arch/dual-core.md`, `open_hub/arch/config-store.md`,
+`open_hub/arch/ipc.md` and the `verification` skill.
 
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
@@ -123,31 +126,6 @@ costs a grid change and a re-measurement.
 
 `Common/inc/radio_protocol.h`, `radio/tdma.md` § slot budget.
 
-### 4. The device counts what it sends, and the hub counts what arrives — `device`
-
-**No longer blocking, 2026-08-24.** Node A reports on grant, and the hub counts
-them: `devices` shows `2/0 ok/bad`, `cadence: grant 8, seen every 8`, and both
-directions' levels at `-46/-48`. The device's own reporting loop existed all
-along and could not transmit — [ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)
-§ the floor is latched once.
-
-**Closed 2026-08-24.** The device counts its own sends and `state` prints them,
-so the denominator comes off the far side of the antenna instead of being
-derived here. `reports_sent` had existed as a declared, printed, never
-incremented counter, which is why this entry read as "no loop" — a constant
-agreeing with the hub's zero looks exactly like corroboration. It is in the
-`verification` skill now.
-
-**It paid for itself the same hour**: 38 sent against 13 accepted, twice, which
-is the first uplink loss figure this project has had with a population behind
-it. That number belongs to K2 and to item 1, not here.
-
-**The wire still does not carry the count**, and that is deliberate for now: the
-console has it, the report does not, and putting it in the report would cost a
-byte the slot has not got. `open_hub/cli.md`.
-
-`open_hub/cli.md`, and the `verification` skill.
-
 ### 5. A device that loses the counter cannot find the hub — `blocking` `device`
 
 The clause *both survive a reboot and restore the link* was exercised from the
@@ -186,9 +164,11 @@ the device transmitting 151 cycles on all three opportunities:
 
 **23 % detected, 20 % accepted**, at −17 dBm — the level both sides had been
 calling healthy. A 4x cadence change does not move it, so there is no receiver
-ceiling and no cadence effect. The hub cannot compute the denominator (item 4):
-`accepted / delivered` is 81 % while `delivered / transmitted` is 31 %, and only
-the numerator exists on this side.
+ceiling and no cadence effect. When this was written the hub could not compute
+the denominator at all — `accepted / delivered` was 81 % while
+`delivered / transmitted` was 31 %, and only the numerator existed on this side.
+**The device counts its own sends now**, so the population comes off the far side
+of the antenna: two 600 s windows, 38 sent and 13 accepted in each.
 
 **Decomposed 2026-08-22: the loss is entirely before sync.** `sync_match` equals
 `frames + crc_err` exactly, so nothing is lost after detection, and the CRC
@@ -217,67 +197,6 @@ of per-cycle slopes and the k-gradient between boards, reported as *not measured
 if either board reaches fewer than 8 cycles.
 
 `radio/phy.md`, `open_hub/radio/configuration.md`.
-
-### 23. RegRxBw is single-sided, and the hub's filter was never the suspect — `closed 2026-08-24`
-
-**Settled by measurement on 2026-08-24, and the answer reverses the item.** This
-entry asked whether `RegRxBw` is a single-sideband or a double-sided figure,
-said the answer moves every margin in K2 by a factor of two, and asked for a
-sweep rather than a datasheet sentence about a different part. The sweep ran.
-
-`tools/sdr/inject.py` transmits a hub-legal frame from the bladeRF at a chosen
-carrier offset; `device rxbw` moves the hub's filter without a reflash. Holding
-the transmitter still and stepping the filter down, 300 frames per point:
-
-    RegRxBw   set Hz    frames accepted        noise floor
-    0x82      125 000   13, 10                 -92 dBm
-    0x8A      100 000   11, 18                 -92, -93
-    0x92       83 333   14, 12                 -93, -94
-    0x83       62 500   13, 26                 -95
-    0x8B       50 000   13, 8, 13, 27          -96
-    0x93       41 666   7, 6, 9, 12            -98
-    0x84       31 250   16, 43                 -96, -79
-    0x8C       25 000   25, 14                 -78
-    0x94       20 833   **0, 0**               -73
-
-**Reception collapses to zero between 25 000 and 20 833 Hz, and the zero
-reproduced.** Not a reduced rate: zero sync matches, which is the counter below
-every other counter, with healthy neighbours either side.
-
-That is where a *single-sided* half-width falls below the modulation's own
-deviation. The signal's occupied bandwidth was measured off a loopback capture
-rather than assumed: -3 dB at +25.0 kHz, which is `RADIO_DEVIATION_HZ`, and
--30 dB at +50.1 kHz, which is Carson from the headers. A filter of +/-20.8 kHz
-excludes the tones at +/-25 kHz; one of +/-25 kHz just contains them.
-
-The double-sided reading is refused by three separate settings. It would make
-50 000 mean +/-25 kHz, cutting exactly on the tones, and 62 500 mean +/-31 kHz -
-both far too narrow for a +/-50 kHz signal. Both work as well as 125 000.
-
-**So the hub's filter is 125 000 Hz single-sided, 250 000 Hz across, and it has
-75 000 Hz of carrier-error room rather than the 1 000 Hz this item claimed.**
-Against a worst measured AFC excursion of about 19 kHz, the hub's channel filter
-cannot be what loses four frames in five.
-
-Three things follow, and only the first is closed by this entry.
-
-**The carrier arm should not be run.** Widening to 166.7 kHz was the cheapest
-thing that could have moved K2. It would buy nothing: the room is already there.
-`specs/03-roadmap.md` phase 3 step 0 comes off the list.
-
-**The cross-direction paradox dissolves, and it was never a paradox.** This item
-could not explain how the device's 117 300 Hz filter loses nothing while the
-hub's 125 000 Hz loses four in five, "by symmetry both receivers face the same
-relative offset". The two numbers were never comparable: the SX126x's table is a
-double-sideband figure and the RFM69's is single-sided. The device's filter is
-the narrower of the two in reality - +/-58.65 kHz against the hub's +/-125 kHz.
-
-**`RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement**, so it asks for twice
-what the part needs and its `_Static_assert` has been passing for the wrong
-reason. It is in `Common/inc`, which binds both firmwares, so it is a contract
-change and not a unilateral one - **new item 73**.
-
-`radio_devices_docs/radio/phy.md`, `radio_devices_docs/specs/03-roadmap.md`.
 
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
@@ -447,104 +366,17 @@ under an entry the cache already holds. ADR-0027 is what removes the ceiling.
 
 `RADIO_CARRIER_ERR_HZ` is **12 000** and both arms exceed it — in the frames that
 *arrived*. The lost ones are not in that sample, so it bounds nothing on its own,
-but the allowance is demonstrably being spent. The untried arm is
-`RADIO_RX_BW_HUB_HZ`. **Item 23 carries that arm**, its arithmetic and the two
-readings that argue against it; it is not restated here.
+but the allowance is demonstrably being spent.
+
+**The filter arm was the obvious next one and it has been run, negatively.**
+`RegRxBw` is a single-sideband figure, so the hub's filter is ±125 kHz with
+**75 000 Hz** of carrier-error room rather than the 1 000 Hz that made it the
+suspect — measured by holding a transmitter still and stepping the filter down
+until reception stopped. It cannot be what loses these requests.
+`radio_devices_docs/radio/phy.md` carries the sweep. What survives of the carrier
+hypothesis is item 73, which is arithmetic rather than a mechanism.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
-
-### 67. CM4's wait on CM7 refreshes, proven in both directions — `closed 2026-08-23`
-
-`CM4/Core/Src/main.c` armed IWDG2 at 512 ms and then spun on `HSEM_ID_0` with no
-refresh, while CM7 releases that semaphore in `StartDefaultTask`, after
-`osKernelStart()` and `MX_LWIP_Init()`. **This is what bricked the board twice**:
-an erase held before the release outlasts the period, the system resets, the erase
-is cut mid-flight, and the sector is left raising `SNECCERR1` and `DBECCERR1` for
-`ks_init()` to read at every boot. It never presented as a timeout.
-
-The wait moved to `CM4/Core/Src/bootwait.c` and refreshes **unconditionally**
-rather than paced off `HAL_GetTick()`, because pacing would make the safety
-property depend on SysTick still running — the same class of fault. The budget is
-declared in `Common/inc/hub_boot.h`, both cores compile it, and `timing` prints
-what CM4 actually waited beside it.
-
-**The first reading was ambiguous and the control had to be built before anything
-could be read.** `boot: CM4 waited 0 ms` means both *CM4 did not wait* and *the
-clock that measures the wait was not running*, and nothing separated them. Adding
-`boot_wait_spins` settled it: **0 ms over 0 passes** — on a software reset CM4
-reaches the wait after CM7 has already released, so **the refresh is dead code on
-this boot path today.** That is why the mutation had to be run against a wait that
-exists rather than against the shipping build, and why the console says so in
-words rather than printing a bare zero.
-
-`HUB_BOOT_HOLD_MS` makes the wait real. Both arms, same CM7 build, same 1500 ms
-hold, only CM4's binary differing by the refresh:
-
-| arm | CM4 | CM7 |
-|---|---|---|
-| refresh present | **waited 1495 ms over 3 179 402 passes**, grid running | `status` answers |
-| refresh removed | **never answers IPC, across three system resets** | `status` answers |
-| refresh restored | **1495 ms over 3 179 323 passes**, grid running | `status` answers |
-
-**1495 ms is nearly three times the 512 ms period and the board came up**, so the
-refresh is doing exactly what it exists for. The two present-arm readings agree to
-0.002 %, which is the same measurement rather than two.
-
-**The failure mode is worse than the reset loop this item predicted.** CM4 does not
-come back: it dies at 512 ms, reboots into `HAL_PWREx_EnterSTOPMode` waiting on a
-notification CM7 has already sent once and will not send again, and stays there.
-CM7 stays healthy and answers the console throughout. A live console beside a dead
-radio is precisely how this presented as a hardware fault on a working board.
-
-**What is still owed is not this item's.** The budget stands at 3000 ms with no
-measurement behind it, because the only boot measured never waits. The number to
-tighten it against arrives with the first CM7 boot path long enough to matter, and
-that is ADR-0027's boot erase — 954 ms — which is the first thing that makes this
-refresh load-bearing rather than dormant.
-
-`../radio_devices_docs/open_hub/arch/dual-core.md` § the wait between step 3 and
-step 4, § what the two arms measured. `bench/journal/2026-08-23-architect.md`.
-### 72. The ADR-0027 migration left every reader on the retired keystore — `closed 2026-08-24`
-
-The store's writers moved to the ring and its readers did not, in `cli.c`,
-`telemetry.c` and `pairing.c`. `cfg_pair_complete()` wrote a pairing into the
-ring and `ks_find()` then looked for it in a log whose sectors belong to that
-ring, so **no PAIR_REQ could pass the enrolment gate and no pairing could
-complete**. `device window` refused every device that `device list` printed.
-
-Found while arming the hub's receiver for an injection, not by review, and it
-matters beyond itself: **any measurement taken against items 60 or 63 on that
-firmware would have measured the store rather than the receiver.**
-
-Closed by moving the lookups to `cfg_find` / `cfg_at` / `cfg_live_devices`, and
-by deleting rather than migrating the guards that describe an append-only log -
-including two that told the operator to erase sectors 6 and 7, which are now the
-ring's. Verified with a real four-frame exchange: node `22CDEC51` pairs into
-slot 2 and both sides say so.
-
-`radio_devices_docs/open_hub/arch/config-store.md`.
-
-### 71. The invitation asked CM4 the superframe fifty times a second — `closed 2026-08-24`
-
-`pair_init_service()` issued an `IPC_REQ_HOP_AT` on every pass of its 20 ms
-loop, for the whole 60 s window, for a number that changes once every 2 s. Each
-call holds the mailbox mutex across a CM4 transaction, and every other CM7
-caller waits behind it.
-
-Ten `device afc` calls, counting those that were not refused with *another CM7
-caller held the mailbox*:
-
-    window idle      before 10/10      after 10/10
-    window armed     before  0/10      after 10/10
-
-**It had never run**: `pair_init_derive()` failed at the same `ks_find()` as
-item 72, so `pi.armed` was never set. Repairing the store is what exposed it,
-which is the general shape worth remembering - a defect that is unreachable is
-not a defect that is absent.
-
-Rate-limited to half a superframe. This was also load CM4's superloop carried
-during exactly the window in which it must hear a `PAIR_REQ`, so it stands
-beside items 60 and 63 as a mechanism and not only as a console complaint.
 
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
@@ -605,23 +437,6 @@ population the run will have.**
 
 `radio/phy.md`, the `rfm69` skill.
 
-### 70. The boot erase has run once, and the store holds no settings — `debt`
-
-**Both halves this item was opened for are closed.** An erase is allowed at boot,
-the boot order moved to make it legal, and the path executed for the first time on
-2026-08-24 reclaiming the old keystore's sector — 931 ms, measured by the store's
-own driver.
-
-What is left is smaller and is the reason REQ-N-5 has not moved: **nothing writes
-the telemetry or network settings into the store.** `telem server` and `ip static`
-are still retyped after every reset. The store, the append path and the config
-record all exist; the wiring does not.
-
-`cfg_put_config()` is the call. What it needs beside it is the console and the
-northbound command path setting the fields, and a reader on the other side using
-them at boot instead of waiting to be told.
-
-`../radio_devices_docs/open_hub/arch/config-store.md` § 10a.
 ---
 
 ## Defects
@@ -965,7 +780,7 @@ belongs with the other prerequisites, not after them.
     #define RADIO_RX_BW_MIN_HZ  (2u * (RADIO_DEVIATION_HZ + RADIO_BITRATE_BPS / 2u + \
                                        RADIO_CARRIER_ERR_HZ))
 
-Item 23 measured `RegRxBw` to be single-sided, so the doubling asks the hub for
+`RegRxBw` was measured to be single-sided, so the doubling asks the hub for
 twice the width the part needs, and `_Static_assert(RADIO_RX_BW_HUB_HZ >
 RADIO_RX_BW_MIN_HZ)` has been passing for the wrong reason.
 
@@ -1214,7 +1029,8 @@ not assuming.
 
 - **The LNA ladder re-run at −25 dBm** (item 12), announced before it starts.
 - Node B's PA-ramp capture.
-- Node A (`0xC4D444AA`) has never been resynced.
+- A resync has never been run on either node — read `ident` off the board for
+  the current id, which changes whenever a store is erased.
 - A constant for radiated energy in the duty-cycle model — **model only, never a
   roll-back**, so it must not be wired to anything that suppresses a transmit.
 - A bracketed `timing` / `syncstats` / `timing` read over a named superframe
