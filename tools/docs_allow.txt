@@ -106,9 +106,16 @@ radio/phy-seam.md:sync_edge_new       # the flag phy_ev_t.sync_seq replaced
 radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's chosen name, still an empty remote
 radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_lib_HAL   # a naming the record considered and rejected
 radio/phy-seam.md:radio_stack         # the same name, in this page's layout sketch
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:timebase_now         # the clock backend's read, declared in the record's own C block
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hkdf_sha256   # the key schedule's seam, declared there
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hmac_sha256   # likewise
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_sha256        # the alternative the record weighs, declared to weigh it
 radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the library's chosen name, still an empty remote; this record scopes what goes in it
 radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names the empty remote
+
+# Names ADR-0030 decision 6 removed by being executed, 2026-08-24. A record has
+# to keep the words it decided in, and none of these is a live claim any more.
+radio/decisions/0009-fixed-join-channel.md:hop_slot_to_grid  # the name the join-slot skip had when this was decided
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_slot_to_grid  # this record's own account of the duplication it then removed
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_identify  # deleted with its callers, none of which existed; see phase 9 step 2
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_swap32_model  # kept as hop_prf_swap32, beside the PRF rather than inside hop.c
+radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone and what replaced it

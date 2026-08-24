@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "hop.h"
+#include "radio_phy.h"
 
 int hop_init(hop_ctx_t *ctx, hop_prf_t prf, void *prf_ctx, uint8_t count) {
     if (ctx == NULL || prf == NULL || count < 2 || count > HOP_MAX_CHANNELS)
@@ -69,4 +70,9 @@ int hop_channel(hop_ctx_t *ctx, uint32_t superframe, uint8_t *channel) {
 
     *channel = ctx->deck[superframe % ctx->count];
     return 0;
+}
+
+/* The join slot is contract, and the rule has one home: radio_phy.h. */
+uint8_t hop_to_grid(uint8_t hop_index) {
+    return (uint8_t)RADIO_HOP_TO_GRID(hop_index);
 }

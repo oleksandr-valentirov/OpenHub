@@ -47,10 +47,20 @@ int hop_init(hop_ctx_t *ctx, hop_prf_t prf, void *prf_ctx, uint8_t count);
  * @brief The channel a superframe falls on, deriving the cycle's deck if needed.
  * @param ctx         an initialised context
  * @param superframe  the counter the sequence is indexed by, not stepped by
- * @param channel     receives the grid slot
+ * @param channel     receives the hop index, which hop_to_grid maps onto the grid
  * @retval  0  @p channel holds the answer
  * @retval -1  the PRF failed; the caller must not transmit
  *
  * radio_devices_docs/radio/hopping.md
  */
 int hop_channel(hop_ctx_t *ctx, uint32_t superframe, uint8_t *channel);
+
+/**
+ * @brief The grid slot a hop index lands on, skipping the reserved join slot.
+ * @param hop_index  0..RADIO_HOP_COUNT-1
+ * @return the grid slot, so the hopping set and the join channel stay disjoint
+ *
+ * A function rather than the RADIO_HOP_TO_GRID macro it is written over: the
+ * macro names its argument three times. radio_devices_docs/radio/hopping.md
+ */
+uint8_t hop_to_grid(uint8_t hop_index);

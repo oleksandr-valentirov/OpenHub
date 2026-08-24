@@ -437,11 +437,6 @@ static uint32_t slot_hz(uint32_t slot) {
     return RADIO_SLOT_HZ(slot);
 }
 
-/* Skips the reserved join slot, so the two sets are disjoint by construction. */
-static uint32_t hop_slot_to_grid(uint8_t hop_index) {
-    return RADIO_HOP_TO_GRID(hop_index);
-}
-
 uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     (void)network_id;
 
@@ -562,7 +557,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
         beacon_err_last = RADIO_BERR_PRF;
         return;
     }
-    if (phy_tune(slot_hz(hop_slot_to_grid(hop_idx))) != 0) {
+    if (phy_tune(slot_hz(hop_to_grid(hop_idx))) != 0) {
         beacon_err++;
         beacon_err_last = RADIO_BERR_RETUNE;
         return;
@@ -1140,8 +1135,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             break;
         }
         h.channel   = idx;
-        h.grid_slot = (uint8_t)hop_slot_to_grid(idx);
-        h.hz        = slot_hz(hop_slot_to_grid(idx));
+        h.grid_slot = (uint8_t)hop_to_grid(idx);
+        h.hz        = slot_hz(hop_to_grid(idx));
         h.count     = hop.count;
         memcpy(h.deck, hop.deck, sizeof(h.deck) < sizeof(hop.deck)
                                  ? sizeof(h.deck) : sizeof(hop.deck));
@@ -2094,7 +2089,7 @@ static void downlink_service(void) {
         dl_prf_err++;
         return;
     }
-    dl_last_hz = slot_hz(hop_slot_to_grid(hop_idx));
+    dl_last_hz = slot_hz(hop_to_grid(hop_idx));
     dl_last_sf = frame_counter;
     if (frame_tx(&f, (uint8_t)sizeof(f), dl_last_hz) != 0) {
         dl_tx_err++;
@@ -2142,7 +2137,7 @@ static void uplink_service(void) {
 
         if (hop_channel(&hop, frame_counter, &idx) != 0)
             return;
-        up_grid = (uint8_t)hop_slot_to_grid(idx);
+        up_grid = (uint8_t)hop_to_grid(idx);
         if (phy_tune(slot_hz(up_grid)) != 0)
             return;
         if (phy_listen() != 0)
