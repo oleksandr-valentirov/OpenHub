@@ -359,7 +359,7 @@ static void put_device_air(oht_writer_t *w, const snap_t *s, uint8_t slot) {
             continue;
         OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_SYNC_DBM, s->afc.rssi[i]);
         OHT_PUT(w, OHT_F_DEVICE_LNA_GAIN, s->afc.gain[i]);
-        OHT_PUT(w, OHT_F_DEVICE_AFC_HZ, IPC_AFC_STEPS_TO_HZ(s->afc.afc[i]));
+        OHT_PUT(w, OHT_F_DEVICE_AFC_HZ, s->afc.afc_hz[i]);
         return;
     }
 }
@@ -380,7 +380,7 @@ static void put_frames(oht_writer_t *w, const snap_t *s, uint8_t slot,
         OHT_PUT(w, OHT_F_FRAME_SLOT, s->afc.slot[i]);
         OHT_PUT(w, OHT_F_FRAME_RSSI_DBM, s->afc.rssi[i]);
         OHT_PUT(w, OHT_F_FRAME_LNA_GAIN, s->afc.gain[i]);
-        OHT_PUT(w, OHT_F_FRAME_AFC_HZ, IPC_AFC_STEPS_TO_HZ(s->afc.afc[i]));
+        OHT_PUT(w, OHT_F_FRAME_AFC_HZ, s->afc.afc_hz[i]);
         OHT_PUT(w, OHT_F_FRAME_CRC_OK, (s->afc.crc_ok & (1u << i)) != 0u);
         OHT_PUT(w, OHT_F_FRAME_IN_FRAME, (s->afc.in_frame & (1u << i)) != 0u);
     }

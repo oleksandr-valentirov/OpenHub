@@ -10,6 +10,8 @@
 #include "radio.h"
 #include "rfm69.h"
 #include "rfm69_registers.h"
+#include "phy.h"
+#include "phy_rfm69.h"
 #include "timebase.h"
 #include "hsem_table.h"
 #include "shared_memory.h"
@@ -46,7 +48,6 @@ _Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 #define PAIRING_WINDOW_MS       RADIO_PAIR_WINDOW_MS
 #define JOIN_BEACON_EVERY       2u
 
-#define BROADCAST_ADDR          255
 
 #define MODE_TIMEOUT_US         10000u
 /* 2^(smoothing+1) bit periods. Bounds an SPI fault, not the part. */
@@ -58,7 +59,6 @@ _Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 #define RADIO_MAX_DEVICES  RADIO_DEVICE_MAX
 
 /* RegDioMapping1 DIO3 field, packet mode: SyncAddress. Unconfirmed on this part. */
-#define RFM69_DIO3_SYNC_ADDRESS  2u
 
 /* A staged turn waits a superframe; this outlasts it. ADR-0026 */
 #define EX_REGION_TIMEOUT_US  (SUPERFRAME_US + RADIO_JOIN_REGION_US)
@@ -116,7 +116,7 @@ static void on_superframe(void);
 static void join_region_service(void);
 static uint8_t begin_quiesce(uint8_t superframes);
 static int  join_window_holds(uint8_t payload_b);
-static void handle_join_frame(void);
+static void handle_join_frame(const phy_ev_t *ev);
 static int  frame_selftest(void);
 static void ex_reset(void);
 static void exchange_service(void);
@@ -126,8 +126,6 @@ static int  install_device(const ipc_device_keys_t *k);
 static int  remove_device(uint32_t dev_id);
 
 
-static rfm69_dev_t radio;
-static uint8_t tx_buffer[RFM69_FIFO_SIZE];
 static uint32_t hub_id = 0x33442211u;
 static uint32_t frame_counter = 0;
 static uint32_t superframe_start_tk = 0;
@@ -195,7 +193,6 @@ static uint8_t  jp_step;        /* which of the two probes this window has taken
 _Static_assert(JP_MODE_US < RADIO_TURN_INVITE_US, "the level span must follow the mode probe");
 _Static_assert(RADIO_TURN_INVITE_US < RADIO_JOIN_RX_US, "a probe outside the window measures nothing");
 
-static uint8_t  rx_buffer[RFM69_FIFO_SIZE];
 
 /* Indexed by slot, so an uplink frame's slot byte is the whole lookup. */
 static dev_entry_t devices[RADIO_MAX_DEVICES];
@@ -266,7 +263,7 @@ static uint8_t  afc_ring_grid[IPC_AFC_RING];
 static uint8_t  afc_ring_slot[IPC_AFC_RING];
 static uint8_t  afc_ring_gain[IPC_AFC_RING];
 static int8_t   afc_ring_rssi[IPC_AFC_RING];
-static int16_t  afc_ring_afc[IPC_AFC_RING];
+static int32_t  afc_ring_afc_hz[IPC_AFC_RING];
 static uint16_t afc_ring_crc_ok;    /* bit i: ring entry i passed its CRC */
 static uint16_t afc_ring_in_frame;  /* bit i: entry i's level was taken during it */
 static uint8_t  afc_ring_head;      /* where the next sample goes */
@@ -283,11 +280,13 @@ static uint32_t rx_flushes;         /* receivers restarted after an undrainable 
 static uint32_t rx_sync_match, rx_frames;
 
 /* SyncAddressMatch as a hardware edge; rx_sync_match counts, this one times. */
-static volatile uint32_t sync_edges;
-static volatile uint32_t sync_edge_tk;
-/* The boundary the stamp is measured against, captured in the same interrupt. */
-static volatile uint32_t sync_edge_base;
-static volatile uint8_t  sync_edge_new;
+static uint32_t sync_edges;
+static uint32_t sync_edge_tk;
+/* The boundary the stamp is measured against, reconstructed at the poll.
+ * radio_devices_docs/radio/phy-seam.md */
+static uint32_t sync_edge_base;
+/* The last edge folded in, so an edge is serviced once and never twice. */
+static uint32_t sync_seq_seen;
 static uint32_t sync_last_offset_us;
 /* The raw delta and the scale that converted it.
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
@@ -307,8 +306,6 @@ static int64_t  sync_cov_sum;       /* arrival against the beacon that preceded 
 static uint32_t sync_unpaired;      /* edges with no beacon of their own superframe */
 static uint32_t sync_last_superframe;
 static uint32_t sync_implausible;
-static uint8_t  sync_dio_map1;      /* read back off the part */
-static uint8_t  sync_was_set;
 static uint8_t  rx_last_len, rx_last_type;
 static int8_t   rx_last_rssi;       /* off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
 /* What the refused frame actually carried, not which field mismatched. */
@@ -406,97 +403,18 @@ static uint32_t hop_slot_to_grid(uint8_t hop_index) {
     return RADIO_HOP_TO_GRID(hop_index);
 }
 
-/* --- platform glue: everything the driver needs from this board --- */
-
-static int spi_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len) {
-    (void)ctx;
-    return rfm_spi_transfer(tx, rx, len);
-}
-
-static void spi_select(void *ctx, int asserted) {
-    (void)ctx;
-    HAL_GPIO_WritePin(RFM_CS_GPIO_Port, RFM_CS_Pin, asserted ? GPIO_PIN_RESET : GPIO_PIN_SET);
-}
-
-static void radio_reset(void *ctx, int asserted) {
-    (void)ctx;
-    HAL_GPIO_WritePin(RFM_RESET_GPIO_Port, RFM_RESET_Pin, asserted ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
-
-static void radio_delay_us(void *ctx, uint32_t us) {
-    (void)ctx;
-    delay_us_poll(us);
-}
-
-static uint32_t radio_micros(void *ctx) {
-    (void)ctx;
-    return rfm_micros();
-}
-
-static const rfm69_io_t radio_io = {
-    .transfer = spi_transfer,
-    .select   = spi_select,
-    .reset    = radio_reset,
-    .delay_us = radio_delay_us,
-    .micros   = radio_micros,
-    .ctx      = NULL
-};
-
 uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
-    static const uint8_t sync_val[] = {'h', 'e', 'l', 'l'};
     (void)network_id;
 
-    if (rfm69_init(&radio, &radio_io) != RFM69_OK)
+    /* Twenty configuration calls, each run once, now live behind the seam.
+     * radio_devices_docs/radio/phy-seam.md */
+    if (phy_init() != 0)
         return 1;
-    if (rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US) != RFM69_OK)
+    /* The hub's own address, not a PHY constant; inert while filtering is off. */
+    if (rfm69_set_node_address(phy_rfm69_dev(), node_id) != RFM69_OK)
         return 1;
-
-    if (rfm69_set_bitrate(&radio, RADIO_BITRATE_BPS) != RFM69_OK) return 1;
-    if (rfm69_set_deviation_hz(&radio, RADIO_DEVIATION_HZ) != RFM69_OK) return 1;
-    if (rfm69_set_rx_bandwidth_hz(&radio, RADIO_RX_BANDWIDTH_HZ) != RFM69_OK) return 1;
-    /* Named explicitly; the reset values put the threshold below the noise floor.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_set_rssi_threshold_dbm(&radio, -100) != RFM69_OK) return 1;
-    if (rfm69_set_dagc(&radio, 0) != RFM69_OK) return 1;
-    /* Measured on the preamble at every receiver start-up; RegAfcValue is the read.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_set_afc(&radio, 1) != RFM69_OK) return 1;
-    /* DIO3 = SyncAddressMatch, then RegDioMapping1 read back off the part. */
-    if (rfm69_set_dio(&radio, 3, RFM69_DIO3_SYNC_ADDRESS) != RFM69_OK) return 1;
-    if (rfm69_read_reg(&radio, RFM69_RegDioMapping1, &sync_dio_map1) != RFM69_OK)
-        return 1;
-    if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) return 1;
-    if (rfm69_set_modulation(&radio, RFM69_SHAPING_BT_0_5) != RFM69_OK) return 1;
-    if (rfm69_set_preamble_bytes(&radio, RADIO_PREAMBLE_BYTES) != RFM69_OK)
-        return 1;
-    if (rfm69_set_sync(&radio, sync_val, sizeof(sync_val), 0) != RFM69_OK) return 1;
-
-    /* Neither Manchester nor whitening.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_set_packet_format(&radio, 1, RFM69_DCFREE_NONE, 1,
-                                RFM69_FILTER_NONE) != RFM69_OK) return 1;
-    /* CrcAutoClearOff: a frame failing CRC is delivered rather than discarded.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    {
-        uint8_t pc1 = 0;
-
-        if (rfm69_read_reg(&radio, RFM69_RegPacketConfig1, &pc1) != RFM69_OK)
-            return 1;
-        if (rfm69_write_reg(&radio, RFM69_RegPacketConfig1,
-                            (uint8_t)(pc1 | 0x08u)) != RFM69_OK)
-            return 1;
-    }
-    if (rfm69_set_payload_length(&radio, RFM69_FIFO_SIZE - 2) != RFM69_OK) return 1;
-    /* Set but inert: filtering is FILTER_NONE above.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_set_node_address(&radio, node_id) != RFM69_OK) return 1;
-    if (rfm69_set_broadcast_address(&radio, BROADCAST_ADDR) != RFM69_OK) return 1;
-    /* PA1: this module's PA0 pin is not bonded to the antenna.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_set_power(&radio, RFM69_PA1, 13) != RFM69_OK) return 1;
-
-    if (rfm69_run_osc_calibration(&radio, 50000u) != RFM69_OK) return 1;
-    if (rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US) != RFM69_OK)
+    /* phy.h: the caller names the channel, never the layer below it. */
+    if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0)
         return 1;
 
     if (hop_init(&hop, hop_prf_aes, NULL, RADIO_HOP_COUNT) != 0)
@@ -523,46 +441,23 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
     return 0;
 }
 
-/* Builds the frame in place; the length byte is the payload size. */
-static uint8_t build_frame(const void *payload, uint8_t payload_len) {
-    if ((size_t)payload_len + 1u > sizeof(tx_buffer))
-        return 0;
-    tx_buffer[0] = payload_len;
-    memcpy(tx_buffer + 1, payload, payload_len);
-    return (uint8_t)(payload_len + 1u);
-}
+/* The lead statistics are the hub's, not the PHY's.
+ * radio_devices_docs/radio/phy-seam.md */
+static int frame_send(const void *payload, uint8_t len) {
+    uint32_t span_tk = 0;
+    int rc = phy_transmit(payload, len, &span_tk);
 
-static rfm69_status_t transmit(uint8_t total_len) {
-    rfm69_status_t st;
-    uint32_t t0 = rfm_micros();
-
-    /* Out of RX before the FIFO is touched, where no caller can omit it.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    st = rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
-    if (st != RFM69_OK) return st;
-
-    st = rfm69_set_fifo_threshold(&radio, 1, 0);
-    if (st != RFM69_OK) return st;
-    st = rfm69_write_fifo(&radio, tx_buffer, total_len);
-    if (st != RFM69_OK) return st;
-
-    st = rfm69_set_mode(&radio, RFM69_MODE_TX);
-    if (st != RFM69_OK) return st;
-
-    /* PacketSent from RegIrqFlags2 rather than polling DIO0 forever. */
-    st = rfm69_wait_irq2(&radio, RFM69_IRQ2_PACKET_SENT, TX_TIMEOUT_US);
-    if (st == RFM69_OK) {
+    if (rc == 0) {
         /* An upper bound: it carries ramp-down and the PacketSent poll too. */
-        uint32_t span = timebase_ticks_to_us(rfm_micros() - t0);
-        uint32_t air  = RADIO_AIR_START_TO_END_US(total_len - 1u);
+        uint32_t span = timebase_ticks_to_us(span_tk);
+        uint32_t air  = RADIO_AIR_START_TO_END_US(len);
 
         lead_last_us = (span > air) ? (span - air) : 0u;
         if (lead_last_us < lead_min_us) lead_min_us = lead_last_us;
         if (lead_last_us > lead_max_us) lead_max_us = lead_last_us;
         lead_n++;
     }
-    (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
-    return st;
+    return rc;
 }
 
 /* An absolute grid: a fixed step from the last boundary, and the counter advances
@@ -596,8 +491,8 @@ static int superframe_due(void) {
 
 static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
     radio_data_beacon_t payload;
-    uint8_t total;
     uint8_t hop_idx;
+    int rc;
 
     /* How far past the boundary this beacon leaves; devices inherit it directly.
      * radio_devices_docs/open_hub/radio/timebase.md */
@@ -619,13 +514,6 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
     if (flags & RADIO_BEACON_FLAG_QUIESCE)
         announce_beacons++;
 
-    total = build_frame(&payload, (uint8_t)sizeof(payload));
-    if (total == 0) {
-        beacon_err++;
-        beacon_err_last = RADIO_BERR_BUILD;
-        return;
-    }
-
     /* One hop per superframe, from a keyed shuffle; a PRF failure means silence.
      * radio_devices_docs/radio/hopping.md */
     if (hop_channel(&hop, frame_counter, &hop_idx) != 0) {
@@ -633,15 +521,16 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
         beacon_err_last = RADIO_BERR_PRF;
         return;
     }
-    if (rfm69_set_carrier_hz(&radio,
-            slot_hz(hop_slot_to_grid(hop_idx))) != RFM69_OK) {
+    if (phy_tune(slot_hz(hop_slot_to_grid(hop_idx))) != 0) {
         beacon_err++;
         beacon_err_last = RADIO_BERR_RETUNE;
         return;
     }
-    if (transmit(total) != RFM69_OK) {
+    rc = frame_send(&payload, (uint8_t)sizeof(payload));
+    if (rc != 0) {
         beacon_err++;
-        beacon_err_last = RADIO_BERR_TX;
+        /* -2 is a payload the part cannot hold, which is not a failed transmit. */
+        beacon_err_last = (rc == -2) ? RADIO_BERR_BUILD : RADIO_BERR_TX;
         return;
     }
 
@@ -657,7 +546,6 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
  * radio_devices_docs/radio/joining.md */
 static void RFM_send_join_beacon(void) {
     radio_join_beacon_t payload;
-    uint8_t total;
 
     /* Whole struct first: a field added later must not go out off the stack. */
     memset(&payload, 0, sizeof(payload));
@@ -669,15 +557,12 @@ static void RFM_send_join_beacon(void) {
     payload.flags        = RADIO_JOIN_FLAG_WINDOW_OPEN;
     payload.hop_channels = RADIO_HOP_COUNT;
 
-    total = build_frame(&payload, (uint8_t)sizeof(payload));
-    if (total == 0)
-        return;
-    if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) {
+    if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0) {
         join_tx_err++;
         return;
     }
     join_beacons++;
-    if (transmit(total) != RFM69_OK)
+    if (frame_send(&payload, (uint8_t)sizeof(payload)) != 0)
         join_tx_err++;
 }
 
@@ -788,7 +673,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
     switch (req->type) {
     case IPC_REQ_READ_REG:
-        if (rfm69_read_reg(&radio, req->arg, &reply) != RFM69_OK)
+        if (rfm69_read_reg(phy_rfm69_dev(), req->arg, &reply) != RFM69_OK)
             status = IPC_ST_RADIO_ERR;
         len = 1;
         break;
@@ -950,7 +835,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
                                                                 : sync_min_offset_us;
         s.max_offset_us   = sync_max_offset_us;
         s.last_superframe = sync_last_superframe;
-        s.dio_map1        = sync_dio_map1;
+        s.dio_map1        = phy_rfm69_dio_map1();
         s.dio3_asked      = RFM69_DIO3_SYNC_ADDRESS;
         s.lead_last_us    = lead_last_us;
         s.lead_min_us     = (lead_min_us == 0xFFFFFFFFu) ? 0u : lead_min_us;
@@ -995,8 +880,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         memcpy(&hz, req->payload, sizeof(hz));
         memset(&b, 0, sizeof(b));
         b.asked_hz = hz;
-        if (rfm69_set_rx_bandwidth_hz(&radio, hz) != RFM69_OK ||
-            rfm69_read_reg(&radio, RFM69_RegRxBw, &back) != RFM69_OK) {
+        if (rfm69_set_rx_bandwidth_hz(phy_rfm69_dev(), hz) != RFM69_OK ||
+            rfm69_read_reg(phy_rfm69_dev(), RFM69_RegRxBw, &back) != RFM69_OK) {
             status = IPC_ST_RADIO_ERR;
             len = 0;
             break;
@@ -1009,7 +894,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
     /* The one knob that separates an overdriven front end from a dirty transmitter. */
     case IPC_REQ_SET_LNA: {
-        if (rfm69_set_lna_gain(&radio, req->arg) != RFM69_OK)
+        if (rfm69_set_lna_gain(phy_rfm69_dev(), req->arg) != RFM69_OK)
             status = IPC_ST_BAD_ARG;
         len = 0;
         break;
@@ -1070,7 +955,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             r.slot[i] = afc_ring_slot[k];
             r.gain[i] = afc_ring_gain[k];
             r.rssi[i] = afc_ring_rssi[k];
-            r.afc[i]  = afc_ring_afc[k];
+            r.afc_hz[i] = afc_ring_afc_hz[k];
             if ((afc_ring_crc_ok & (1u << k)) != 0u)
                 r.crc_ok = (uint16_t)(r.crc_ok | (1u << i));
             if ((afc_ring_in_frame & (1u << k)) != 0u)
@@ -1143,14 +1028,14 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         for (i = 0; i < sizeof(pattern); i++)
             pattern[i] = (i & 1u) ? 0xA5u : 0x5Au;
 
-        (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
+        (void)phy_standby();
 
         /* RegAesKey holds 16 bytes verbatim: the control arm for the FIFO test. */
         for (pass = 0; pass < n; pass++) {
             uint8_t rb[16];
 
-            if (rfm69_write(&radio, RFM69_RegAesKey1, pattern, 16) != RFM69_OK ||
-                rfm69_read(&radio, RFM69_RegAesKey1, rb, 16) != RFM69_OK) {
+            if (rfm69_write(phy_rfm69_dev(), RFM69_RegAesKey1, pattern, 16) != RFM69_OK ||
+                rfm69_read(phy_rfm69_dev(), RFM69_RegAesKey1, rb, 16) != RFM69_OK) {
                 r.io_err++;
                 continue;
             }
@@ -1169,8 +1054,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             uint8_t bad = 0;
 
             memset(back, 0, sizeof(back));
-            if (rfm69_write_fifo(&radio, pattern, sizeof(pattern)) != RFM69_OK ||
-                rfm69_read_fifo(&radio, back, sizeof(back)) != RFM69_OK) {
+            if (rfm69_write_fifo(phy_rfm69_dev(), pattern, sizeof(pattern)) != RFM69_OK ||
+                rfm69_read_fifo(phy_rfm69_dev(), back, sizeof(back)) != RFM69_OK) {
                 r.io_err++;
                 continue;
             }
@@ -1457,36 +1342,12 @@ static void on_superframe(void) {
 
 /* --- the four-frame exchange ------------------------------------------- */
 
-/* AutoRxRestart waits for an empty FIFO, so bytes left behind end the window.
- * radio_devices_docs/open_hub/radio/configuration.md */
-static void rx_flush(void) {
-    (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
-    sync_was_set = 0;      /* the flag clears with the mode; so must its shadow */
-    (void)rfm69_set_mode(&radio, RFM69_MODE_RX);
-    rx_flushes++;
-}
-
-/* A frame failing CRC still occupies the FIFO and has to be read out. */
-static void rx_discard_frame(void) {
-    uint8_t len = 0;
-
-    if (rfm69_read_fifo(&radio, &len, 1) != RFM69_OK)
-        return;
-    /* A corrupt length byte is what a failed CRC produces. */
-    if (len == 0u || len > sizeof(rx_buffer)) {
-        rx_flush();
-        return;
-    }
-    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK)
-        rx_flush();
-}
-
 /* 1 when a frame is ready and its CRC verified; failures are counted and drained.
  * radio_devices_docs/open_hub/radio/configuration.md */
 static void rx_sample_rssi(void) {
     int16_t x2 = 0;
 
-    if (rfm69_measure_rssi(&radio, RSSI_TIMEOUT_US, &x2) != RFM69_OK)
+    if (rfm69_measure_rssi(phy_rfm69_dev(), RSSI_TIMEOUT_US, &x2) != RFM69_OK)
         return;
     rx_rssi_samples++;
     /* Half-dB below zero, returned negated: stronger is larger. */
@@ -1509,7 +1370,7 @@ static void join_sample_rssi(void) {
     }
     /* Attempts, not successes: a trigger that never completes reads as a quiet band. */
     jp_level_tries++;
-    if (rfm69_measure_rssi(&radio, RSSI_TIMEOUT_US, &x2) != RFM69_OK)
+    if (rfm69_measure_rssi(phy_rfm69_dev(), RSSI_TIMEOUT_US, &x2) != RFM69_OK)
         return;
     rx_rssi_samples++;
     if (x2 > rx_rssi_peak_x2)  rx_rssi_peak_x2  = x2;
@@ -1521,24 +1382,18 @@ static void join_sample_rssi(void) {
     if (x2 < *floor) *floor = x2;
 }
 
-/* Stamps TIM2 on the DIO3 SyncAddressMatch edge.
- * radio_devices_docs/open_hub/radio/sync-timestamp.md */
-void HAL_GPIO_EXTI_Callback(uint16_t pin) {
-    if (pin != RFM_DIO3_Pin)
-        return;
-    sync_edge_tk   = rfm_micros();
-    sync_edge_base = superframe_start_tk;
-    sync_edges++;
-    sync_edge_new = 1;
-}
-
-/* Folds one captured edge into the offset statistics. */
-static void sync_edge_service(void) {
+/* Folds one captured edge into the offset statistics.
+ * radio_devices_docs/radio/phy-seam.md */
+static void sync_edge_service(const phy_ev_t *ev) {
     uint32_t offset;
 
-    if (!sync_edge_new)
+    if (!ev->sync_valid || ev->sync_seq == sync_seq_seen)
         return;
-    sync_edge_new = 0;
+    sync_seq_seen = ev->sync_seq;
+    sync_edges    = ev->sync_seq;
+    sync_edge_tk  = ev->sync_us;
+    sync_edge_base = radio_period_base(sync_edge_tk, superframe_start_tk,
+                                       superframe_tk);
 
     /* TIM2 ticks, then converted: a tick is not a microsecond on this board. */
     sync_last_offset_tk = sync_edge_tk - sync_edge_base;
@@ -1576,14 +1431,6 @@ static void sync_edge_service(void) {
     }
 }
 
-static void rx_note_sync(uint8_t flags1) {
-    uint8_t now = (flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH) ? 1u : 0u;
-
-    if (now && !sync_was_set)
-        rx_sync_match++;
-    sync_was_set = now;
-}
-
 /* Keyed after the sync word, and lag is measured from that same edge.
  * radio_devices_docs/open_hub/radio/configuration.md */
 #define SYNC_RSSI_WINDOW_US  RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES)
@@ -1604,25 +1451,23 @@ static uint8_t slot_of_offset(uint32_t off) {
 
 /* Taken while the payload still arrives: the only time the level is the frame's.
  * radio_devices_docs/open_hub/radio/configuration.md */
-static void sync_rssi_sample(void) {
-    int16_t x2 = 0;
+static void sync_rssi_sample(const phy_ev_t *ev) {
     uint32_t lag;
 
     /* Attempts, not successes: never called and always failed read alike. */
     sync_rssi_taken++;
-    /* The latch, not a trigger: a trigger never completes while sync is high.
-     * radio_devices_docs/open_hub/radio/configuration.md */
-    if (rfm69_get_rssi(&radio, &x2) != RFM69_OK) {
+    /* 0 is the contract's "no level", and this receiver does not read 0 dBm. */
+    if (ev->rssi_dbm == 0) {
         sync_rssi_err++;
         return;
     }
-    lag = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+    lag = timebase_ticks_to_us(phy_now_us() - ev->sync_us);
     if (lag > 0xFFFFu)
         lag = 0xFFFFu;
-    sync_rssi_dbm    = (int8_t)(x2 / 2);
+    sync_rssi_dbm    = (int8_t)ev->rssi_dbm;
     sync_rssi_lag_us = (uint16_t)lag;
     /* Off this edge, not off the last one folded into the statistics. */
-    sync_slot = slot_of_offset(timebase_ticks_to_us(sync_edge_tk - sync_edge_base));
+    sync_slot = slot_of_offset(timebase_ticks_to_us(ev->sync_us - sync_edge_base));
     /* 1 only inside the frame: outside it the sample is the floor under another name. */
     sync_rssi_have = (lag <= SYNC_RSSI_WINDOW_US) ? 1u : 0u;
     if (!sync_rssi_have)
@@ -1632,16 +1477,13 @@ static void sync_rssi_sample(void) {
 }
 
 /* A failed read is counted apart: it must not enter the fit as a zero. */
-static void afc_note(uint8_t grid) {
-    int32_t hz = 0;
-    int16_t steps = 0;
-    uint8_t gain = 0;
+static void afc_note(uint8_t grid, const phy_ev_t *ev) {
+    int32_t hz = ev->afc_hz;
 
-    if (rfm69_get_afc_raw(&radio, &steps) != RFM69_OK) {
+    if (!ev->afc_valid) {
         afc_read_err++;
         return;
     }
-    hz = rfm69_steps_to_hz(steps);
     if (afc_n == 0u || hz < afc_min_hz) afc_min_hz = hz;
     if (afc_n == 0u || hz > afc_max_hz) afc_max_hz = hz;
     afc_last_hz   = hz;
@@ -1651,11 +1493,8 @@ static void afc_note(uint8_t grid) {
     afc_sum_gg   += (int64_t)grid * (int64_t)grid;
     afc_sum_gh   += (int64_t)grid * (int64_t)hz;
     afc_ring_grid[afc_ring_head] = grid;
-    afc_ring_afc[afc_ring_head]  = steps;
-    /* Read here, not later: the AGC settles back to G1 as soon as the air is idle. */
-    if (rfm69_get_lna_gain(&radio, &gain) != RFM69_OK)
-        gain = 0xFFu;
-    afc_ring_gain[afc_ring_head] = gain;
+    afc_ring_afc_hz[afc_ring_head] = hz;
+    afc_ring_gain[afc_ring_head] = ev->lna_gain;
     /* Consumed, never left behind: no frame may report the level of the one before. */
     afc_ring_rssi[afc_ring_head] = sync_rssi_have ? sync_rssi_dbm : 0;
     afc_ring_slot[afc_ring_head] = sync_rssi_have ? sync_slot : 0xFFu;
@@ -1676,14 +1515,14 @@ static void afc_note_crc_ok(void) {
     afc_ring_crc_ok = (uint16_t)(afc_ring_crc_ok | (1u << last));
 }
 
-static int rx_frame_ready(uint8_t flags2, uint8_t grid) {
-    if (!(flags2 & RFM69_IRQ2_PAYLOAD_READY))
+/* 1 when the event carried a whole frame; the failures are counted here too. */
+static int rx_frame_ready(const phy_ev_t *ev, uint8_t grid) {
+    if (ev->kind != PHY_EV_FRAME && ev->kind != PHY_EV_CRC)
         return 0;
     /* Before the CRC branch: the corrupt frames are the population AFC is for. */
-    afc_note(grid);
-    if (!(flags2 & RFM69_IRQ2_CRC_OK)) {
+    afc_note(grid, ev);
+    if (ev->kind == PHY_EV_CRC) {
         rx_crc_err++;
-        rx_discard_frame();
         return 0;
     }
     rx_frames++;
@@ -1707,16 +1546,12 @@ static void ex_reset(void) {
 /* The channel is an argument, never a constant inside here.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static int frame_tx(const void *payload, uint8_t len, uint32_t hz) {
-    uint8_t total = build_frame(payload, len);
-
-    if (total == 0)
+    if (phy_tune(hz) != 0)
         return -1;
-    if (rfm69_set_carrier_hz(&radio, hz) != RFM69_OK)
-        return -1;
-    if (transmit(total) != RFM69_OK)
+    if (frame_send(payload, len) != 0)
         return -1;
     /* Back to listening immediately: standby loses the reply with no error. */
-    (void)rfm69_set_mode(&radio, RFM69_MODE_RX);
+    (void)phy_listen();
     return 0;
 }
 
@@ -1936,41 +1771,25 @@ static void exchange_service(void) {
 static void uplink_close(void) {
     if (!uplink_rx_open)
         return;
-    (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
-    sync_was_set = 0;      /* the flag clears with the mode; so must its shadow */
+    (void)phy_standby();
     uplink_rx_open = 0;
 }
 
-static void handle_uplink_frame(void) {
+static void handle_uplink_frame(const phy_ev_t *ev) {
     radio_uplink_t f;
     radio_uplink_report_t rpt;
     uint8_t nonce[AEAD_NONCE_BYTES];
     uint32_t dev_index;
     dev_entry_t *d;
-    int16_t rssi_x2 = 0;
-    uint8_t len = 0;
-
-    if (rfm69_read_fifo(&radio, &len, 1) != RFM69_OK)
-        return;
-    if (len == 0u || len > sizeof(rx_buffer)) {
-        rx_flush();
-        return;
-    }
-    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK) {
-        rx_flush();
-        return;
-    }
-
-    /* Taken before anything can retune: there is no second chance at it. */
-    (void)rfm69_get_rssi(&radio, &rssi_x2);
+    uint8_t len = ev->len;
 
     up_frames++;
-    if (len < sizeof(f) || rx_buffer[0] != RADIO_FRAME_UPLINK ||
-        rx_buffer[1] != RADIO_LINK_VERSION) {
+    if (len < sizeof(f) || ev->buf[0] != RADIO_FRAME_UPLINK ||
+        ev->buf[1] != RADIO_LINK_VERSION) {
         up_bad_frame++;
         return;
     }
-    memcpy(&f, rx_buffer, sizeof(f));
+    memcpy(&f, ev->buf, sizeof(f));
 
     /* No device id on the wire, and three slots map to one device.
      * radio_devices_docs/radio/tdma.md */
@@ -2052,7 +1871,7 @@ static void handle_uplink_frame(void) {
                 timebase_ticks_to_us(sync_edge_tk - sync_edge_base);
         }
     }
-    d->rssi_up   = (int8_t)(rssi_x2 / 2);
+    d->rssi_up   = (int8_t)ev->rssi_dbm;
     /* Cleared here too: a frame in its own superframe outruns the score. */
     d->missed_run = 0;
     d->rssi_down = rpt.rssi_down;
@@ -2137,13 +1956,13 @@ static void pair_init_service(void) {
         uint8_t v = 0;
 
         pi_frf = 0;
-        if (rfm69_read_reg(&radio, RFM69_RegFrfMsb, &v) == RFM69_OK)
+        if (rfm69_read_reg(phy_rfm69_dev(), RFM69_RegFrfMsb, &v) == RFM69_OK)
             pi_frf |= (uint32_t)v << 16;
-        if (rfm69_read_reg(&radio, RFM69_RegFrfMid, &v) == RFM69_OK)
+        if (rfm69_read_reg(phy_rfm69_dev(), RFM69_RegFrfMid, &v) == RFM69_OK)
             pi_frf |= (uint32_t)v << 8;
-        if (rfm69_read_reg(&radio, RFM69_RegFrfLsb, &v) == RFM69_OK)
+        if (rfm69_read_reg(phy_rfm69_dev(), RFM69_RegFrfLsb, &v) == RFM69_OK)
             pi_frf |= v;
-        if (rfm69_read_reg(&radio, RFM69_RegPayloadLength, &v) == RFM69_OK)
+        if (rfm69_read_reg(phy_rfm69_dev(), RFM69_RegPayloadLength, &v) == RFM69_OK)
             pi_paylen = v;
     }
     pi_len = 0u;
@@ -2251,7 +2070,6 @@ static void downlink_service(void) {
 /* Open for the whole uplink region, closed before the join region and the boundary.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static void uplink_service(void) {
-    uint8_t flags1, flags2;
     uint32_t close_at;
 
     if (pair_state == RADIO_PAIR_QUIESCE || !grid_started || device_count == 0u) {
@@ -2282,32 +2100,37 @@ static void uplink_service(void) {
         if (hop_channel(&hop, frame_counter, &idx) != 0)
             return;
         up_grid = (uint8_t)hop_slot_to_grid(idx);
-        if (rfm69_set_carrier_hz(&radio, slot_hz(up_grid)) != RFM69_OK)
+        if (phy_tune(slot_hz(up_grid)) != 0)
             return;
-        if (rfm69_set_mode(&radio, RFM69_MODE_RX) != RFM69_OK)
+        if (phy_listen() != 0)
             return;
         uplink_rx_open = 1;
         up_windows++;
         return;
     }
 
-    if (rfm69_get_irq_flags(&radio, &flags1, &flags2) == RFM69_OK) {
-        /* Counted apart from the join channel's sync, which pairing traffic moves. */
-        uint8_t was = sync_was_set;
+    {
+        phy_ev_t ev;
 
-        rx_note_sync(flags1);
-        if (!was && sync_was_set) {
-            up_sync++;
-            sync_rssi_sample();
+        if (phy_poll(&ev) != 0) {
+            rx_flushes++;
+            return;
         }
-        if (rx_frame_ready(flags2, up_grid))
-            handle_uplink_frame();
+        sync_edge_service(&ev);
+        if (ev.kind == PHY_EV_SYNC) {
+            rx_sync_match++;
+            /* Counted apart from the join channel's sync, which pairing traffic moves. */
+            up_sync++;
+            sync_rssi_sample(&ev);
+        }
+        if (rx_frame_ready(&ev, up_grid))
+            handle_uplink_frame(&ev);
         /* After the frame and only with sync clear: the latch has one reader.
          * radio_devices_docs/open_hub/radio/configuration.md */
-        else if (!(flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH)) {
+        else if (!ev.busy) {
             int16_t x2 = 0;
 
-            if (rfm69_measure_rssi(&radio, RSSI_TIMEOUT_US, &x2) == RFM69_OK) {
+            if (rfm69_measure_rssi(phy_rfm69_dev(), RSSI_TIMEOUT_US, &x2) == RFM69_OK) {
                 if (x2 > up_rssi_peak_x2)  up_rssi_peak_x2  = x2;
                 if (x2 < up_rssi_floor_x2) up_rssi_floor_x2 = x2;
             }
@@ -2315,31 +2138,22 @@ static void uplink_service(void) {
     }
 }
 
-static void handle_join_frame(void) {
-    uint8_t len = 0;
-    int16_t rssi_x2 = 0;
-
-    if (rfm69_read_fifo(&radio, &len, 1) != RFM69_OK)
-        return;
-    if (len == 0u || len > sizeof(rx_buffer))
-        return;
-    if (rfm69_read_fifo(&radio, rx_buffer, len) != RFM69_OK)
-        return;
+static void handle_join_frame(const phy_ev_t *ev) {
+    uint8_t len = ev->len;
 
     /* Recorded before any check runs: what the frame was, not why it was refused. */
-    (void)rfm69_get_rssi(&radio, &rssi_x2);
     rx_last_len        = len;
-    rx_last_type       = rx_buffer[0];
-    rx_last_rssi       = (int8_t)(rssi_x2 / 2);
+    rx_last_type       = ev->buf[0];
+    rx_last_rssi       = (int8_t)ev->rssi_dbm;
     rx_last_superframe = frame_counter;
 
-    if (len < 2u || rx_buffer[1] != RADIO_PAIR_VERSION) {
+    if (len < 2u || ev->buf[1] != RADIO_PAIR_VERSION) {
         pair_reqs_dropped++;
         reqs_drop_last = RADIO_DROP_VERSION;
         return;
     }
 
-    if (rx_buffer[0] == RADIO_FRAME_PAIR_CONF) {
+    if (ev->buf[0] == RADIO_FRAME_PAIR_CONF) {
         radio_pair_conf_t c;
         ipc_pair_conf_evt_t e;
 
@@ -2349,7 +2163,7 @@ static void handle_join_frame(void) {
             reqs_drop_last = (len < sizeof(c)) ? RADIO_DROP_LEN : RADIO_DROP_BUSY;
             return;
         }
-        memcpy(&c, rx_buffer, sizeof(c));
+        memcpy(&c, ev->buf, sizeof(c));
         if (c.hub_id != hub_id || c.dev_id != ex_dev_id) {
             pair_reqs_dropped++;
             reqs_drop_last = (c.hub_id != hub_id) ? RADIO_DROP_HUB_ID
@@ -2372,7 +2186,7 @@ static void handle_join_frame(void) {
         return;
     }
 
-    if (rx_buffer[0] != RADIO_FRAME_PAIR_REQ) {
+    if (ev->buf[0] != RADIO_FRAME_PAIR_REQ) {
         pair_reqs_dropped++;
         reqs_drop_last = RADIO_DROP_TYPE;
         return;
@@ -2390,9 +2204,9 @@ static void handle_join_frame(void) {
             return;
         }
         /* Before anything judges it, while the bytes are still the radio's. */
-        memcpy(reqs_drop_head, rx_buffer, sizeof(reqs_drop_head));
-        memcpy(reqs_drop_key,  rx_buffer + 24, sizeof(reqs_drop_key));
-        memcpy(&req, rx_buffer, sizeof(req));
+        memcpy(reqs_drop_head, ev->buf, sizeof(reqs_drop_head));
+        memcpy(reqs_drop_key,  ev->buf + 24, sizeof(reqs_drop_key));
+        memcpy(&req, ev->buf, sizeof(req));
 
         /* Only the device the operator named, and each refusal counted apart.
          * radio_devices_docs/radio/joining.md */
@@ -2444,11 +2258,9 @@ static void handle_join_frame(void) {
 /* Overlays the uplink tail, and split across superloop passes.
  * radio_devices_docs/open_hub/radio/superloop.md */
 static void join_region_service(void) {
-    uint8_t flags1 = 0, flags2 = 0;
-
     if (pair_state == RADIO_PAIR_IDLE) {
         if (join_phase) {
-            (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
+            (void)phy_standby();
             join_phase = 0;
         }
         return;
@@ -2475,17 +2287,17 @@ static void join_region_service(void) {
         /* Half rate keeps the extra air time to 0.21%, and the beacon keeps its
          * documented offset. radio_devices_docs/radio/joining.md */
         if (device_count == 0u && pair_state == RADIO_PAIR_LISTEN) {
-            if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK)
+            if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0)
                 return;
             join_beacon_pending = ((frame_counter % JOIN_BEACON_EVERY) == 0u);
         } else if ((frame_counter % JOIN_BEACON_EVERY) == 0u &&
                    pi_superframe != frame_counter && !pair_region_owned()) {
             RFM_send_join_beacon();
-        } else if (rfm69_set_carrier_hz(&radio, slot_hz(RADIO_JOIN_SLOT)) != RFM69_OK) {
+        } else if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0) {
             return;
         }
 
-        if (rfm69_set_mode(&radio, RFM69_MODE_RX) != RFM69_OK)
+        if (phy_listen() != 0)
             return;
         /* During a quiesce the window runs to the boundary, stopping short of it. */
         join_rx_deadline = (pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
@@ -2508,22 +2320,28 @@ static void join_region_service(void) {
         join_beacon_pending = 0;
         /* Out of RX first.
          * radio_devices_docs/open_hub/radio/configuration.md */
-        (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
+        (void)phy_standby();
         RFM_send_join_beacon();
-        (void)rfm69_set_mode(&radio, RFM69_MODE_RX);   /* straight back to listening */
+        (void)phy_listen();   /* straight back to listening */
     }
 
-    if (rfm69_get_irq_flags(&radio, &flags1, &flags2) == RFM69_OK) {
-        uint8_t was = sync_was_set;
+    {
+        phy_ev_t ev;
 
-        rx_note_sync(flags1);
-        if (!was && sync_was_set)
-            sync_rssi_sample();
-        if (rx_frame_ready(flags2, RADIO_JOIN_SLOT))
-            handle_join_frame();
-        /* After the frame, never before: a trigger overwrites the arriving level. */
-        else if (!(flags1 & RFM69_IRQ1_SYNC_ADDR_MATCH))
-            join_sample_rssi();
+        if (phy_poll(&ev) != 0)
+            rx_flushes++;
+        else {
+            sync_edge_service(&ev);
+            if (ev.kind == PHY_EV_SYNC) {
+                rx_sync_match++;
+                sync_rssi_sample(&ev);
+            }
+            if (rx_frame_ready(&ev, RADIO_JOIN_SLOT))
+                handle_join_frame(&ev);
+            /* After the frame, never before: a trigger overwrites the arriving level. */
+            else if (!ev.busy)
+                join_sample_rssi();
+        }
     }
 
     /* Read off the part: the driver's shadow cannot show a set_mode that did not
@@ -2534,7 +2352,7 @@ static void join_region_service(void) {
         uint8_t op = 0;
 
         jp_step = 1;
-        if (rfm69_read_reg(&radio, RFM69_RegOpMode, &op) == RFM69_OK) {
+        if (rfm69_read_reg(phy_rfm69_dev(), RFM69_RegOpMode, &op) == RFM69_OK) {
             uint8_t off = (((op >> 2) & 0x07u) != (uint8_t)RFM69_MODE_RX) ? 1u : 0u;
 
             jp_last_op = op;
@@ -2548,8 +2366,7 @@ static void join_region_service(void) {
     }
 
     if (timebase_elapsed(join_rx_deadline)) {
-        (void)rfm69_set_mode_blocking(&radio, RFM69_MODE_STANDBY, MODE_TIMEOUT_US);
-        sync_was_set = 0;
+        (void)phy_standby();
         join_beacon_pending = 0;
         join_phase = 0;
     }
@@ -2579,7 +2396,6 @@ void RFM_Routine(void) {
             pair_state = RADIO_PAIR_IDLE;
     }
 
-    sync_edge_service();
     evt_reply_service();
 
     if (superframe_due())

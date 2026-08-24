@@ -1525,7 +1525,7 @@ static int cmd_device_afcraw(cli_data_t *cli) {
         else
             snprintf(slot, sizeof(slot), "slot %3u", r.slot[i]);
         cli_out(cli, "  grid %2u  %s  %7ld Hz  %s  lna G%u  %s\r\n",
-                r.grid[i], slot, (long)IPC_AFC_STEPS_TO_HZ(r.afc[i]), level,
+                r.grid[i], slot, (long)r.afc_hz[i], level,
                 r.gain[i], ((r.crc_ok >> i) & 1u) ? "ok" : "CRC FAIL");
     }
     /* The sampler's own record, so a column of "no lvl" names its cause. */

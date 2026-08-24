@@ -300,3 +300,19 @@ _Static_assert(RADIO_PAIR_QUIESCE_SUPERFRAMES <= RADIO_QUIESCE_SUPERFRAMES,
 _Static_assert(RADIO_PAIR_NEXT_INIT_SF - (1u + RADIO_PAIR_QUIESCE_SUPERFRAMES) >=
                RADIO_QUIESCE_MIN_GAP,
                "back-to-back enrolments are refused clear air by the gap rule");
+
+/**
+ * @brief The period start a timestamp belongs to, given the current one.
+ * @param at_tk      the timestamp, on the same clock as start_tk
+ * @param start_tk   the start of the period running now
+ * @param period_tk  the period's length in the same ticks
+ * @return start_tk, or one period earlier when at_tk precedes it
+ *
+ * Unsigned differences compared as signed, so it holds across the counter's
+ * wrap. radio_devices_docs/radio/phy-seam.md
+ */
+static inline uint32_t radio_period_base(uint32_t at_tk, uint32_t start_tk,
+                                         uint32_t period_tk) {
+    return ((int32_t)(at_tk - start_tk) < 0) ? (uint32_t)(start_tk - period_tk)
+                                             : start_tk;
+}

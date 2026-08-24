@@ -380,7 +380,7 @@ typedef struct ipc_afc_raw {
     uint8_t  slot[IPC_AFC_RING]; /**< the opportunity it arrived in, 0xFF unplaceable */
     uint8_t  gain[IPC_AFC_RING]; /**< LnaCurrentGain in force on that frame */
     int8_t   rssi[IPC_AFC_RING]; /**< dBm at sync match, not after the frame ended */
-    int16_t  afc[IPC_AFC_RING];  /**< the AFC register in Fstep, hertz is the reader's */
+    int32_t  afc_hz[IPC_AFC_RING]; /**< carrier error, already in hertz below the seam */
 } __attribute__((packed)) ipc_afc_raw_t;
 
 _Static_assert(IPC_AFC_RING <= 16u,
@@ -389,13 +389,6 @@ _Static_assert(IPC_AFC_RING <= 16u,
 /* Never a real offset: an arrival lands inside the superframe, not past its end.
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
 #define IPC_ARRIVAL_SYNC_NONE  0xFFFFFFFFu
-
-/* Fstep units; `device afc` prints the driver's hertz for the same frame.
- * radio_devices_docs/open_hub/radio/configuration.md */
-#define IPC_AFC_STEPS_TO_HZ(steps)  ((int32_t)(((int64_t)(steps) * 32000000) >> 19))
-
-_Static_assert(IPC_AFC_STEPS_TO_HZ(16384) == 1000000,
-               "Fstep is FXOSC/2^19, so 16384 steps is exactly one megahertz");
 
 _Static_assert(sizeof(ipc_afc_raw_t) <= IPC_PAYLOAD_MAX, "ipc_afc_raw_t too large");
 

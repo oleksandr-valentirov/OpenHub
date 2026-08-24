@@ -102,6 +102,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/radio.c
+    Core/Src/phy_rfm69.c
     Core/Src/aead.c
     ../Common/src/hop.c
     ../Common/src/ipc.c
