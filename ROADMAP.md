@@ -1003,6 +1003,36 @@ is correct and not what the operator last chose.
 
 `open_hub/arch/config-store.md` § 8c, `open_hub/network/telemetry.md`.
 
+### 75. `radio.c` is the chip and the protocol in one file — `debt`
+
+2649 lines, **82 references to `rfm69_` and 62 to the mailbox**, interleaved with
+the superframe grid, the roster and the pairing state machine. The cost is not
+tidiness: **no claim about the logic can be checked without the chip**, and the
+chip is the hardest part of this system to observe.
+
+The seam is measured rather than guessed and it is narrow. Of 29 distinct driver
+calls, **20 are configuration and every one runs exactly once** from values that
+already live in `radio_phy.h`; nine are operations. That nine is `phy.h`, which
+the device tree already carries with `phy_sx126x.c` under it.
+
+**This is a K2 instrument before it is a refactor**, which is the whole argument
+for its position. It buys two things no counter on this side can: the grid becomes
+host-testable against a fake PHY that returns frames on command, and identical
+logic on a second chip separates *the logic is wrong* from *this driver is wrong*.
+
+`PHY_EV_CRC` is the small case that shows the shape. Today a frame that fails CRC
+increments a counter and dies inside `rx_frame_ready`, while `sync_rssi_sample()`
+measured its level and threw it away — so **a corrupt frame is a silence with a
+counter instead of a frame with a level**, which is exactly the number the join
+region investigation needed and could not get.
+
+Ordering, from [ADR-0028](../radio_devices_docs/radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md):
+cut the PHY seam here, then get both firmwares onto one set of sources **in
+place**, and only then split the repository. The mailbox is the second and larger
+seam and is not this item's.
+
+`../radio_devices_docs/radio/phy-seam.md`.
+
 ### 39. A device command still cannot say anything the wire has no word for — `debt` `contract`
 
 `dev_app` reaches the firmware end to end and is refused there with
