@@ -294,6 +294,39 @@ window open until it resolves or times out.
 Two things this rules out, both measured: the front end (item 59's page carries
 the -42 dBm figure and the SX126x's -44 dBm on the same frames) and the budget.
 
+
+#### 2026-08-24: 0 of 2, and the mechanism above is pre-ADR-0026
+
+Two exchanges got three frames deep in `bench/runs/2026-08-24-2/`, which is the
+first time a `PAIR_RSP` and a `PAIR_CONF` have been seen on air at all. Four
+instruments on the confirm leg:
+
+- **the air:** `PAIR_CONF`, 26 bytes, correct ids, and then nothing until the
+  next scheduled beacon ~4 s later. No `PAIR_ACCEPT` was ever radiated.
+- **the device:** `conf sent 2`, `accept heard 0, timeout 2`, every refusal
+  counter on the accept path zero — it is not rejecting a grant, it is not
+  getting one.
+- **the hub's ladder:** `req 2 -> rsp 2 -> conf 0 -> accept 0, 0 paired`, with
+  `timed out 2`. The exchange sat in `RADIO_EX_SENT_RSP` until CM7's timeout.
+- **the hub's radio:** `sync 2, crc err 0, frames 2` across the whole window, and
+  those two frames are the two requests. Neither confirm became a payload.
+
+**The "where to look" list above describes the pre-ADR-0026 geometry and has to be
+re-derived.** It compares a 105 000 µs response-to-confirmation turnaround against
+a 100 000 µs window, which was the arithmetic when the whole exchange ran inside
+one join region. Under ADR-0026 it does not: the device now confirms
+**2 007 970 µs** after the response, in its own region, and the hub reports
+entering 30 join regions over the window. The old race may be gone and the symptom
+is not, so what closes the window under an exchange in flight is an open question
+again rather than a diagnosis.
+
+**Device item 61 is the sharpest instance of this leg and it has a known cause.**
+The WL55 hub role loses the confirmation **11 times out of 11, deterministically**,
+because `hublogic.c` arms `HUB_EX_TIMEOUT_US` from the response and knows nothing
+of `RADIO_PAIR_CONF_REGION`. That is a third image nobody counted when ADR-0026
+landed, and it is worth reading before hunting this one on the H755 — the same
+shape of miss on a second implementation is the cheapest hypothesis available.
+
 `../radio_devices_docs/radio/pairing.md` § the WL55-to-WL55 control.
 
 ### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
@@ -375,6 +408,41 @@ suspect — measured by holding a transmitter still and stepping the filter down
 until reception stopped. It cannot be what loses these requests.
 `radio_devices_docs/radio/phy.md` carries the sweep. What survives of the carrier
 hypothesis is item 73, which is arithmetic rather than a mechanism.
+
+
+#### 2026-08-24: the first air-side denominator, and proximity ruled out
+
+Every arm above differenced two counters. `bench/runs/2026-08-24-1/join.iq` and
+`2026-08-24-2/` count the requests **on the air** instead, on a bladeRF over the
+join channel, so the denominator is no longer the device's own claim.
+
+| window | requests radiated | hub registered |
+|---|---|---|
+| 2026-08-24-1, boards adjacent | 8 | **0** |
+| 2026-08-24-2 window 1, boards apart | 4 | **2** |
+| 2026-08-24-2 window 2, boards apart | 4 | **0** |
+
+**A nearby transmitter desensitising the receiver was the standing hypothesis and
+it is dead.** 2 of 8 against 0 of 8 is Fisher **p = 0.47**. The first window alone
+reads 2 of 4, p = 0.09, and quoting it would have closed this item as fixed —
+**one window is not a measurement here**, which is why both are in the table.
+
+Two things the air added that no counter could. The hub's own `pair_init` counter
+and the capture agree to the frame on the invitation leg — 14 built, 14 sent, 14
+on air — which is the control that says the capture saw everything radiated.
+And the device's `invites seen 4 of 7` is **its listening duty cycle, not path
+loss**: its retry gap is ~8.5 s against an 8.0 s invitation period, so it answers
+every other invitation, and it answered every one it was awake for.
+
+Level, for the record, from the same hub in the same minutes: node A's uplinks
+read **-44/-48 dBm** and decode 11 of 11; node B's requests read **-56/-57 dBm**
+and decode 2 of 8. Both far above the hub's reported floor of -91 dBm.
+
+**A counting hole on this path.** After `pair_reqs_seen++`, every early return
+increments `pair_reqs_dropped` **except** a failed
+`ipc_send_event(IPC_EVT_PAIR_REQ, ...)`, which does `ex_reset(); return;` and
+counts nothing. Not the cause of any zero above — those never reached the counter
+— but a blind spot on the path being debugged.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
@@ -578,6 +646,41 @@ The part evaluates RSSI continuously while the receiver waits for a preamble, so
 a manual trigger is mostly ignored — `OpenHub/.claude/skills/rfm69` already says
 the receiver "parks until a signal arrives". Until this is fixed the level witness
 below the sync word is the SDR, not the hub.
+
+
+#### 2026-08-24: the first air-side denominator, and proximity ruled out
+
+Every arm above differenced two counters. `bench/runs/2026-08-24-1/join.iq` and
+`2026-08-24-2/` count the requests **on the air** instead, on a bladeRF over the
+join channel, so the denominator is no longer the device's own claim.
+
+| window | requests radiated | hub registered |
+|---|---|---|
+| 2026-08-24-1, boards adjacent | 8 | **0** |
+| 2026-08-24-2 window 1, boards apart | 4 | **2** |
+| 2026-08-24-2 window 2, boards apart | 4 | **0** |
+
+**A nearby transmitter desensitising the receiver was the standing hypothesis and
+it is dead.** 2 of 8 against 0 of 8 is Fisher **p = 0.47**. The first window alone
+reads 2 of 4, p = 0.09, and quoting it would have closed this item as fixed —
+**one window is not a measurement here**, which is why both are in the table.
+
+Two things the air added that no counter could. The hub's own `pair_init` counter
+and the capture agree to the frame on the invitation leg — 14 built, 14 sent, 14
+on air — which is the control that says the capture saw everything radiated.
+And the device's `invites seen 4 of 7` is **its listening duty cycle, not path
+loss**: its retry gap is ~8.5 s against an 8.0 s invitation period, so it answers
+every other invitation, and it answered every one it was awake for.
+
+Level, for the record, from the same hub in the same minutes: node A's uplinks
+read **-44/-48 dBm** and decode 11 of 11; node B's requests read **-56/-57 dBm**
+and decode 2 of 8. Both far above the hub's reported floor of -91 dBm.
+
+**A counting hole on this path.** After `pair_reqs_seen++`, every early return
+increments `pair_reqs_dropped` **except** a failed
+`ipc_send_event(IPC_EVT_PAIR_REQ, ...)`, which does `ex_reset(); return;` and
+counts nothing. Not the cause of any zero above — those never reached the counter
+— but a blind spot on the path being debugged.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
 
@@ -1005,6 +1108,144 @@ is correct and not what the operator last chose.
 
 ### 75. `radio.c` is the chip and the protocol in one file — `debt`
 
+**Step 1 of the cut is done: the PHY contract is one file.**
+`Common/inc/phy.h` now holds the nine operations and the four-kind event, and
+`wl55_device/Core/Inc/phy.h` is **deleted** rather than copied — the device
+already builds against this directory through `OPENHUB_PATH`. Verified in both
+directions: the device's ROM is byte-for-byte the same size across the move, and
+**removing `Common/inc/phy.h` fails the device's build** at `phy_sx126x.c:9` and
+`hublogic.c:11`, which is ADR-0028 phase 9b's exit criterion demonstrated on one
+header.
+
+That is the cheap half. **What is left is the hub having no implementation of it**
+— `radio.c` still calls the driver directly, and the survey below is what has to
+move behind the nine operations:
+
+| Kind | Distinct | Sites | Where |
+|---|---|---|---|
+| configuration — bitrate, deviation, sync, packet format, power, DIO, DAGC, AFC, LNA, bandwidth, addresses, FIFO threshold, osc calibration | ~20 | ~20 | all inside `RFM_Init`, each called **once** |
+| operation — `set_mode_blocking` 10, `read_reg` 9, `set_carrier_hz` 7, `read_fifo` 7, `set_mode` 6, `measure_rssi` 3, `get_rssi` 3, `write_fifo` 2, `get_irq_flags` 2, `wait_irq2`, `get_afc_raw`, `get_lna_gain` | 12 | ~53 | scattered through the superframe loop |
+
+**Step 2 is done: the configuration is behind `phy_init()`.**
+`CM4/Core/Src/phy_rfm69.c` holds the twenty-one configuration calls, the five
+platform-glue functions and the `rfm69_dev_t`; `radio.c` lost 81 lines and calls
+`phy_init()`, `phy_tune()` and `phy_standby()` instead. `phy_rfm69.h` is
+scaffolding and **every declaration in it is a debt** — the driver handle and the
+`RegDioMapping1` readback, both of which go when the operation sites move.
+
+Checked three ways, because a configuration move that drops a register builds
+perfectly:
+
+- **the call sequence, mechanically**: 23 driver calls before, 23 after, the same
+  multiset with the same arguments, extracted from both revisions rather than read
+- **the part itself**: `device synctime` prints `RegDioMapping1 02 read back,
+  DIO3 asked 2`, so the mapping reached the chip
+- **the air and the link**: 16 beacons over ~15 superframes, C0's permutation
+  intact, C5b 7 of 7, node A delivering with `frames_bad 0`, and
+  `arrival_us 77950` against 77 866–78 063 before the cut — the same timestamp,
+  which no reordered bitrate or deviation would survive
+
+**Two calls changed position on purpose** and the reasoning is on
+`radio_devices_docs/radio/phy-seam.md`: the carrier, because `phy.h` says the
+caller names the channel, and the node address, because it is the hub's own value
+and not a PHY constant. The RC oscillator calibration consequently runs *before*
+the carrier is set rather than after; that was an argument until the run above,
+and is now a measurement.
+
+**Step 3 is done: five of the nine operations are behind the contract.**
+`phy_init`, `phy_tune`, `phy_standby`, `phy_listen`, `phy_transmit` and
+`phy_rssi_now` are implemented; `radio.c` is **2530 lines** and its direct driver
+calls are down from **53 to 30**. `transmit()`, `build_frame()` and `tx_buffer`
+are gone from `radio.c`; what stayed is `frame_send()`, which keeps the hub's
+`lead_*` statistics because those are the hub's and not the PHY's.
+
+The transmit path was the only one restructured, so it was compared call by call:
+**six driver calls before, the same six in the same order after**, the same frame
+construction and the same FIFO length. Verified on the bench against four
+independent readings, none of them the compiler:
+
+| | before the cut | after |
+|---|---|---|
+| `tx command to first bit` | min 337, max 504 µs / 727 frames | **min 372, max 501 / 198** |
+| node A's arrival stamp | 77 866 – 78 063 µs | **77 927 µs** |
+| the hub's own per-device row | delivering | **12 ok / 0 bad, `missed_run` 0** |
+| the air | 31 beacons / 31 superframes | **30 / 30**, C0 intact, C5b 14 of 15 |
+| downlinks the hub sent | — | **82 of 82 opportunities** |
+
+**Six of nine are done. `phy_now_us` landed once the clock question was settled**:
+every span this interface reports rides the **backend's own clock** and the caller
+scales, which is what `phy_transmit`'s `air_us` already does. On this part that
+clock is TIM2's tick and not a calibrated microsecond, so the `_us` in those names
+is a wart rather than a promise — left alone, because renaming a field two
+firmwares compile has to be worth more than a better name.
+
+**Step 4 is done: `phy_poll` is cut, and seven of the nine are behind the
+contract.** `rx_note_sync`, `rx_discard_frame`, the flag reading inside
+`rx_frame_ready`, the DIO3 interrupt and all four FIFO-read paths are under the
+seam; the AFC ring, the per-grid regression, the slot attribution and the floor
+measurement stayed above it. `radio.c` is **2467 lines** and its direct driver
+calls **18**, from 30.
+
+`phy_ev_t` gained four fields, not three. `afc_hz`, `afc_valid` and `lna_gain`
+were the ones this entry already owed. The fourth is **`sync_seq`**, and it is
+there to stop the cut deleting an instrument: this hub counts one sync event two
+ways — a polled latch (`sync_match`) and a DIO3 pin interrupt (`edges`) — and
+their disagreement is information. A four-kind event reports what a *poll* saw, so
+on its own it would have collapsed the pair into one number. `sync_seq` is the
+ISR's own counter snapshotted into every event, which recovers both and also
+replaces the `sync_edge_new` flag with something that cannot lose two edges
+silently. A fifth, **`busy`**, replaced the caller's `!(flags1 & SyncAddressMatch)`
+guard on the floor sampler.
+
+**The northbound schema did not move, and this entry said it would.** The wire
+field is already `OHT_F_DEVICE_AFC_HZ` and `ipc_afc_t` already carries hertz; only
+`ipc_afc_raw_t.afc[]` was in Fstep, converted by an `IPC_AFC_STEPS_TO_HZ` macro
+that hardcoded **FXOSC = 32 MHz** inside a header that is supposed to know no
+chip. The unit moved below the seam and that macro is deleted. `test_oht` reports
+the same schema hash across the change.
+
+**Two behaviours changed on purpose.** The join path now recovers a dirty FIFO the
+way the uplink path always did — it used to return without flushing — and
+`phy_poll` restarts the receiver on any refused poll, so `flushes` counts a
+slightly wider set.
+
+Verified on the board against five readings taken on both sides, because the
+superframe-base reconstruction is the part that could have broken quietly: the
+arrival offset (70747 → 70705 µs, min 70656 → 70705, **0 implausible** both
+sides), AFC reads failed (0 both sides) and its range, the per-frame level, slot
+and gain (slot 2, G1, -40…-44 dBm both sides), the ladder identity
+`sync == frames + crc` holding at 3 = 2 + 1, and node A still delivering with
+`0 bad`. The uplink floor sampler, which the `busy` guard governs, reads
+-84 / -95 dBm.
+
+**Step 5 is done, and it is the first return on the seam: the receive path has a
+host test.** `CM4/test/test_phy.c`, 95 checks over a fake part, building
+`phy_rfm69.c` for the host across two shims and wrapping the driver's own
+`fake_spi.h` rather than copying it. Every case is a rule this project learned on
+the air and none of them is visible to a compiler: an edge counted as a level, a
+trigger destroying the latch it was meant to read, the carrier error read after
+the drain has re-armed the receiver, a corrupt length byte believed.
+
+**It ships three mutation controls and it has been pointed at the code.** Three
+defects were written into `phy_rfm69.c` on purpose and each was caught by the case
+that owns it — the latch counted as a pulse, the CRC frame left in the FIFO, and
+the level taken with a trigger. The suite also refuses a run whose check count has
+shrunk, because a deleted case is otherwise indistinguishable from a passing one.
+
+What it does **not** cover is the wiring: the shims come first on the include
+path, so a change to the real `main.h` does not reach it. That trade is stated in
+its `Makefile` and it is the right one — the suite is about what `phy_poll` does
+with a part, and the board is what the bench is for.
+
+What is left is eighteen calls and they are a coherent residue rather than
+leftovers: `read_reg` 7 and the four SPI-loopback calls are the **debug surface**,
+`measure_rssi` 3 are the floor samplers that want a half-decibel `phy_rssi_now`
+before they can move, and `set_rx_bandwidth_hz`, `rx_bandwidth_from_reg`,
+`set_node_address` and `set_lna_gain` are console setters.
+**`phy_poll` is the one that gives `PHY_EV_CRC` somewhere to go**,
+and it is where the seam stops being tidying and starts being an instrument.
+
+
 2649 lines, **82 references to `rfm69_` and 62 to the mailbox**, interleaved with
 the superframe grid, the roster and the pairing state machine. The cost is not
 tidiness: **no claim about the logic can be checked without the chip**, and the
@@ -1070,3 +1311,100 @@ not assuming.
   reset spends the one honest test of it on nobody watching.
 
 `open_hub/testing/sdr.md`.
+
+### 76. The beacon's air time is 48 % over what the payload predicts — `defect`
+
+Regression run `2026-08-24-1`, check RG-A-5. Over 31 superframes `airgrid` puts
+the beacon's mean air time at **5.90 ms against a 4.00 ms prediction**, computed
+from `phy.air_us()` off the compiled headers. `radio_devices_docs/specs/06-regression.md`
+§6.1 sets the tolerance at ±10 % relative; this is +48 %.
+
+**It is not yet attributed**, and the two candidates need separating before
+anything is changed: the hub genuinely keying the carrier longer than the frame
+needs, or `airgrid`'s burst detector bridging the beacon with an adjacent edge.
+The downlink in the same window measures 8.50 ms against 8.00 ms predicted — 6 %,
+inside tolerance — which argues the detector is not generally long, and therefore
+points at the beacon itself. That is an argument, not a measurement.
+
+It matters beyond tidiness: the beacon is the one frame every device must hear
+every superframe, and its length is a term in the hub's own duty cycle — measured
+at **0.295 % for beacons alone** in that window, against the 0.200 % the idle-hub
+prediction gives.
+
+The instrument to settle it is `spectrum.py` on a single plucked beacon, which
+needs no new air.
+
+### 77. `bandscan.py` is new, is load-bearing, and has no home in the test plan — `debt`
+
+Written during run `2026-08-24-1` under the `regression` skill's rule for analysis
+tools. It reports per-channel occupancy across a wideband capture and it exists
+because `airgrid.py` returns everything off-grid as one undifferentiated list, in
+which a foreign carrier and a missed uplink are indistinguishable — and they have
+opposite consequences, one a defect and the other a reason a run is void.
+
+It carries `--self-test` with both arms and refuses on an empty population. What
+it does **not** have is an `RG-` id, so nothing runs it on a schedule.
+
+Two of the run's three instrument defects were found by it and are worth keeping
+against whoever edits it next:
+
+- **The zero-IF DC spike lands on a grid channel** and reads as 100 % occupancy at
+  the loudest peak in the capture. Notched, and the notched channel is *named* —
+  a channel the tool cannot see is not a channel that is quiet.
+- **An analog filter no narrower than the sample rate puts its transition band
+  inside the analysed span**, and the rolloff reads as 12–20 % occupancy on four
+  grid channels. Re-centring the receiver moved the "traffic" to the new band
+  edges while the accused channels fell to 0.2 %. `capture.py` still **defaults
+  `--bandwidth` to the sample rate**, so every capture taken without passing it
+  explicitly carries this, and that default is the real defect.
+
+
+### 78. The server's `connected` is a blind instrument for up to two minutes — `defect`
+
+`/api/hub` reports `connected` from the socket's own state, and nothing times out
+a hub that stopped answering. Measured on 2026-08-24 across three resets: the
+server noticed the dead socket after **10 s, 80 s and 121 s**, and in two of the
+three the hub had already redialled before the drop was registered at all - so the
+transition never appeared.
+
+Both readings are wrong in a way that matters. A reader polling `connected` sees
+**up straight through a reset it never observed**, and later sees **down long after
+the hub is back**. A window partitioned on it is partitioned on a boundary that
+does not correspond to anything the hub did.
+
+`boot_id` already carries the truth and changes exactly once per reset. The fix is
+either a keepalive deadline that marks the link down on silence, or - cheaper and
+strictly better - publishing the reset as a **`boot_id` transition** so a reader
+never has to infer one from a connection state.
+
+This one cost time on 2026-08-24: a hub whose radio was healthy read as a stale
+device record for six minutes, and the first hypotheses were about the radio.
+
+### 79. The northbound link took seven minutes to return, once — `defect` `not reproduced`
+
+**Seen once, on 2026-08-24, after a CM4 reflash.** The hub ran normally on its own
+console throughout — CM4 accepting frames, the grid advancing, `devices` healthy —
+while `telem` reported `down, last reason: connect failed (accepted)` with
+`connect failures 2`. It redialled on its own after about seven minutes.
+
+**Three arms failed to reproduce it, and they are recorded so nobody spends them
+again:**
+
+| arm | link back after |
+|---|---|
+| software reset (`--rst`) | 4 s |
+| hardware reset (`-hardRst`) | 0 s |
+| flash + verify + software reset — the exact operation that produced it | 0 s |
+
+**The hypothesis that was tested and not supported**: on a NUCLEO-144 the Ethernet
+PHY's reset is tied to the MCU's NRST, and `--rst` is a *software* reset that never
+pulses the pin — so the PHY would come up unreset after every reflash. The premise
+is confirmed (`STM32_Programmer_CLI` prints `Reset mode : Software reset`, and
+`-hardRst` is the one that drives the pin) and the consequence did not appear.
+Something else caused the seven minutes.
+
+**What would make the next sighting diagnosable**, since none of it was captured
+this time: `telem` and `ip` read *during* the outage rather than after, `lwip`
+statistics, and whether the host saw any SYN at all. Item 78 is a prerequisite for
+even noticing the outage promptly — the server's `connected` flag was up to two
+minutes stale throughout, which is why this was found late.
