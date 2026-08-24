@@ -336,11 +336,48 @@ def check_portable():
     return bad
 
 
+
+def check_submodule():
+    """radio_stack is checked out three times on this bench and one is edited.
+
+    A submodule left behind is a build compiling something other than what was
+    just written, and nothing else says so: it compiles, it links, and it passes.
+    Found by moving a file in the sibling and watching both firmwares build."""
+    if not os.path.isdir("radio_stack"):
+        return []
+    bad = []
+
+    def git(where, *args):
+        r = subprocess.run(["git", "-C", where] + list(args),
+                           capture_output=True, text=True)
+        return r.stdout.strip()
+
+    st = git(".", "submodule", "status", "radio_stack")
+    if st[:1] == "+":
+        bad.append("radio_stack: checked out at a commit this tree does not record")
+    if st[:1] == "-":
+        bad.append("radio_stack: not initialised - git submodule update --init")
+    if git("radio_stack", "status", "--porcelain"):
+        bad.append("radio_stack: the submodule's working tree is dirty; "
+                   "a library change belongs in the sibling, not here")
+    sib = os.path.join("..", "radio_stack")
+    if os.path.isdir(os.path.join(sib, ".git")):
+        here = git("radio_stack", "rev-parse", "HEAD")
+        there = git(sib, "rev-parse", "HEAD")
+        if here and there and here != there:
+            bad.append("radio_stack: the sibling is at %s and this checkout at %s"
+                       % (there[:8], here[:8]))
+        if git(sib, "status", "--porcelain"):
+            bad.append("radio_stack: the sibling has uncommitted changes this "
+                       "checkout cannot see")
+    return bad
+
 def main():
     changed = "--changed" in sys.argv
     files = tracked(changed)
     longb, own, cyr, brief, docs = check(files, touched_lines() if changed else None)
     port = check_portable()
+    sub = check_submodule()
     scope = "lines changed against HEAD" if changed else "every file a human owns"
     print("scope: %s (%d), generated and vendored excluded\n" % (scope, len(files)))
     for title, items in (("non-English outside CLAUDE.md", cyr),
@@ -348,12 +385,13 @@ def main():
                          ("struct-field comments on their own line", own),
                          ("Doxygen @brief over 100 characters", brief),
                          ("Python docstring first line over 100 characters", docs),
-                         ("includes outside the link layer's list", port)):
+                         ("includes outside the link layer's list", port),
+                         ("the library checkout that is compiled", sub)):
         print("== %s: %d ==" % (title, len(items)))
         for i in items[:15]:
             print("   " + i)
         if len(items) > 15:
             print("   ... and %d more" % (len(items) - 15))
-    return 1 if (longb or own or cyr or brief or docs or port) else 0
+    return 1 if (longb or own or cyr or brief or docs or port or sub) else 0
 
 sys.exit(main())
