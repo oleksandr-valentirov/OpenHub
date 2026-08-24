@@ -67,3 +67,9 @@ radio/decisions/0025-x25519-replaces-p256.md:crypto_p256_decompress  # an ADR mu
 radio/crypto/wire-crypto.md:wire_v1  # the retirement section names deleted sets in the past tense, by design
 radio/crypto/wire-crypto.md:wire_v2  # same paragraph: both were removed 2026-08-22 and are named as history
 radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rule was already following
+
+# Declared by ADR-0029 and not yet supplied by either firmware. Hub item 80,
+# device item 82; these three lines go when those close.
+radio/phy-seam.md:timebase_now  # the clock backend's read, proposed name for the two the trees disagree on
+radio/phy-seam.md:crypto_hkdf_sha256  # the key schedule's seam, mbedTLS supplies it here and sha256.c there
+radio/phy-seam.md:crypto_hmac_sha256  # same seam: both trees already have a working implementation to bind

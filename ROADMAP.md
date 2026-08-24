@@ -928,6 +928,87 @@ belongs with the other prerequisites, not after them.
 
 ## Contract debts
 
+### 81. `hop_prf_selftest` stops one layer short of the deck — `debt`
+
+`hop_prf_selftest()` runs at init and checks two things against `hop_v1.h`:
+FIPS-197 C.1, and the hop PRF block — `aes_ecb_block(HV_HOP_KEY, HV_PRF_IN)`
+against `HV_PRF_OUT`. **It never runs `hop_init` or `hop_channel`.**
+
+`tools/gen_hop_vectors.py` says in its own docstring why the layers are pinned
+separately: *a deck says the sequence is wrong and not which half is wrong — the
+PRF block, against AES-128, including FIPS-197 C.1; the deck and the superframe
+-> channel map, against the Fisher-Yates in Common/src/hop.c.* **Layer one is on
+the board and layer two is host-only**, `Common/test/test_hop.c`.
+
+`HV_DECK0` and `HV_DECK1` are already linked into this firmware — `radio.c`
+includes `hop_v1.h` — so **the data is on the board and nothing executes against
+it.**
+
+**Today the air covers this and it is about to stop.** Two independent hop
+implementations mean a deck bug on either side is total silence, which is the
+loudest failure mode available. Once
+[ADR-0029](../radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md)
+gives both firmwares one `hop.c`, the same bug produces the same wrong channel at
+both ends and **the link keeps working** — traffic simply elsewhere in the band,
+which on a grid whose whole argument is one sub-band is not a neutral outcome.
+
+The fix is a deck KAT beside the PRF one: `hop_init` with the replay PRF,
+`hop_channel` across both cycles, compared to `HV_DECK0`/`HV_DECK1`. Roughly what
+`test_hop.c` already does, on the silicon, under this build's real optimisation
+level. **It is more than this board has ever had**, not a consolation for the
+absorption — and it is ADR-0029 decision 5's condition. The device's half is its
+item 83.
+
+`radio_devices_docs/radio/hopping.md`.
+
+### 80. The crypto backend is counted as done and shares two names with the device's — `contract`
+
+ADR-0028 says two of the library's three backends already exist and names
+`crypto.h` as one of them.
+[phy-seam.md](../radio_devices_docs/radio/phy-seam.md) went further and said the
+hub carries Mbed TLS *under the same names* as the device. **Checked by grep
+across `CM4`, `CM7` and `Common`, excluding vendored mbedTLS, on 2026-08-24:**
+
+| Device `Core/Inc/crypto.h` | Sites here |
+|---|---|
+| `crypto_gcm_seal` | **0** |
+| `crypto_gcm_open` | **0** |
+| `crypto_rng_word` | **0** |
+| `crypto_aes_ecb_block` | **0** |
+
+This tree's surface is `CM7/crypto/crypto.h` — `crypto_init`, `crypto_random`,
+`crypto_x25519_public`, `crypto_pair_derive`. **The two headers share exactly two
+names**, `crypto_x25519_keygen` and `crypto_x25519_ecdh`.
+
+**The costly half is not the names, it is the level.** The device's `exchange.c`
+builds the key schedule itself from `hkdf_sha256` and `hmac_sha256`; this tree
+has the entire derivation behind one call, `crypto_pair_derive()`, with
+`mbedtls_hkdf` and `mbedtls_md_hmac` inside it. So the seam falls **above** the
+schedule here and **below** it there, and a library holding `exchange.c` needs it
+below on both sides.
+
+What this tree owes, per
+[ADR-0029](../radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md):
+`crypto_hkdf_sha256` and `crypto_hmac_sha256` declared on the contract and
+supplied from mbedTLS, which already has both — no new cryptography is written on
+either side. And **`crypto_pair_derive()` goes**, because it is a second
+implementation of a schedule the library computes for both ends and nothing
+compares the two.
+
+**Its deletion is verified on air and cannot be verified by a vector.**
+`pair_v1..v3` would agree by construction the moment one schedule serves both
+sides, which is exactly the green check that means nothing. The evidence is a
+pairing that completes between this board and a WL55.
+
+**One awkward part is not crypto at all.** The schedule is used by the pairing
+path on **CM7** while `exchange.c` would be library code linked on **CM4**, so
+this is where the mailbox seam — the one ADR-0028 defers — reaches into the PHY
+one. Worth knowing before it is started, and it is why this is a contract debt
+rather than a tidy-up.
+
+Agree with the device session before it lands. `radio_devices_docs/radio/phy-seam.md`
+§ the crypto seam does not exist.
+
 ### 73. `RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement — `contract`
 
     #define RADIO_RX_BW_MIN_HZ  (2u * (RADIO_DEVIATION_HZ + RADIO_BITRATE_BPS / 2u + \
@@ -1294,6 +1375,40 @@ before they can move, and `set_rx_bandwidth_hz`, `rx_bandwidth_from_reg`,
 `set_node_address` and `set_lna_gain` are console setters.
 **`phy_poll` is the one that gives `PHY_EV_CRC` somewhere to go**,
 and it is where the seam stops being tidying and starts being an instrument.
+
+**There is a second residue and this entry has been counting only the first.**
+Beside those eighteen driver calls, `radio.c` holds **67 timebase call sites**,
+and `phy_now_us()` appears in it exactly **once**:
+
+| call | sites |
+|---|---|
+| `timebase_us_to_ticks` | 21 |
+| `rfm_micros` | 18 |
+| `timebase_elapsed` | 15 |
+| `timebase_ticks_to_us` | 13 |
+
+**None of the 67 names a chip, which is why the grep that found the first residue
+could not see this one.** `rfm_micros` is not a driver call at all — it is
+`CM4/Core/Inc/timebase.h` over TIM2, hub platform glue wearing the driver's
+prefix — so the file is a fifth of the way off the RFM69 and no distance at all
+off this board.
+
+That matters because it is the exit criterion, not tidiness. Phase 9a is graded
+on *the superframe arithmetic, window placement and the exchange FSM run as host
+tests with no board*, and moving eighteen `rfm69_*` calls does not reach it while
+67 sites hold the grid on TIM2. **Thirty-four of the 67 are the two conversions
+that scale by the LSE calibration window**, and the device's `timebase.h` has no
+equivalent of either — so this is also what phase 9b runs into the moment one set
+of sources has to satisfy both trees.
+
+The seam under it is four operations and the fix is small:
+[ADR-0029](../radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md)
+declares `timebase.h` as a fourth backend, this firmware supplies
+`timebase_now()` as `return rfm_micros();`, and the 18 sites convert as part of
+the move rather than as a rename — `rfm_micros` keeps its misleading name in the
+hub's own 30 sites, which buys nothing to change.
+
+`radio_devices_docs/radio/phy-seam.md` § the clock is the backend's.
 
 
 2649 lines, **82 references to `rfm69_` and 62 to the mailbox**, interleaved with
