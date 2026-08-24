@@ -4,3 +4,7 @@
 [submodule "third_party/mbedtls"]
 	path = third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "radio_stack"]
+	path = radio_stack
+	url = ../radio_stack
+	branch = master

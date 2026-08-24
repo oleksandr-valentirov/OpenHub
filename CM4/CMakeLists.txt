@@ -87,6 +87,8 @@ set(CMAKE_CXX_COMPILER_FORCED "true")
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
     # Add user defined symbols
+    # The band this image transmits on, taken whole. ADR-0028 decision 3
+    RADIO_PROFILE=RADIO_PROFILE_ASBUILT
 )
 
 # Add include paths
@@ -94,7 +96,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_CURRENT_BINARY_DIR}
     ../Common/inc
-    ../Common/test/vectors
+    # The library, its profile, and the vectors that came with it. ADR-0028
+    ../radio_stack/inc
+    ../radio_stack/profiles
+    ../radio_stack/test/vectors
     rfm69_lib
 )
 
@@ -104,9 +109,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/radio.c
     Core/Src/phy_rfm69.c
     Core/Src/aead.c
-    ../Common/src/grid.c
-    ../Common/src/gridmaster.c
-    ../Common/src/hop.c
+    ../radio_stack/src/grid.c
+    ../radio_stack/src/gridmaster.c
+    ../radio_stack/src/hop.c
     ../Common/src/ipc.c
     rfm69_lib/rfm69.c
     Core/Src/timebase.c

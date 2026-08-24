@@ -53,22 +53,33 @@ documentation repository or to a skill.
 (`verification` skill називає цей клас):
 
 ```bash
-tools/check_conventions.sh       # comments, language, and the link layer's includes
-tools/test_check_conventions.py  # 24 плечі; кожне падає, коли прибрати його правило
+tools/check_conventions.sh       # comments, language, and the library's includes
+tools/test_check_conventions.py  # 26 плечей; кожне падає, коли прибрати його правило
 tools/check_docs.py              # чи існує ще те, що документація називає
 tools/test_check_docs.py         # спільний корпус: чи погоджуються дві копії чекера
 ```
 
-`check_conventions.sh` перевіряє і **список включень лінк-шару** — `Common/inc`
-і `Common/src`, по файлу, не об'єднанням. Ці файли компілюють обидві прошивки, і
-guard переїхав сюди разом із ними з `wl55_device/tools/` — фаза 9, крок 3.
+`check_conventions.sh` перевіряє і **список включень бібліотеки** — `radio_stack/inc`,
+`radio_stack/src` і `radio_stack/profiles`, по файлу, не об'єднанням. Ці файли
+компілюють обидві прошивки, і той самий список є в `wl55_device/tools/`: guard на
+репозиторій, який не належить жодній прошивці, живе в обох — `radio_stack/ROADMAP.md`,
+пункт 3.
 
 ## Build
 
 ```bash
+git submodule update --init   # rfm69_lib, mbedtls and radio_stack
 cmake --preset Debug          # configures both cores
 cmake --build --preset Debug  # -> CM4/build/*.elf, CM7/build/*.elf
 ```
+
+**The radio is a submodule.** `radio_stack/` carries the contract headers, the
+link and session layers, the published vectors and their generators; both cores
+compile its sources and this firmware supplies its seams — `phy_rfm69.c` for
+`phy.h`, `clock.c` for `timebase.h`, `radio.c`'s AES for the PRF, `crypto.c` for
+`kdf.h`. Nothing is copied out of it, and a change to `inc/` or `src/` binds the
+device too. **Its history is two repositories' worth**, so `git log` on a file
+that moved during phase 9 needs `--full-history`.
 
 Presets: `Debug`, `RelWithDebInfo`, `Release`, `MinSizeRel`. The top-level project
 drives each core through `ExternalProject_Add`, so a single core is built by
@@ -80,12 +91,17 @@ cmake -S CM7 -B CM7/build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 ```
 
 Toolchain comes from STM32CubeCLT (`arm-none-eabi-gcc`, `cmake`, `ninja`). Host
-tests are **two** suites and both have to run:
+tests are **three** suites and all of them have to run:
 
 ```bash
-make -C Common/test check     # the contracts: grid, hop, wire, IPC, OHT, store
+make -C radio_stack/test check                        # the library, built profile
+make -C radio_stack/test check RADIO_PROFILE=hosttest # and a plan that is not it
+make -C Common/test check     # this hub's own: the mailbox, the store, the codec
 make -C CM4/test check        # the receive path, against a part that is not there
 ```
+
+The second line is not a spare configuration: it is the check that nothing in the
+library is pinned to one band, and it has already found two things that were.
 
 `CM4/test` builds `phy_rfm69.c` for the host over shims for the board and the
 clock, so the rules the RFM69 taught this project — an edge is not a level, a

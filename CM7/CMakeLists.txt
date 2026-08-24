@@ -88,6 +88,8 @@ set(CMAKE_CXX_COMPILER_FORCED "true")
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
     # Add user defined symbols
     DATA_IN_D2_SRAM
+    # The band this image transmits on, taken whole. ADR-0028 decision 3
+    RADIO_PROFILE=RADIO_PROFILE_ASBUILT
 )
 
 # --- mbedTLS ---
@@ -106,7 +108,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ../Common/inc
     crypto
-    ../Common/test/vectors
+    # The library, its profile, and the vectors that came with it. ADR-0028
+    ../radio_stack/inc
+    ../radio_stack/profiles
+    ../radio_stack/test/vectors
     ${MBEDTLS_DIR}/include
 )
 
@@ -129,7 +134,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Common/src/oht_codec.c
     ../Common/src/cfgjournal.c
     # The session layer's schedule, which the device compiles too. ADR-0031
-    ../Common/src/exchange.c
+    ../radio_stack/src/exchange.c
     crypto/entropy_hw.c
     crypto/crypto.c
     crypto/mbedtls_alloc.c

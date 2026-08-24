@@ -274,24 +274,31 @@ def check(files, only=None):
                         own_line.append("%s:%d" % (p, n))
     return long_blocks, own_line, cyrillic, long_brief, long_doc
 
-# The link layer and the schedule, pinned per file; the guard followed them.
-# radio_devices_docs/specs/03-roadmap.md
+# The library, pinned per file, reaching into the submodule. Its item 3.
 PORTABLE = {
-    "Common/src/grid.c":        {"grid.h"},
-    "Common/src/gridmaster.c":  {"gridmaster.h"},
-    "Common/src/superframe.c":  {"superframe.h", "grid.h", "timebase.h"},
-    "Common/src/beacon.c":      {"beacon.h", "radio_phy.h", "radio_protocol.h",
-                                 "radio_slots.h"},
-    "Common/src/hop.c":         {"hop.h", "radio_phy.h"},
+    "radio_stack/src/grid.c":        {"grid.h"},
+    "radio_stack/src/gridmaster.c":  {"gridmaster.h"},
+    "radio_stack/src/superframe.c":  {"superframe.h", "grid.h", "timebase.h"},
+    "radio_stack/src/beacon.c":      {"beacon.h", "radio_phy.h", "radio_protocol.h",
+                                      "radio_slots.h"},
+    "radio_stack/src/hop.c":         {"hop.h", "radio_phy.h"},
     # No sha256.h: a hash arrives through kdf.h, never as an implementation.
-    "Common/src/exchange.c":    {"exchange.h"},
-    "Common/inc/grid.h":        set(),
-    "Common/inc/gridmaster.h":  {"grid.h"},
-    "Common/inc/superframe.h":  {"grid.h", "radio_slots.h"},
-    "Common/inc/beacon.h":      {"superframe.h", "radio_slots.h"},
-    "Common/inc/hop.h":         set(),
-    "Common/inc/exchange.h":    {"kdf.h", "radio_protocol.h"},
-    "Common/inc/kdf.h":         set(),
+    "radio_stack/src/exchange.c":    {"exchange.h"},
+    "radio_stack/inc/grid.h":        set(),
+    "radio_stack/inc/gridmaster.h":  {"grid.h"},
+    "radio_stack/inc/superframe.h":  {"grid.h", "radio_slots.h"},
+    "radio_stack/inc/beacon.h":      {"superframe.h", "radio_slots.h"},
+    "radio_stack/inc/hop.h":         set(),
+    "radio_stack/inc/exchange.h":    {"kdf.h", "radio_protocol.h"},
+    "radio_stack/inc/kdf.h":         set(),
+    # The profile is chosen here, so radio_phy.h and radio_slots.h reach it.
+    "radio_stack/inc/radio_phy.h":   {"profile.h", "radio_slots.h"},
+    "radio_stack/inc/radio_slots.h": {"profile.h"},
+    "radio_stack/profiles/profile.h":          {"profile_ids.h", "profile_asbuilt.h",
+                                                "profile_hosttest.h"},
+    "radio_stack/profiles/profile_ids.h":      set(),
+    "radio_stack/profiles/profile_asbuilt.h":  set(),
+    "radio_stack/profiles/profile_hosttest.h": set(),
 }
 # Freestanding only; <stdio.h> pulls newlib into a file with no part under it.
 PORTABLE_ANGLE = {"stddef.h", "stdint.h", "stdbool.h", "string.h", "limits.h"}

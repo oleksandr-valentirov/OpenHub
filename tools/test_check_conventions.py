@@ -82,20 +82,28 @@ CASES = [
 # The link layer's ten files, with the includes check_portable pins.
 def link_corpus(**edits):
     files = {
-        "Common/src/grid.c":       '#include "grid.h"\nint a;\n',
-        "Common/src/gridmaster.c": '#include "gridmaster.h"\nint b;\n',
-        "Common/src/superframe.c": '#include "superframe.h"\n#include "grid.h"\n'
+        "radio_stack/src/grid.c":       '#include "grid.h"\nint a;\n',
+        "radio_stack/src/gridmaster.c": '#include "gridmaster.h"\nint b;\n',
+        "radio_stack/src/superframe.c": '#include "superframe.h"\n#include "grid.h"\n'
                                    '#include "timebase.h"\nint c;\n',
-        "Common/src/beacon.c":     '#include "beacon.h"\n#include "radio_slots.h"\nint d;\n',
-        "Common/src/hop.c":        '#include "hop.h"\n#include "radio_phy.h"\nint e;\n',
-        "Common/inc/grid.h":       "#include <stdint.h>\n",
-        "Common/inc/gridmaster.h": '#include <stdint.h>\n#include "grid.h"\n',
-        "Common/inc/superframe.h": '#include <stdint.h>\n#include "grid.h"\n',
-        "Common/inc/beacon.h":     '#include <stdint.h>\n#include "superframe.h"\n',
-        "Common/inc/hop.h":        "#include <stdint.h>\n",
-        "Common/src/exchange.c":   '#include "exchange.h"\nint f;\n',
-        "Common/inc/exchange.h":   '#include <stdint.h>\n#include "kdf.h"\n',
-        "Common/inc/kdf.h":        "#include <stdint.h>\n",
+        "radio_stack/src/beacon.c":     '#include "beacon.h"\n#include "radio_slots.h"\nint d;\n',
+        "radio_stack/src/hop.c":        '#include "hop.h"\n#include "radio_phy.h"\nint e;\n',
+        "radio_stack/inc/grid.h":       "#include <stdint.h>\n",
+        "radio_stack/inc/gridmaster.h": '#include <stdint.h>\n#include "grid.h"\n',
+        "radio_stack/inc/superframe.h": '#include <stdint.h>\n#include "grid.h"\n',
+        "radio_stack/inc/beacon.h":     '#include <stdint.h>\n#include "superframe.h"\n',
+        "radio_stack/inc/hop.h":        "#include <stdint.h>\n",
+        "radio_stack/src/exchange.c":   '#include "exchange.h"\nint f;\n',
+        "radio_stack/inc/exchange.h":   '#include <stdint.h>\n#include "kdf.h"\n',
+        "radio_stack/inc/kdf.h":        "#include <stdint.h>\n",
+        "radio_stack/inc/radio_phy.h":   '#include <stdint.h>\n#include "profile.h"\n'
+                                         '#include "radio_slots.h"\n',
+        "radio_stack/inc/radio_slots.h": '#include <stdint.h>\n#include "profile.h"\n',
+        "radio_stack/profiles/profile.h": '#include "profile_ids.h"\n'
+                                          '#include "profile_asbuilt.h"\n',
+        "radio_stack/profiles/profile_ids.h":      "\n",
+        "radio_stack/profiles/profile_asbuilt.h":  "\n",
+        "radio_stack/profiles/profile_hosttest.h": "\n",
     }
     for key, body in edits.items():
         path = key.replace("__", "/").replace("_c", ".c").replace("_h", ".h")
@@ -110,29 +118,29 @@ LINK_CASES = [
     ("link corpus clean", link_corpus(), 0, None),
     ("no corpus: another tree", {"a.c": CLEAN_C}, 0, None),
     ("hal include in grid.c",
-     link_corpus(**{"Common__src__grid_c":
+     link_corpus(**{"radio_stack__src__grid_c":
                     '#include "grid.h"\n#include "stm32h7xx_hal.h"\nint a;\n'}),
      1, "not on this file"),
     ("stdio in beacon.c",
-     link_corpus(**{"Common__src__beacon_c":
+     link_corpus(**{"radio_stack__src__beacon_c":
                     '#include "beacon.h"\n#include <stdio.h>\nint d;\n'}),
      1, "not freestanding"),
     ("a listed file renamed away",
-     link_corpus(**{"Common__src__grid_c": None}), 1, "MISSING"),
+     link_corpus(**{"radio_stack__src__grid_c": None}), 1, "MISSING"),
     # The rule is passed the instant; it must not read a clock of its own.
     # radio_devices_docs/specs/03-roadmap.md
     ("timebase back in grid.c",
-     link_corpus(**{"Common__src__grid_c":
+     link_corpus(**{"radio_stack__src__grid_c":
                     '#include "grid.h"\n#include "timebase.h"\nint a;\n'}),
      1, "not on this file"),
     # The include a listing cannot see, because it is reached through a header.
     # radio_devices_docs/specs/03-roadmap.md
     ("sha256.h back in exchange.c",
-     link_corpus(**{"Common__src__exchange_c":
+     link_corpus(**{"radio_stack__src__exchange_c":
                     '#include "exchange.h"\n#include "sha256.h"\nint f;\n'}),
      1, "not on this file"),
     ("sha256.h back in exchange.h",
-     link_corpus(**{"Common__inc__exchange_h":
+     link_corpus(**{"radio_stack__inc__exchange_h":
                     '#include <stdint.h>\n#include "kdf.h"\n#include "sha256.h"\n'}),
      1, "not on this file"),
 ]

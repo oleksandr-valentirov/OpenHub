@@ -63,8 +63,8 @@ def load_allow():
 
 def source_text():
     """Every tracked source byte, plus the device tree when it is checked out."""
-    # rfm69_lib is a submodule, so the top-level ls-files does not reach into it.
-    roots = [".", "CM4/rfm69_lib"]
+    # A submodule's files are not in the top-level ls-files, so each is a root.
+    roots = [".", "CM4/rfm69_lib", "radio_stack"]
     if os.path.isdir("../wl55_device"):
         roots.append("../wl55_device")
     blob = []
