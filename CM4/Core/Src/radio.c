@@ -19,6 +19,8 @@
 #include "radio_protocol.h"
 #include "radio_slots.h"
 #include "radio_phy.h"
+#include "grid.h"
+#include "gridmaster.h"
 #include "hop.h"
 #include "hop_v1.h"
 #include "pair_v4.h"
@@ -127,10 +129,9 @@ static int  remove_device(uint32_t dev_id);
 
 
 static uint32_t hub_id = 0x33442211u;
-static uint32_t frame_counter = 0;
-static uint32_t superframe_start_tk = 0;
-static uint32_t superframe_tk = 0;   /* SUPERFRAME_US in real ticks */
-static uint8_t  grid_started = 0;
+/* The grid, and the master role over the rule both firmwares now compile.
+ * radio_devices_docs/radio/tdma.md */
+static gridmaster_t sfm;
 static uint32_t late_last_us = 0;
 static uint32_t late_max_us = 0;
 static uint32_t late_min_us = 0xFFFFFFFFu;
@@ -470,9 +471,9 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
 
     /* Never restart the protocol's clock at zero.
      * radio_devices_docs/open_hub/arch/keystore.md */
-    frame_counter = kv_reserved();
+    sfm.g.counter = kv_reserved();
     /* Reserve before the grid starts, so the first beacon is already covered. */
-    (void)kv_reserve(frame_counter);
+    (void)kv_reserve(sfm.g.counter);
 
     return 0;
 }
@@ -496,31 +497,19 @@ static int frame_send(const void *payload, uint8_t len) {
     return rc;
 }
 
-/* An absolute grid: a fixed step from the last boundary, and the counter advances
- * here alone. radio_devices_docs/open_hub/radio/superloop.md */
+/* The rule is gridmaster.h's; the slot offset rides the same scale.
+ * radio_devices_docs/open_hub/radio/superloop.md */
 static int superframe_due(void) {
-    if (!grid_started) {
-        superframe_start_tk = timebase_now();
-        superframe_tk = timebase_us_to_ticks(SUPERFRAME_US);
-        join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
-        grid_started = 1;
+    const uint32_t started = sfm.started;
+
+    if (!gridmaster_service(&sfm, timebase_now(), timebase_us_to_ticks(SUPERFRAME_US))) {
+        /* The bootstrap pass still has to leave a usable offset behind. */
+        if (!started)
+            join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
         return 0;
     }
-    if (!timebase_elapsed(superframe_start_tk + superframe_tk))
-        return 0;
-
-    superframe_start_tk += superframe_tk;
-    frame_counter++;
-
     /* Re-read after the boundary, so it moves the next interval, not this one. */
-    superframe_tk = timebase_us_to_ticks(SUPERFRAME_US);
     join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
-
-    /* Step the grid forward rather than catch up: it is a schedule, not a queue. */
-    while (timebase_elapsed(superframe_start_tk + superframe_tk)) {
-        superframe_start_tk += superframe_tk;
-        frame_counter++;
-    }
     return 1;
 }
 
@@ -532,7 +521,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
 
     /* How far past the boundary this beacon leaves; devices inherit it directly.
      * radio_devices_docs/open_hub/radio/timebase.md */
-    late_last_us = timebase_now() - superframe_start_tk;
+    late_last_us = timebase_now() - sfm.g.start;
     if (late_last_us > late_max_us) late_max_us = late_last_us;
     if (late_last_us < late_min_us) late_min_us = late_last_us;
     if (late_last_us > timebase_us_to_ticks(RADIO_BEACON_LATE_LIMIT_US))
@@ -543,7 +532,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
     payload.version    = RADIO_PROTO_VERSION;
     payload.net_id     = RADIO_NET_ID;
     payload.hub_id     = hub_id;
-    payload.superframe = frame_counter;
+    payload.superframe = sfm.g.counter;
     payload.flags      = flags;
     payload.resume_in  = resume_in;
     data_beacons++;
@@ -552,7 +541,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
 
     /* One hop per superframe, from a keyed shuffle; a PRF failure means silence.
      * radio_devices_docs/radio/hopping.md */
-    if (hop_channel(&hop, frame_counter, &hop_idx) != 0) {
+    if (hop_channel(&hop, sfm.g.counter, &hop_idx) != 0) {
         beacon_err++;
         beacon_err_last = RADIO_BERR_PRF;
         return;
@@ -572,7 +561,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
 
     /* Held for this superframe's uplinks to pair against. */
     bl_last_us = lead_last_us;
-    bl_sf      = frame_counter;
+    bl_sf      = sfm.g.counter;
     bl_n++;
     if (bl_last_us < bl_min_us) bl_min_us = bl_last_us;
     if (bl_last_us > bl_max_us) bl_max_us = bl_last_us;
@@ -589,7 +578,7 @@ static void RFM_send_join_beacon(void) {
     payload.version      = RADIO_PROTO_VERSION;
     payload.net_id       = RADIO_NET_ID;
     payload.hub_id       = hub_id;
-    payload.superframe   = frame_counter;
+    payload.superframe   = sfm.g.counter;
     payload.flags        = RADIO_JOIN_FLAG_WINDOW_OPEN;
     payload.hop_channels = RADIO_HOP_COUNT;
 
@@ -728,14 +717,14 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_GET_TIMING: {
         ipc_timing_t t;
 
-        t.superframe   = frame_counter;
+        t.superframe   = sfm.g.counter;
         t.now_tk       = timebase_now();
         t.late_last_us = timebase_ticks_to_us(late_last_us);
         t.late_max_us  = timebase_ticks_to_us(late_max_us);
         t.late_min_us  = (late_min_us == 0xFFFFFFFFu) ? 0
                                                       : timebase_ticks_to_us(late_min_us);
         t.period_us     = SUPERFRAME_US;
-        t.period_tk     = superframe_tk;
+        t.period_tk     = sfm.g.period;
         t.calib_ppm     = calib_ppm();
         t.calib_ppm_min = calib_ppm_min();
         t.calib_ppm_max = calib_ppm_max();
@@ -795,8 +784,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 
         p.state        = (uint8_t)pair_state;
         p.quiesce_left = (pair_state == RADIO_PAIR_QUIESCE &&
-                          (int32_t)(quiesce_resume_at - frame_counter) > 0)
-                         ? (uint8_t)(quiesce_resume_at - frame_counter) : 0u;
+                          (int32_t)(quiesce_resume_at - sfm.g.counter) > 0)
+                         ? (uint8_t)(quiesce_resume_at - sfm.g.counter) : 0u;
         p.dev_id       = pairing_dev_id;
         left_tk        = pairing_deadline_us - timebase_now();
         p.window_left_ms = (pairing_open && (int32_t)left_tk > 0) ? left_tk / 1000u : 0u;
@@ -827,7 +816,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         ipc_store_state_t k;
 
         k.reserved   = kv_reserved();
-        k.counter    = frame_counter;
+        k.counter    = sfm.g.counter;
         k.writes     = kv_writes();
         k.errors     = kv_errors();
         k.slots_left = kv_slots_left();
@@ -1123,7 +1112,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
     case IPC_REQ_HOP_AT: {
         ipc_hop_at_t h;
         uint8_t idx = 0;
-        uint32_t sf = frame_counter;
+        uint32_t sf = sfm.g.counter;
 
         if (req->len >= 4u) memcpy(&sf, req->payload, 4);
         memset(&h, 0, sizeof(h));
@@ -1320,7 +1309,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 /* The superframe that just closed: over, so its answer cannot still change.
  * radio_devices_docs/open_hub/radio/configuration.md */
 static void score_missed_reports(void) {
-    uint32_t past = frame_counter - 1u;
+    uint32_t past = sfm.g.counter - 1u;
 
     for (uint8_t i = 0; i < RADIO_MAX_DEVICES; i++) {
         dev_entry_t *d = &devices[i];
@@ -1342,13 +1331,13 @@ static void score_missed_reports(void) {
 static void on_superframe(void) {
     /* Past what flash guarantees: silence, and the counter still advances.
      * radio_devices_docs/open_hub/arch/keystore.md */
-    if (!kv_counter_safe(frame_counter)) {
+    if (!kv_counter_safe(sfm.g.counter)) {
         unreserved_frames++;
         return;
     }
 
     if (pair_state == RADIO_PAIR_QUIESCE) {
-        int32_t left = (int32_t)(quiesce_resume_at - frame_counter);
+        int32_t left = (int32_t)(quiesce_resume_at - sfm.g.counter);
 
         if (left > 0) {
             /* Repeated, counting down, so a missed copy still gives the same resume.
@@ -1360,7 +1349,7 @@ static void on_superframe(void) {
             return;
         }
         pair_state = pairing_open ? RADIO_PAIR_LISTEN : RADIO_PAIR_IDLE;
-        quiesce_last_end = frame_counter;
+        quiesce_last_end = sfm.g.counter;
         quiesce_len = 0;
     }
 
@@ -1368,7 +1357,7 @@ static void on_superframe(void) {
         quiesce_pending = 0;
         /* The resume superframe is fixed here and never moved: devices sleep on it.
          * radio_devices_docs/radio/decisions/0020-device-triggered-quiesce.md */
-        quiesce_resume_at = frame_counter + quiesce_len;
+        quiesce_resume_at = sfm.g.counter + quiesce_len;
         pair_state = RADIO_PAIR_QUIESCE;
         RFM_send_broadcast(RADIO_BEACON_FLAG_QUIESCE, quiesce_len);
         return;
@@ -1396,7 +1385,7 @@ static void rx_sample_rssi(void) {
 /* Only a level inside a request's payload sits below the sync word.
  * radio_devices_docs/radio/pairing.md */
 static void join_sample_rssi(void) {
-    uint32_t off_tk = timebase_now() - superframe_start_tk;
+    uint32_t off_tk = timebase_now() - sfm.g.start;
     int16_t x2 = 0;
     int16_t *peak, *floor;
 
@@ -1413,8 +1402,8 @@ static void join_sample_rssi(void) {
     rx_rssi_samples++;
     if (x2 > rx_rssi_peak_x2)  rx_rssi_peak_x2  = x2;
     if (x2 < rx_rssi_floor_x2) rx_rssi_floor_x2 = x2;
-    peak  = (pi_last_sent_sf == frame_counter) ? &jp_inv_peak_x2  : &jp_idle_peak_x2;
-    floor = (pi_last_sent_sf == frame_counter) ? &jp_inv_floor_x2 : &jp_idle_floor_x2;
+    peak  = (pi_last_sent_sf == sfm.g.counter) ? &jp_inv_peak_x2  : &jp_idle_peak_x2;
+    floor = (pi_last_sent_sf == sfm.g.counter) ? &jp_inv_floor_x2 : &jp_idle_floor_x2;
     jp_levels++;
     if (x2 > *peak)  *peak  = x2;
     if (x2 < *floor) *floor = x2;
@@ -1430,15 +1419,15 @@ static void sync_edge_service(const phy_ev_t *ev) {
     sync_seq_seen = ev->sync_seq;
     sync_edges    = ev->sync_seq;
     sync_edge_tk  = ev->sync_us;
-    sync_edge_base = radio_period_base(sync_edge_tk, superframe_start_tk,
-                                       superframe_tk);
+    sync_edge_base = radio_period_base(sync_edge_tk, sfm.g.start,
+                                       sfm.g.period);
 
     /* TIM2 ticks, then converted: a tick is not a microsecond on this board. */
     sync_last_offset_tk = sync_edge_tk - sync_edge_base;
     sync_last_ppm       = calib_ppm();
     offset = timebase_ticks_to_us(sync_last_offset_tk);
     sync_last_offset_us  = offset;
-    sync_last_superframe = frame_counter;
+    sync_last_superframe = sfm.g.counter;
 
     /* Counted and reported raw, never filtered out. */
     if (offset >= SUPERFRAME_US * 2u) {
@@ -1449,7 +1438,7 @@ static void sync_edge_service(const phy_ev_t *ev) {
     if (offset > sync_max_offset_us) sync_max_offset_us = offset;
 
     /* Unpaired is counted, never dropped: the sums must share one population. */
-    if (bl_n == 0u || bl_sf != frame_counter) {
+    if (bl_n == 0u || bl_sf != sfm.g.counter) {
         sync_unpaired++;
         return;
     }
@@ -1665,7 +1654,7 @@ static void send_pair_accept(void) {
     radio_pair_grant_t grant;
     uint8_t nonce[AEAD_NONCE_BYTES];
 
-    build_pair_accept_hdr(&f, hub_id, ex_dev_id, frame_counter, ex_retry);
+    build_pair_accept_hdr(&f, hub_id, ex_dev_id, sfm.g.counter, ex_retry);
 
     grant.slot         = ex_keys.slot;
     grant.report_every = ex_keys.report_every;
@@ -1716,7 +1705,7 @@ static int install_device(const ipc_device_keys_t *k) {
 
     /* Seed the replay floor from the durable counter, never from zero.
      * radio_devices_docs/open_hub/arch/keystore.md */
-    d->rx_floor = frame_counter;
+    d->rx_floor = sfm.g.counter;
     d->rx_floor_slot = 0;
 
     /* A changed hop key invalidates the cached cycle, which is about a minute long.
@@ -1789,7 +1778,7 @@ static void exchange_service(void) {
                 send_pair_accept();
             } else {
                 ex_state     = RADIO_EX_ACCEPT_DUE;
-                ex_due_frame = frame_counter + 1u;
+                ex_due_frame = sfm.g.counter + 1u;
                 ex_deferred++;
                 ex_deadline  = timebase_now() +
                                timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
@@ -1890,7 +1879,7 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
         d->dl_ack_arg = rpt.ack_arg;
         dl_cmd_acked++;
     }
-    d->arrival_us = timebase_ticks_to_us(timebase_now() - superframe_start_tk);
+    d->arrival_us = timebase_ticks_to_us(timebase_now() - sfm.g.start);
     /* The edge is global, so it is paired to this frame or the field stays absent.
      * radio_devices_docs/open_hub/radio/sync-timestamp.md */
     {
@@ -1924,9 +1913,9 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
 static int join_window_holds(uint8_t payload_b) {
     uint32_t off, need;
 
-    if (!grid_started)
+    if (!sfm.started)
         return 0;
-    off  = timebase_ticks_to_us(timebase_now() - superframe_start_tk);
+    off  = timebase_ticks_to_us(timebase_now() - sfm.g.start);
     need = RADIO_AIR_START_TO_END_US(payload_b);
     if (off < RADIO_JOIN_OFFSET_US)
         return 0;
@@ -1936,7 +1925,7 @@ static int join_window_holds(uint8_t payload_b) {
 /* 1 while a staged turn is due in this region. */
 static int pair_turn_due(void) {
     return (ex_state == RADIO_EX_RSP_DUE || ex_state == RADIO_EX_ACCEPT_DUE) &&
-           (int32_t)(frame_counter - ex_due_frame) >= 0;
+           (int32_t)(sfm.g.counter - ex_due_frame) >= 0;
 }
 
 /* 1 while the exchange owns this region, transmitting in it or listening in it.
@@ -1944,14 +1933,14 @@ static int pair_turn_due(void) {
 static int pair_region_owned(void) {
     if (ex_state == RADIO_EX_IDLE || ex_state == RADIO_EX_ACCEPTED)
         return 0;
-    return (uint32_t)(frame_counter - ex_req_frame) < RADIO_PAIR_REGIONS;
+    return (uint32_t)(sfm.g.counter - ex_req_frame) < RADIO_PAIR_REGIONS;
 }
 
 /* The staged turn, at the offset a joining device listens on. ADR-0026 */
 static void pair_turn_service(void) {
-    if (!pair_turn_due() || !grid_started)
+    if (!pair_turn_due() || !sfm.started)
         return;
-    if (!timebase_elapsed(superframe_start_tk + join_offset_tk))
+    if (!timebase_elapsed(sfm.g.start + join_offset_tk))
         return;
     if (ex_state == RADIO_EX_RSP_DUE)
         send_pair_rsp();
@@ -1963,22 +1952,22 @@ static void pair_turn_service(void) {
 static void pair_init_service(void) {
     if (pi_superframe == 0u || pi_len == 0u)
         return;
-    if (!grid_started || pair_state != RADIO_PAIR_LISTEN)
+    if (!sfm.started || pair_state != RADIO_PAIR_LISTEN)
         return;
     /* An exchange in flight owns its regions; a new invitation waits. ADR-0026 */
     if (pair_region_owned())
         return;
 
-    if ((int32_t)(frame_counter - pi_superframe) > 0) {
+    if ((int32_t)(sfm.g.counter - pi_superframe) > 0) {
         pi_missed++;
         pi_superframe = 0u;
         pi_len = 0u;
         return;
     }
-    if (frame_counter != pi_superframe)
+    if (sfm.g.counter != pi_superframe)
         return;
     /* The offset the join beacon has always used, where a device is listening. */
-    if (!timebase_elapsed(superframe_start_tk + join_offset_tk))
+    if (!timebase_elapsed(sfm.g.start + join_offset_tk))
         return;
 
     pi_superframe = 0u;
@@ -1986,7 +1975,7 @@ static void pair_init_service(void) {
         pi_tx_err++;
     else {
         pi_sent++;
-        pi_last_sent_sf = frame_counter;
+        pi_last_sent_sf = sfm.g.counter;
     }
     /* Read back off the part, since PacketSent is not evidence about the carrier.
      * radio_devices_docs/open_hub/radio/configuration.md */
@@ -2016,21 +2005,21 @@ static void downlink_service(void) {
     uint8_t i, slot, hop_idx;
     uint8_t carried = 0;
 
-    if (!grid_started || pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
+    if (!sfm.started || pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
         return;
-    if (!RADIO_DOWNLINK_ON(frame_counter))
+    if (!RADIO_DOWNLINK_ON(sfm.g.counter))
         return;
-    if (dl_served == frame_counter)
+    if (dl_served == sfm.g.counter)
         return;
-    if (!timebase_elapsed(superframe_start_tk +
+    if (!timebase_elapsed(sfm.g.start +
                           timebase_us_to_ticks(RADIO_DOWNLINK_RX_OPEN_US)))
         return;
     /* Past the region is not late but a different region: uplink slot 0 opens there. */
-    if (timebase_elapsed(superframe_start_tk +
+    if (timebase_elapsed(sfm.g.start +
                          timebase_us_to_ticks(RADIO_DOWNLINK_RX_CLOSE_US)))
         return;
 
-    dl_served = frame_counter;
+    dl_served = sfm.g.counter;
     dl_opportunities++;
 
     /* Round robin, scanned rather than indexed because slots are sparse.
@@ -2060,9 +2049,9 @@ static void downlink_service(void) {
         body.cmd = RADIO_CMD_NOP;
     }
     /* SUPERFRAME_US of nominal time, so seconds is a multiply, not a divide. */
-    body.hub_time_s = frame_counter * (SUPERFRAME_US / 1000000u);
+    body.hub_time_s = sfm.g.counter * (SUPERFRAME_US / 1000000u);
 
-    if (!dl_nonce_is_new(d, frame_counter)) {
+    if (!dl_nonce_is_new(d, sfm.g.counter)) {
         dl_nonce_refused++;
         return;
     }
@@ -2071,10 +2060,10 @@ static void downlink_service(void) {
     f.type       = RADIO_FRAME_DOWNLINK;
     f.version    = RADIO_LINK_VERSION;
     f.slot       = d->slot;
-    f.superframe = frame_counter;
+    f.superframe = sfm.g.counter;
 
     /* Spent at the cipher, not at its success: a retry would be a second body. */
-    d->dl_nonce_sf   = frame_counter;
+    d->dl_nonce_sf   = sfm.g.counter;
     d->dl_nonce_used = 1;
 
     aead_nonce(nonce, f.superframe, d->dev_id, RADIO_DIR_DOWNLINK, f.slot);
@@ -2085,12 +2074,12 @@ static void downlink_service(void) {
     }
     /* Computed here, never inherited from what the beacon left tuned.
      * radio_devices_docs/open_hub/radio/superloop.md */
-    if (hop_channel(&hop, frame_counter, &hop_idx) != 0) {
+    if (hop_channel(&hop, sfm.g.counter, &hop_idx) != 0) {
         dl_prf_err++;
         return;
     }
     dl_last_hz = slot_hz(hop_to_grid(hop_idx));
-    dl_last_sf = frame_counter;
+    dl_last_sf = sfm.g.counter;
     if (frame_tx(&f, (uint8_t)sizeof(f), dl_last_hz) != 0) {
         dl_tx_err++;
         return;
@@ -2110,17 +2099,17 @@ static void downlink_service(void) {
 static void uplink_service(void) {
     uint32_t close_at;
 
-    if (pair_state == RADIO_PAIR_QUIESCE || !grid_started || device_count == 0u) {
+    if (pair_state == RADIO_PAIR_QUIESCE || !sfm.started || device_count == 0u) {
         uplink_close();
         return;
     }
 
     /* The join region owns the tail while a window is open, so this ends first. */
-    close_at = superframe_start_tk +
+    close_at = sfm.g.start +
         ((pair_state == RADIO_PAIR_LISTEN) ? join_offset_tk
-         : superframe_tk - timebase_us_to_ticks(RADIO_END_GUARD_US));
+         : sfm.g.period - timebase_us_to_ticks(RADIO_END_GUARD_US));
 
-    if (!timebase_elapsed(superframe_start_tk +
+    if (!timebase_elapsed(sfm.g.start +
                           timebase_us_to_ticks(RADIO_UPLINK_OFFSET_US))) {
         uplink_close();
         return;
@@ -2135,7 +2124,7 @@ static void uplink_service(void) {
          * radio_devices_docs/open_hub/radio/superloop.md */
         uint8_t idx;
 
-        if (hop_channel(&hop, frame_counter, &idx) != 0)
+        if (hop_channel(&hop, sfm.g.counter, &idx) != 0)
             return;
         up_grid = (uint8_t)hop_to_grid(idx);
         if (phy_tune(slot_hz(up_grid)) != 0)
@@ -2183,7 +2172,7 @@ static void handle_join_frame(const phy_ev_t *ev) {
     rx_last_len        = len;
     rx_last_type       = ev->buf[0];
     rx_last_rssi       = (int8_t)ev->rssi_dbm;
-    rx_last_superframe = frame_counter;
+    rx_last_superframe = sfm.g.counter;
 
     if (len < 2u || ev->buf[1] != RADIO_PAIR_VERSION) {
         pair_reqs_dropped++;
@@ -2288,7 +2277,7 @@ static void handle_join_frame(const phy_ev_t *ev) {
         ex_waiting   = 1;
         ex_state     = RADIO_EX_WAIT_RSP;
         ex_retry     = 0;
-        ex_req_frame = frame_counter;
+        ex_req_frame = sfm.g.counter;
         ex_deadline  = timebase_now() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
     }
 }
@@ -2311,11 +2300,11 @@ static void join_region_service(void) {
                          : (device_count == 0u) ? timebase_us_to_ticks(RADIO_UPLINK_OFFSET_US)
                          : join_offset_tk;
 
-        if (!grid_started || join_served_frame == frame_counter)
+        if (!sfm.started || join_served_frame == sfm.g.counter)
             return;
-        if (!timebase_elapsed(superframe_start_tk + open_tk))
+        if (!timebase_elapsed(sfm.g.start + open_tk))
             return;
-        join_served_frame = frame_counter;
+        join_served_frame = sfm.g.counter;
         join_regions++;
 
         /* The handoff is explicit, not left to the order of two superloop calls.
@@ -2327,9 +2316,9 @@ static void join_region_service(void) {
         if (device_count == 0u && pair_state == RADIO_PAIR_LISTEN) {
             if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0)
                 return;
-            join_beacon_pending = ((frame_counter % JOIN_BEACON_EVERY) == 0u);
-        } else if ((frame_counter % JOIN_BEACON_EVERY) == 0u &&
-                   pi_superframe != frame_counter && !pair_region_owned()) {
+            join_beacon_pending = ((sfm.g.counter % JOIN_BEACON_EVERY) == 0u);
+        } else if ((sfm.g.counter % JOIN_BEACON_EVERY) == 0u &&
+                   pi_superframe != sfm.g.counter && !pair_region_owned()) {
             RFM_send_join_beacon();
         } else if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0) {
             return;
@@ -2339,7 +2328,7 @@ static void join_region_service(void) {
             return;
         /* During a quiesce the window runs to the boundary, stopping short of it. */
         join_rx_deadline = (pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
-            ? superframe_start_tk + superframe_tk
+            ? sfm.g.start + sfm.g.period
               - timebase_us_to_ticks(RADIO_END_GUARD_US)
             : timebase_now() + timebase_us_to_ticks(RADIO_JOIN_RX_US);
         join_phase = 1;
@@ -2354,7 +2343,7 @@ static void join_region_service(void) {
         join_beacon_pending = 0;        /* the region belongs to the exchange */
 
     if (join_beacon_pending &&
-        timebase_elapsed(superframe_start_tk + join_offset_tk)) {
+        timebase_elapsed(sfm.g.start + join_offset_tk)) {
         join_beacon_pending = 0;
         /* Out of RX first.
          * radio_devices_docs/open_hub/radio/configuration.md */
@@ -2385,7 +2374,7 @@ static void join_region_service(void) {
     /* Read off the part: the driver's shadow cannot show a set_mode that did not
      * take. radio_devices_docs/radio/pairing.md */
     if (jp_step == 0u &&
-        timebase_elapsed(superframe_start_tk + join_offset_tk +
+        timebase_elapsed(sfm.g.start + join_offset_tk +
                          timebase_us_to_ticks(JP_MODE_US))) {
         uint8_t op = 0;
 
@@ -2396,7 +2385,7 @@ static void join_region_service(void) {
             jp_last_op = op;
             jp_probes++;
             jp_not_rx += off;
-            if (pi_last_sent_sf == frame_counter) {
+            if (pi_last_sent_sf == sfm.g.counter) {
                 jp_inv_probes++;
                 jp_inv_not_rx += off;
             }
@@ -2414,7 +2403,7 @@ static void join_region_service(void) {
 static uint8_t begin_quiesce(uint8_t superframes) {
     if (pair_state == RADIO_PAIR_QUIESCE || quiesce_pending)
         return 0;
-    if ((int32_t)(frame_counter - quiesce_last_end) < (int32_t)RADIO_QUIESCE_MIN_GAP) {
+    if ((int32_t)(sfm.g.counter - quiesce_last_end) < (int32_t)RADIO_QUIESCE_MIN_GAP) {
         quiesce_refused++;
         return 0;
     }
@@ -2449,8 +2438,8 @@ void RFM_Routine(void) {
 
     /* First half only: a flash program stalls this core for nearly a millisecond.
      * radio_devices_docs/open_hub/radio/superloop.md */
-    if (grid_started && !timebase_elapsed(superframe_start_tk + superframe_tk / 2u))
-        (void)kv_reserve(frame_counter);
+    if (sfm.started && !timebase_elapsed(sfm.g.start + sfm.g.period / 2u))
+        (void)kv_reserve(sfm.g.counter);
 
     /* Drained by polling; the flag is cleared only so it does not stay pending.
      * radio_devices_docs/open_hub/arch/ipc.md */

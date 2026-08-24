@@ -104,6 +104,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/radio.c
     Core/Src/phy_rfm69.c
     Core/Src/aead.c
+    ../Common/src/grid.c
+    ../Common/src/gridmaster.c
     ../Common/src/hop.c
     ../Common/src/ipc.c
     rfm69_lib/rfm69.c

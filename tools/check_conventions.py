@@ -274,22 +274,75 @@ def check(files, only=None):
                         own_line.append("%s:%d" % (p, n))
     return long_blocks, own_line, cyrillic, long_brief, long_doc
 
+# The link layer, pinned per file; the guard followed the sources here.
+# radio_devices_docs/specs/03-roadmap.md
+PORTABLE = {
+    "Common/src/grid.c":        {"grid.h"},
+    "Common/src/gridmaster.c":  {"gridmaster.h"},
+    "Common/src/superframe.c":  {"superframe.h", "grid.h", "timebase.h"},
+    "Common/src/beacon.c":      {"beacon.h", "radio_phy.h", "radio_protocol.h",
+                                 "radio_slots.h"},
+    "Common/src/hop.c":         {"hop.h", "radio_phy.h"},
+    "Common/inc/grid.h":        set(),
+    "Common/inc/gridmaster.h":  {"grid.h"},
+    "Common/inc/superframe.h":  {"grid.h", "radio_slots.h"},
+    "Common/inc/beacon.h":      {"superframe.h", "radio_slots.h"},
+    "Common/inc/hop.h":         set(),
+}
+# Freestanding only; <stdio.h> pulls newlib into a file with no part under it.
+PORTABLE_ANGLE = {"stddef.h", "stdint.h", "stdbool.h", "string.h", "limits.h"}
+INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
+
+
+def check_portable():
+    """The include list of the library-to-be, per file rather than as a union.
+
+    A union would permit grid.c a timebase.h it must not have, and a permission
+    nobody needs is a permission that gets used.
+
+    A missing file is a failure and not a skip: a file renamed out from under
+    this list is otherwise indistinguishable from a file that passes. None
+    present at all is another tree, and returns nothing."""
+    present = [p for p in PORTABLE if os.path.isfile(p)]
+    if not present:
+        return []
+    bad = []
+    for path, allowed in sorted(PORTABLE.items()):
+        if not os.path.isfile(path):
+            bad.append("%s: MISSING - the list is stale, not the file portable" % path)
+            continue
+        try:
+            text = open(path, errors="replace").read()
+        except OSError:
+            continue
+        own = os.path.basename(path).replace(".c", ".h")
+        for bracket, name in INCLUDE_RE.findall(text):
+            if bracket == "<":
+                if name not in PORTABLE_ANGLE:
+                    bad.append("%s: <%s> is not freestanding" % (path, name))
+            elif name not in allowed and name != own:
+                bad.append("%s: \"%s\" is not on this file's list" % (path, name))
+    return bad
+
+
 def main():
     changed = "--changed" in sys.argv
     files = tracked(changed)
     longb, own, cyr, brief, docs = check(files, touched_lines() if changed else None)
+    port = check_portable()
     scope = "lines changed against HEAD" if changed else "every file a human owns"
     print("scope: %s (%d), generated and vendored excluded\n" % (scope, len(files)))
     for title, items in (("non-English outside CLAUDE.md", cyr),
                          ("comment blocks over 100 characters", longb),
                          ("struct-field comments on their own line", own),
                          ("Doxygen @brief over 100 characters", brief),
-                         ("Python docstring first line over 100 characters", docs)):
+                         ("Python docstring first line over 100 characters", docs),
+                         ("includes outside the link layer's list", port)):
         print("== %s: %d ==" % (title, len(items)))
         for i in items[:15]:
             print("   " + i)
         if len(items) > 15:
             print("   ... and %d more" % (len(items) - 15))
-    return 1 if (longb or own or cyr or brief or docs) else 0
+    return 1 if (longb or own or cyr or brief or docs or port) else 0
 
 sys.exit(main())

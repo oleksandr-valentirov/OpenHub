@@ -79,6 +79,53 @@ CASES = [
 ]
 
 
+# The link layer's ten files, with the includes check_portable pins.
+def link_corpus(**edits):
+    files = {
+        "Common/src/grid.c":       '#include "grid.h"\nint a;\n',
+        "Common/src/gridmaster.c": '#include "gridmaster.h"\nint b;\n',
+        "Common/src/superframe.c": '#include "superframe.h"\n#include "grid.h"\n'
+                                   '#include "timebase.h"\nint c;\n',
+        "Common/src/beacon.c":     '#include "beacon.h"\n#include "radio_slots.h"\nint d;\n',
+        "Common/src/hop.c":        '#include "hop.h"\n#include "radio_phy.h"\nint e;\n',
+        "Common/inc/grid.h":       "#include <stdint.h>\n",
+        "Common/inc/gridmaster.h": '#include <stdint.h>\n#include "grid.h"\n',
+        "Common/inc/superframe.h": '#include <stdint.h>\n#include "grid.h"\n',
+        "Common/inc/beacon.h":     '#include <stdint.h>\n#include "superframe.h"\n',
+        "Common/inc/hop.h":        "#include <stdint.h>\n",
+    }
+    for key, body in edits.items():
+        path = key.replace("__", "/").replace("_c", ".c").replace("_h", ".h")
+        if body is None:
+            del files[path]
+        else:
+            files[path] = body
+    return files
+
+
+LINK_CASES = [
+    ("link corpus clean", link_corpus(), 0, None),
+    ("no corpus: another tree", {"a.c": CLEAN_C}, 0, None),
+    ("hal include in grid.c",
+     link_corpus(**{"Common__src__grid_c":
+                    '#include "grid.h"\n#include "stm32h7xx_hal.h"\nint a;\n'}),
+     1, "not on this file"),
+    ("stdio in beacon.c",
+     link_corpus(**{"Common__src__beacon_c":
+                    '#include "beacon.h"\n#include <stdio.h>\nint d;\n'}),
+     1, "not freestanding"),
+    ("a listed file renamed away",
+     link_corpus(**{"Common__src__grid_c": None}), 1, "MISSING"),
+    # The rule is passed the instant; it must not read a clock of its own.
+    # radio_devices_docs/specs/03-roadmap.md
+    ("timebase back in grid.c",
+     link_corpus(**{"Common__src__grid_c":
+                    '#include "grid.h"\n#include "timebase.h"\nint a;\n'}),
+     1, "not on this file"),
+]
+CASES = CASES + LINK_CASES
+
+
 def main():
     bad = 0
     for name, files, want_exit, want_text in CASES:
