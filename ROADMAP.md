@@ -928,7 +928,23 @@ belongs with the other prerequisites, not after them.
 
 ## Contract debts
 
-### 81. `hop_prf_selftest` stops one layer short of the deck — `debt` `built 2026-08-24, not yet run on the board`
+### 81. `hop_prf_selftest` stops one layer short of the deck — `debt` `closed 2026-08-25, verified on the board with its control`
+
+**Run on the H755 and made to refuse before it was read.** Clean build:
+`hop deck  DRAWN by CM4, matches hop_v1 (rc 0)` — 56 deck slots and 10 samples
+drawn through the real CRYP at boot.
+
+**The control is the entry's own argument, printed in one output.** Two bytes of
+`HV_DECK0` swapped, `HOP_VECTORS_DIGEST` left alone:
+
+    hop_v1     53dc999381fe4483   53dc999381fe4483   ok
+    hop deck   -   MISMATCH - CM4 did not draw it (rc -7)
+
+The digest is a literal baked into the file it describes, so no edit to the values
+can move it — the old line says `ok` about values that are wrong, and until this
+change nothing anywhere on the board disagreed. Restored to `rc 0` afterwards.
+Three flashes, hub reset each time, announced and released in `bench/RESOURCES.md`.
+
 
 **Built.** `hop_prf_selftest` is now `hop_selftest` and carries three stages:
 FIPS-197 C.1, the PRF block, and — new — **the deck itself**, `hop_init` and
