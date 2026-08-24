@@ -119,3 +119,7 @@ radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-se
 radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_identify  # deleted with its callers, none of which existed; see phase 9 step 2
 radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_swap32_model  # kept as hop_prf_swap32, beside the PRF rather than inside hop.c
 radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone and what replaced it
+
+# ADR-0031 counts and cites across both trees.
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:ipc_  # the prefix the reference count is over, not an identifier
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:test_period  # a suite in wl55_device, quoted for the figures that did not move
