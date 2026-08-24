@@ -27,7 +27,7 @@
 #include "radio.h"
 #include "rfm69_registers.h"
 #include "hsem_table.h"
-#include "timebase.h"
+#include "clock.h"
 #include "bootwait.h"
 /* USER CODE END Includes */
 

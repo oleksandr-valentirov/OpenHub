@@ -22,7 +22,7 @@
 #include "phy_rfm69.h"
 #include "rfm69_registers.h"
 #include "radio_phy.h"
-#include "timebase.h"
+#include "clock.h"
 #include "main.h"
 
 /* The driver gives up on a mode change after this, rather than spinning. */

@@ -505,7 +505,7 @@ static int frame_send(const void *payload, uint8_t len) {
  * here alone. radio_devices_docs/open_hub/radio/superloop.md */
 static int superframe_due(void) {
     if (!grid_started) {
-        superframe_start_tk = rfm_micros();
+        superframe_start_tk = timebase_now();
         superframe_tk = timebase_us_to_ticks(SUPERFRAME_US);
         join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
         grid_started = 1;
@@ -537,7 +537,7 @@ static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in) {
 
     /* How far past the boundary this beacon leaves; devices inherit it directly.
      * radio_devices_docs/open_hub/radio/timebase.md */
-    late_last_us = rfm_micros() - superframe_start_tk;
+    late_last_us = timebase_now() - superframe_start_tk;
     if (late_last_us > late_max_us) late_max_us = late_last_us;
     if (late_last_us < late_min_us) late_min_us = late_last_us;
     if (late_last_us > timebase_us_to_ticks(RADIO_BEACON_LATE_LIMIT_US))
@@ -656,7 +656,7 @@ static void uplink_notify(const dev_entry_t *e) {
         return;
     }
     up_evt_sent++;
-    uint32_t since_sync = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+    uint32_t since_sync = timebase_ticks_to_us(timebase_now() - sync_edge_tk);
 
     /* An unanswered predecessor is lost, not silently replaced. */
     if (evt_waiting)
@@ -672,7 +672,7 @@ static void uplink_notify(const dev_entry_t *e) {
         if (evt_arrival_last_us > evt_arrival_max_us)
             evt_arrival_max_us = evt_arrival_last_us;
     }
-    evt_sent_tk = rfm_micros();
+    evt_sent_tk = timebase_now();
     evt_seq     = seq;
     evt_waiting = 1;
 }
@@ -688,7 +688,7 @@ static void evt_reply_service(void) {
          * ROADMAP item 2 */
         if (evt_waiting && m.seq == evt_seq) {
             evt_waiting = 0;
-            us = timebase_ticks_to_us(rfm_micros() - evt_sent_tk);
+            us = timebase_ticks_to_us(timebase_now() - evt_sent_tk);
             evt_rtt_last_us = us;
             if (evt_replied == 0u || us < evt_rtt_min_us) evt_rtt_min_us = us;
             if (us > evt_rtt_max_us) evt_rtt_max_us = us;
@@ -734,7 +734,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         ipc_timing_t t;
 
         t.superframe   = frame_counter;
-        t.now_tk       = rfm_micros();
+        t.now_tk       = timebase_now();
         t.late_last_us = timebase_ticks_to_us(late_last_us);
         t.late_max_us  = timebase_ticks_to_us(late_max_us);
         t.late_min_us  = (late_min_us == 0xFFFFFFFFu) ? 0
@@ -803,7 +803,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
                           (int32_t)(quiesce_resume_at - frame_counter) > 0)
                          ? (uint8_t)(quiesce_resume_at - frame_counter) : 0u;
         p.dev_id       = pairing_dev_id;
-        left_tk        = pairing_deadline_us - rfm_micros();
+        left_tk        = pairing_deadline_us - timebase_now();
         p.window_left_ms = (pairing_open && (int32_t)left_tk > 0) ? left_tk / 1000u : 0u;
         p.resume_at    = quiesce_resume_at;
         p.reqs_seen    = pair_reqs_seen;
@@ -1401,7 +1401,7 @@ static void rx_sample_rssi(void) {
 /* Only a level inside a request's payload sits below the sync word.
  * radio_devices_docs/radio/pairing.md */
 static void join_sample_rssi(void) {
-    uint32_t off_tk = rfm_micros() - superframe_start_tk;
+    uint32_t off_tk = timebase_now() - superframe_start_tk;
     int16_t x2 = 0;
     int16_t *peak, *floor;
 
@@ -1660,7 +1660,7 @@ static void send_pair_rsp(void) {
     }
     ex_rsp_sent++;
     ex_state    = RADIO_EX_SENT_RSP;
-    ex_deadline = rfm_micros() + timebase_us_to_ticks(EX_DEV_TIMEOUT_US);
+    ex_deadline = timebase_now() + timebase_us_to_ticks(EX_DEV_TIMEOUT_US);
 }
 
 /* The slot grant, sealed; the network hop key travels inside it.
@@ -1779,7 +1779,7 @@ static void exchange_service(void) {
             /* One turn per region; the derive had a whole superframe. ADR-0026 */
             ex_state     = RADIO_EX_RSP_DUE;
             ex_due_frame = ex_req_frame + 1u;
-            ex_deadline  = rfm_micros() + timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
+            ex_deadline  = timebase_now() + timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
             return;
         }
         if (ex_state == RADIO_EX_WAIT_KEYS) {
@@ -1796,7 +1796,7 @@ static void exchange_service(void) {
                 ex_state     = RADIO_EX_ACCEPT_DUE;
                 ex_due_frame = frame_counter + 1u;
                 ex_deferred++;
-                ex_deadline  = rfm_micros() +
+                ex_deadline  = timebase_now() +
                                timebase_us_to_ticks(EX_REGION_TIMEOUT_US);
             }
             return;
@@ -1895,11 +1895,11 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
         d->dl_ack_arg = rpt.ack_arg;
         dl_cmd_acked++;
     }
-    d->arrival_us = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);
+    d->arrival_us = timebase_ticks_to_us(timebase_now() - superframe_start_tk);
     /* The edge is global, so it is paired to this frame or the field stays absent.
      * radio_devices_docs/open_hub/radio/sync-timestamp.md */
     {
-        uint32_t since = timebase_ticks_to_us(rfm_micros() - sync_edge_tk);
+        uint32_t since = timebase_ticks_to_us(timebase_now() - sync_edge_tk);
         uint32_t air   = RADIO_AIR_SYNC_TO_END_US(RADIO_UPLINK_BYTES);
 
         if (since < air || since > air + RADIO_SYNC_PAIR_SLACK_US) {
@@ -1931,7 +1931,7 @@ static int join_window_holds(uint8_t payload_b) {
 
     if (!grid_started)
         return 0;
-    off  = timebase_ticks_to_us(rfm_micros() - superframe_start_tk);
+    off  = timebase_ticks_to_us(timebase_now() - superframe_start_tk);
     need = RADIO_AIR_START_TO_END_US(payload_b);
     if (off < RADIO_JOIN_OFFSET_US)
         return 0;
@@ -2225,7 +2225,7 @@ static void handle_join_frame(const phy_ev_t *ev) {
         ex_confs_forwarded++;
         ex_waiting  = 1;
         ex_state    = RADIO_EX_WAIT_KEYS;
-        ex_deadline = rfm_micros() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
+        ex_deadline = timebase_now() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
         return;
     }
 
@@ -2294,7 +2294,7 @@ static void handle_join_frame(const phy_ev_t *ev) {
         ex_state     = RADIO_EX_WAIT_RSP;
         ex_retry     = 0;
         ex_req_frame = frame_counter;
-        ex_deadline  = rfm_micros() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
+        ex_deadline  = timebase_now() + timebase_us_to_ticks(EX_CM7_TIMEOUT_US);
     }
 }
 
@@ -2346,7 +2346,7 @@ static void join_region_service(void) {
         join_rx_deadline = (pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
             ? superframe_start_tk + superframe_tk
               - timebase_us_to_ticks(RADIO_END_GUARD_US)
-            : rfm_micros() + timebase_us_to_ticks(RADIO_JOIN_RX_US);
+            : timebase_now() + timebase_us_to_ticks(RADIO_JOIN_RX_US);
         join_phase = 1;
         jp_windows++;
         jp_step = 0;
@@ -2500,7 +2500,7 @@ static void rx_diag_reset(void) {
 static uint8_t RFM_open_pairing(uint32_t dev_id) {
     rx_diag_reset();
     pairing_dev_id = dev_id;
-    pairing_deadline_us = rfm_micros() + timebase_us_to_ticks(PAIRING_WINDOW_MS * 1000u);
+    pairing_deadline_us = timebase_now() + timebase_us_to_ticks(PAIRING_WINDOW_MS * 1000u);
     pairing_open = 1;
     if (pair_state == RADIO_PAIR_IDLE)
         pair_state = RADIO_PAIR_LISTEN;

@@ -18,7 +18,7 @@
 #include "phy.h"
 #include "phy_rfm69.h"
 #include "main.h"
-#include "timebase.h"
+#include "clock.h"
 
 static int fails;
 static unsigned checks;

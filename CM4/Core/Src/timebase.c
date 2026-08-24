@@ -2,10 +2,13 @@
  * @file timebase.c
  * @brief TIM2 free-runs at 1 MHz over 32 bits, wrapping every ~71.6 minutes.
  *
+ * This is the hub's backend for Common/inc/timebase.h as well as its own
+ * clock: all four of that seam's operations are supplied here.
+ *
  * radio_devices_docs/open_hub/radio/timebase.md
  */
 #include "main.h"
-#include "timebase.h"
+#include "clock.h"
 
 extern TIM_HandleTypeDef htim2;
 
@@ -30,6 +33,11 @@ uint32_t timebase_ticks_to_us(uint32_t ticks) {
 
 uint32_t rfm_micros(void) {
     return __HAL_TIM_GET_COUNTER(&htim2);
+}
+
+/* The seam's name for the clock the grid already ran on. ADR-0029 decision 3. */
+uint32_t timebase_now(void) {
+    return rfm_micros();
 }
 
 /* Signed difference, so a deadline straddling the wrap still compares right. */
