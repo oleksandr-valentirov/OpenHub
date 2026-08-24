@@ -91,6 +91,13 @@ has never delivered against it. A PER run at the new rate is the acceptance
 evidence, not the host tests. Sensitivity is ~3 dB worse plus about a dB for the
 h = 1 demod penalty, and neither side has read the datasheet row.
 
+**Measured 2026-08-24, and item 30's figure reproduces.** Two 600 s windows, the
+denominator taken off the device rather than derived here: 38 sent and 13
+accepted, then 38 sent and 13 accepted. 47 of 76 never reached sync. The
+deadline is therefore met by the *grid* and missed by the *link*, and the two
+numbers must not be quoted together — a 778 ms worst-case gap over a path that
+drops three frames in five is not a 778 ms delivery.
+
 `radio/tdma.md` § the event deadline, § what k = 3 breaks.
 
 ### 3. The application payload has room and no application — `blocking`
@@ -116,7 +123,7 @@ costs a grid change and a re-measurement.
 
 `Common/inc/radio_protocol.h`, `radio/tdma.md` § slot budget.
 
-### 4. Reports arrive, and the denominator is still the device's to state — `device`
+### 4. The device counts what it sends, and the hub counts what arrives — `device`
 
 **No longer blocking, 2026-08-24.** Node A reports on grant, and the hub counts
 them: `devices` shows `2/0 ok/bad`, `cadence: grant 8, seen every 8`, and both
@@ -124,11 +131,20 @@ directions' levels at `-46/-48`. The device's own reporting loop existed all
 along and could not transmit — [ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)
 § the floor is latched once.
 
-What this entry still owns is the part that was never about the loop. **The hub
-must not derive the denominator**: an `expected` column on `devices` would print
-an assumption with a column heading, and `cadence ... seen every 8` is an
-observation of gaps rather than a count of what was sent. The device knows how
-many it sent and does not say so on the wire.
+**Closed 2026-08-24.** The device counts its own sends and `state` prints them,
+so the denominator comes off the far side of the antenna instead of being
+derived here. `reports_sent` had existed as a declared, printed, never
+incremented counter, which is why this entry read as "no loop" — a constant
+agreeing with the hub's zero looks exactly like corroboration. It is in the
+`verification` skill now.
+
+**It paid for itself the same hour**: 38 sent against 13 accepted, twice, which
+is the first uplink loss figure this project has had with a population behind
+it. That number belongs to K2 and to item 1, not here.
+
+**The wire still does not carry the count**, and that is deliberate for now: the
+console has it, the report does not, and putting it in the report would cost a
+byte the slot has not got. `open_hub/cli.md`.
 
 `open_hub/cli.md`, and the `verification` skill.
 
