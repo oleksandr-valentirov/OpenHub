@@ -505,7 +505,8 @@ typedef struct ipc_vectors {
     char    pair[17];        /**< PAIR_VECTORS_DIGEST, NUL-terminated */
     char    hop[17];         /**< HOP_VECTORS_DIGEST */
     uint8_t pair_version;
-    uint8_t reserved[3];
+    int8_t  hop_deck_rc;     /**< 0 = CM4 drew hop_v1's deck; else the failing stage */
+    uint8_t reserved[2];
 } __attribute__((packed)) ipc_vectors_t;
 
 /* Reply for IPC_REQ_GET_DEVICE_INFO, which asks for the index-th live device. */

@@ -1184,7 +1184,8 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
 
     /* Named on every run, so "ok" is not carried away as "validated".
      * radio_devices_docs/open_hub/arch/build-and-generation.md */
-    cli_out(cli, "\r\ncompares what each core was BUILT with; does not validate the values\r\n");
+    cli_out(cli, "\r\ncompares what each core was BUILT with; the digests are a label.\r\n");
+    cli_out(cli, "the deck line below is drawn by CM4's hop.c, not compared.\r\n");
     cli_out(cli, "           CM7                CM4\r\n");
 
     rc = rfm_request(IPC_REQ_GET_VECTORS, 0, NULL, 0);
@@ -1205,6 +1206,11 @@ static int cmd_vectors(cli_data_t *cli, int argc, char **argv) {
     cli_out(cli, "hop_v1     %-18s %-18s %s\r\n", HOP_VECTORS_DIGEST, v.hop,
             strcmp(HOP_VECTORS_DIGEST, v.hop) == 0 ? "ok" : "MISMATCH");
     cli_out(cli, "wire       %-18s %-18s\r\n", WIRE_VECTORS_DIGEST, "-");
+    /* Printed either way and before nothing unbounded: a pass must be readable. */
+    cli_out(cli, "hop deck   %-18s %s (rc %d)\r\n", "-",
+            v.hop_deck_rc == 0 ? "DRAWN by CM4, matches hop_v1"
+                               : "MISMATCH - CM4 did not draw it",
+            v.hop_deck_rc);
     if (strcmp(PAIR_VECTORS_DIGEST, v.pair) != 0 ||
         strcmp(HOP_VECTORS_DIGEST, v.hop) != 0)
         cli_out(cli, "\r\nOne core is stale. Flash both, then reset.\r\n");

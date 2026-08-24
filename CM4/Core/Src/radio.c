@@ -214,6 +214,7 @@ static uint32_t dl_cmd_sent, dl_cmd_replaced, dl_cmd_acked, dl_cmd_lost;
 static uint8_t  net_hop_key_set;
 static uint8_t  report_every_grant = RADIO_REPORT_EVERY_DEFAULT;
 static int      aead_selftest_rc = 1;   /* until it has actually run */
+static int      hop_selftest_rc  = 1;   /* likewise, and reported by `vectors` */
 
 static radio_exchange_state_t ex_state = RADIO_EX_IDLE;
 static uint16_t ex_seq;
@@ -462,12 +463,10 @@ uint8_t RFM_Init(uint8_t network_id, uint8_t node_id) {
      * radio_devices_docs/radio/crypto/wire-crypto.md */
     aead_selftest_rc = aead_selftest();
     /* After the frame cipher, so the PRF runs from the adversarial CRYP state. */
-    if (aead_selftest_rc == 0) {
-        /* 51..61 carry the stage, so a failure names its layer. Item 81. */
-        int hop_rc = hop_selftest();
-        if (hop_rc != 0)
-            aead_selftest_rc = -50 + hop_rc;
-    }
+    hop_selftest_rc = hop_selftest();
+    /* 51..61 carry the stage, so a failure names its layer. Item 81. */
+    if (aead_selftest_rc == 0 && hop_selftest_rc != 0)
+        aead_selftest_rc = -50 + hop_selftest_rc;
     if (aead_selftest_rc == 0 && frame_selftest() != 0)
         aead_selftest_rc = -30;
 
@@ -1214,6 +1213,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         memcpy(v.pair, PAIR_VECTORS_DIGEST, sizeof(PAIR_VECTORS_DIGEST));
         memcpy(v.hop, HOP_VECTORS_DIGEST, sizeof(HOP_VECTORS_DIGEST));
         v.pair_version = PAIR_VECTORS_VERSION;
+        /* Drawn, not compared: the digests above are a label. Item 81. */
+        v.hop_deck_rc = (int8_t)hop_selftest_rc;
         (void)ipc_send_reply(req, IPC_ST_OK, &v, (uint8_t)sizeof(v));
         return;
     }
