@@ -73,7 +73,18 @@ cmake -S CM7 -B CM7/build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 ```
 
 Toolchain comes from STM32CubeCLT (`arm-none-eabi-gcc`, `cmake`, `ninja`). Host
-tests: `make -C Common/test check`.
+tests are **two** suites and both have to run:
+
+```bash
+make -C Common/test check     # the contracts: grid, hop, wire, IPC, OHT, store
+make -C CM4/test check        # the receive path, against a part that is not there
+```
+
+`CM4/test` builds `phy_rfm69.c` for the host over shims for the board and the
+clock, so the rules the RFM69 taught this project — an edge is not a level, a
+trigger destroys the latch, the carrier error is gone after the drain — fail in a
+second instead of over an hour on the air. It ships three mutation controls and
+refuses a run whose check count has shrunk.
 
 ## Flash and inspect
 

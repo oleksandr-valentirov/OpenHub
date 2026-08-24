@@ -152,6 +152,29 @@ int main(void) {
     CHECK(SUPERFRAME_PER_DAY == 43200u);
     CHECK(86400ull * 1000000ull % SUPERFRAME_US == 0u);
 
+    /* Reconstructed at the poll, not captured in the interrupt.
+     * radio_devices_docs/radio/phy-seam.md */
+    {
+        const uint32_t p = 2000000u;
+        uint32_t base;
+        unsigned n = 0;
+
+        /* Inside the period running now. */
+        base = radio_period_base(1500u, 1000u, p); CHECK(base == 1000u); n++;
+        /* The boundary itself belongs to the period it opens. */
+        base = radio_period_base(1000u, 1000u, p); CHECK(base == 1000u); n++;
+        /* Earlier than the start: the edge is the previous period's. */
+        base = radio_period_base(999u, 1000u, p);  CHECK(base == 1000u - p); n++;
+        /* The 1.92 s arrival offset this hub really produces. */
+        base = radio_period_base(0xFFFFFFFFu - 100u, 20u, p);
+        CHECK((uint32_t)(0xFFFFFFFFu - 100u - base) == p - 121u); n++;
+        /* Across the counter's wrap with the start after it. */
+        base = radio_period_base(0xFFFFFF00u, 0x00000100u, p);
+        CHECK(base == (uint32_t)(0x00000100u - p)); n++;
+        /* Never taken on faith: a case count that would notice a deleted block. */
+        CHECK(n == 5u);
+    }
+
     printf("slots: %s (%u slots, %u us each, guard %u us, hub idle %.3f%%)\n",
            fails ? "FAIL" : "ok",
            RADIO_SLOT_COUNT, RADIO_SLOT_US, RADIO_SLOT_GUARD_US,
