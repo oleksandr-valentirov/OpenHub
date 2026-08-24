@@ -343,7 +343,8 @@ def check_submodule():
     A submodule left behind is a build compiling something other than what was
     just written, and nothing else says so: it compiles, it links, and it passes.
     Found by moving a file in the sibling and watching both firmwares build."""
-    if not os.path.isdir("radio_stack"):
+    # .git, not the directory: git -C walks up out of a plain one.
+    if not os.path.exists(os.path.join("radio_stack", ".git")):
         return []
     bad = []
 
