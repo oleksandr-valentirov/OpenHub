@@ -198,6 +198,21 @@ if either board reaches fewer than 8 cycles.
 
 `radio/phy.md`, `open_hub/radio/configuration.md`.
 
+**Two devices at once, 2026-08-24, run `2026-08-24-4`, both denominators off the
+nodes:**
+
+| | the node sent | the hub accepted | delivered | bad |
+|---|---|---|---|---|
+| node A, slot 1, −44 dBm up | **42** | 12 | **29 %** | 0 |
+| node B, slot 0, −55 dBm up | **47** | 14 | **30 %** | 0 |
+
+Both at `report every 8` and `k = 0`, so this is the single-opportunity figure and
+not comparable to the 151-cycle k=3 rows above. `frames_bad 0` on both: the loss
+is still entirely before sync. **Eleven decibels between the two boards moves the
+delivered fraction by one point**, which is another arm against a level or
+sensitivity ceiling and was taken without arranging anything - the two boards
+simply sit at different distances.
+
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
 One exchange holds the join channel for **~270 000 us** end to end, and
@@ -329,6 +344,35 @@ shape of miss on a second implementation is the cheapest hypothesis available.
 
 `../radio_devices_docs/radio/pairing.md` § the WL55-to-WL55 control.
 
+**Measured again 2026-08-24, run `2026-08-24-4`, and the fraction is literal.**
+Two enrolments back to back on a cleared roster: `req 5 -> rsp 5 -> conf 2 ->
+accept 2, 2 paired`. **Two confirmations of five**, in one window rather than
+pooled across sessions.
+
+What is new is that both sides counted every leg and they reconcile with nothing
+left over:
+
+| leg | direction | sent | received |
+|---|---|---|---|
+| PAIR_REQ | device → hub | 7 | **5** |
+| PAIR_RSP | hub → device | 5 | 5 |
+| PAIR_CONF | device → hub | 5 | **2** |
+| PAIR_ACCEPT | hub → device | 2 | 2 |
+
+**Downlink 7 of 7, uplink 7 of 12**, and each device's timed-out leg is the far
+side's missing frame one for one. So this is not the hub failing to *register* a
+confirmation that arrived — it is the confirmation not arriving, and the same
+receiver loses requests in the same window at the same rate. **This item and 63
+are one mechanism seen at two frame types**, which the pooled figures could never
+show. `bench/runs/2026-08-24-4/RESULTS.md`.
+
+**A mechanism found on the other hub and ruled out here.** The WL55 hub role lost
+38 confirmations of 38 to its own join beacon transmitted on top of them
+(`wl55_device/ROADMAP.md` item 61, run `2026-08-24-3`). This hub does not have
+that defect - `pair_region_owned()` at `CM4/Core/Src/radio.c:1906` is exactly the
+guard the other role was missing - so the two-in-five is a different cause and
+that arm is closed rather than open.
+
 ### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
 
 Item 60's twin and a separate leg: the confirmation is lost while the hub
@@ -445,6 +489,12 @@ counts nothing. Not the cause of any zero above — those never reached the coun
 — but a blind spot on the path being debugged.
 
 `../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
+
+**2 of 7 in run `2026-08-24-4`**, with the device count as the denominator: two
+nodes sent seven requests between them and the hub saw five. In the same window
+it saw two confirmations of five. **The rate is the same order at both frame
+types and the direction is the same**, which is the argument for reading this and
+item 60 as one receiver rather than two defects. `bench/runs/2026-08-24-4/RESULTS.md`.
 
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
