@@ -15,14 +15,17 @@ sentence, so nothing anywhere disagrees when it goes stale. Name the file, the
 symbol, the commit or the ADR instead. The `device` items below are the exception
 and are hints rather than identifiers.
 
-**Cleaned twice.** The first pass retired four closed entries, moved the front-end
+**Cleaned three times.** The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
 the store's reader/writer split, the mailbox flood, the device's own send count,
 and the boot erase — leaving their reasoning on `radio/phy.md`,
 `open_hub/arch/dual-core.md`, `open_hub/arch/config-store.md`,
-`open_hub/arch/ipc.md` and the `verification` skill.
+`open_hub/arch/ipc.md` and the `verification` skill. The third retired item 81,
+the hop deck stage: verified on the H755 with two swapped deck bytes as its
+control on 2026-08-24, reasoning left on `radio/hopping.md` and
+`open_hub/security/crypto-architecture.md`.
 
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
@@ -927,101 +930,6 @@ belongs with the other prerequisites, not after them.
 ---
 
 ## Contract debts
-
-### 81. `hop_prf_selftest` stops one layer short of the deck — `debt` `closed 2026-08-25, verified on the board with its control`
-
-**Run on the H755 and made to refuse before it was read.** Clean build:
-`hop deck  DRAWN by CM4, matches hop_v1 (rc 0)` — 56 deck slots and 10 samples
-drawn through the real CRYP at boot.
-
-**The control is the entry's own argument, printed in one output.** Two bytes of
-`HV_DECK0` swapped, `HOP_VECTORS_DIGEST` left alone:
-
-    hop_v1     53dc999381fe4483   53dc999381fe4483   ok
-    hop deck   -   MISMATCH - CM4 did not draw it (rc -7)
-
-The digest is a literal baked into the file it describes, so no edit to the values
-can move it — the old line says `ok` about values that are wrong, and until this
-change nothing anywhere on the board disagreed. Restored to `rc 0` afterwards.
-Three flashes, hub reset each time, announced and released in `bench/RESOURCES.md`.
-
-
-**Built.** `hop_prf_selftest` is now `hop_selftest` and carries three stages:
-FIPS-197 C.1, the PRF block, and — new — **the deck itself**, `hop_init` and
-`hop_channel` over `HV_DECK0`, `HV_DECK1` and all ten `HV_SAMPLE_SF`, keyed with
-`HV_HOP_KEY` through the real CRYP rather than a replay. `_Static_assert` ties
-`HOP_VEC_COUNT` to `RADIO_HOP_COUNT`, which nothing did before.
-
-**On this board it is a strictly larger check than any host suite can run.**
-`Common/test/test_hop.c` replays `HV_STREAM0`/`HV_STREAM1`, so it exercises the
-shuffle and not the PRF, and `test_pinned_samples` **skips every sample past
-cycle 1** — `56`, `1000`, `100000` and `4294967295`, the counter's last value
-before it wraps. Those four have never been executed anywhere. The board has a
-real AES, so it runs all ten.
-
-| | on this board before | after |
-|---|---|---|
-| assertions against `hop_v1` | **2** — two AES blocks | **68** — 2 + 56 deck slots + 10 samples |
-| samples past cycle 1 | 0 | **4**, which no host suite can reach |
-| would catch a defect in `hop.c` | **no** — it never called it | yes |
-| cost | — | **+408 B** text and rodata |
-
-**The failing stage survives to the console.** The hop layers report 51..61 rather
-than collapsing into one number, because *a deck says the sequence is wrong and
-not which half is wrong* — the split this entry was written about. `cli.c` names
-which self-test refused.
-
-**Verified on a host proxy, and not yet on the board.** `Common/src/hop.c` was
-built as a shared object and driven with a real AES from `cryptography` — the
-same library the generators use, and an independent route to the same deck. It
-reproduces **56 of 56 deck slots and 10 of 10 samples**, so the assertions are
-satisfiable and correct; if the board refuses, the silicon or the toolchain is
-the suspect and not the test. Two mutations of `hop.c` were refused: the cycle's
-low byte dropped from the PRF input, and the second PRF block never keyed.
-
-**Neither self-test gates anything** — `aead_selftest_rc` is reported through
-`ipc` and printed by `cli.c`, and no transmit path consults it. So a failure here
-is a number on a console, which is worth knowing before trusting it as a guard.
-
-**What is left is the board.** It needs a hub reset, which is announced in
-`bench/RESOURCES.md` before it happens, and two nodes are currently paired and
-reporting.
-
-**The harness that verified this is in no tree.** It drives *both* firmwares'
-`hop.c` and belongs to neither, which is the cross-tree question ADR-0028's
-library eventually answers.
-
-
-`hop_prf_selftest()` runs at init and checks two things against `hop_v1.h`:
-FIPS-197 C.1, and the hop PRF block — `aes_ecb_block(HV_HOP_KEY, HV_PRF_IN)`
-against `HV_PRF_OUT`. **It never runs `hop_init` or `hop_channel`.**
-
-`tools/gen_hop_vectors.py` says in its own docstring why the layers are pinned
-separately: *a deck says the sequence is wrong and not which half is wrong — the
-PRF block, against AES-128, including FIPS-197 C.1; the deck and the superframe
--> channel map, against the Fisher-Yates in Common/src/hop.c.* **Layer one is on
-the board and layer two is host-only**, `Common/test/test_hop.c`.
-
-`HV_DECK0` and `HV_DECK1` are already linked into this firmware — `radio.c`
-includes `hop_v1.h` — so **the data is on the board and nothing executes against
-it.**
-
-**Today the air covers this and it is about to stop.** Two independent hop
-implementations mean a deck bug on either side is total silence, which is the
-loudest failure mode available. Once
-[ADR-0029](../radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md)
-gives both firmwares one `hop.c`, the same bug produces the same wrong channel at
-both ends and **the link keeps working** — traffic simply elsewhere in the band,
-which on a grid whose whole argument is one sub-band is not a neutral outcome.
-
-The fix is a deck KAT beside the PRF one: `hop_init` with the replay PRF,
-`hop_channel` across both cycles, compared to `HV_DECK0`/`HV_DECK1`. Roughly what
-`test_hop.c` already does, on the silicon, under this build's real optimisation
-level. **It is more than this board has ever had**, not a consolation for the
-absorption — and it is ADR-0029 decision 5's condition. The device's half is its
-item 83.
-
-`radio_devices_docs/radio/hopping.md`.
 
 ### 80. The crypto backend is counted as done and shares two names with the device's — `contract`
 

@@ -74,3 +74,41 @@ radio/phy-seam.md:timebase_now  # the clock backend's read, proposed name for th
 radio/phy-seam.md:crypto_hkdf_sha256  # the key schedule's seam, mbedTLS supplies it here and sha256.c there
 radio/phy-seam.md:crypto_hmac_sha256  # same seam: both trees already have a working implementation to bind
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:hop_prf_selftest  # named as the two-stage check item 81 replaced with hop_selftest
+
+# CMSIS and nginx spell these, not this project. Named because the page is about
+# what they do to a flash driver and to a TLS handshake.
+open_hub/arch/config-store.md:SCB_InvalidateDCache  # CMSIS cache maintenance, from the Cortex-M7 headers
+open_hub/arch/keystore.md:SCB_InvalidateDCache      # same call, same reason, on the page that found it
+open_hub/network/tls.md:ssl_ecdh_curve              # an nginx directive the config deliberately does not set
+
+# Prefixes, written with a wildcard. A prefix is not a symbol and no rename can
+# make one exist.
+open_hub/arch/config-store.md:ks_legacy_  # the ks_legacy_* pattern, quoted as a family
+radio/pairing.md:RADIO_PAIR_             # RADIO_PAIR_*_BYTES, the family the sizeof asserts cover
+
+# Telemetry field names, as a REST reader sees them. Their authority is
+# openhub-server/schema/telemetry.yaml, which this tree does not contain; the
+# generated header spells them OHT_F_*/OHT_CMD_*.
+open_hub/network/telemetry.md:report_flags  # schema field, RADIO_REPORT_FLAG_* on this side
+open_hub/network/telemetry.md:temp_stale    # a bit in that field, named as the server renders it
+open_hub/network/telemetry.md:rssi_stale    # likewise
+radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md:device_add  # the northbound command; cmd_device_add is only its handler here
+
+# Named in order to say they are gone. Rewriting these would falsify the record.
+radio/crypto/wire-crypto.md:link_v5   # retired with link_v6; the retirement list names it in the past tense
+open_hub/radio/sync-timestamp.md:rx_note_sync  # the polled counter before the seam, named as what moved
+radio/phy-seam.md:rx_note_sync        # the same function, in the list of what phy_poll absorbed
+radio/phy-seam.md:rx_discard_frame    # likewise, absorbed 2026-08-24
+radio/phy-seam.md:sync_edge_new       # the flag phy_ev_t.sync_seq replaced
+
+# Declared by ADR-0028/0029 and not supplied by either firmware yet. These go
+# when the library exists; hub item 80, device item 82.
+radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's chosen name, still an empty remote
+radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_lib_HAL   # a naming the record considered and rejected
+radio/phy-seam.md:radio_stack         # the same name, in this page's layout sketch
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:timebase_now         # the clock backend's read, declared in the record's own C block
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hkdf_sha256   # the key schedule's seam, declared there
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hmac_sha256   # likewise
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_sha256        # the alternative the record weighs, declared to weigh it
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the library's chosen name, still an empty remote; this record scopes what goes in it
+radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names the empty remote
