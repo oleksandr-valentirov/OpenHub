@@ -128,6 +128,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../Common/src/ipc.c
     ../Common/src/oht_codec.c
     ../Common/src/cfgjournal.c
+    # The session layer's schedule, which the device compiles too. ADR-0031
+    ../Common/src/exchange.c
     crypto/entropy_hw.c
     crypto/crypto.c
     crypto/mbedtls_alloc.c

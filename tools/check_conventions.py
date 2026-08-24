@@ -274,7 +274,7 @@ def check(files, only=None):
                         own_line.append("%s:%d" % (p, n))
     return long_blocks, own_line, cyrillic, long_brief, long_doc
 
-# The link layer, pinned per file; the guard followed the sources here.
+# The link layer and the schedule, pinned per file; the guard followed them.
 # radio_devices_docs/specs/03-roadmap.md
 PORTABLE = {
     "Common/src/grid.c":        {"grid.h"},
@@ -283,11 +283,15 @@ PORTABLE = {
     "Common/src/beacon.c":      {"beacon.h", "radio_phy.h", "radio_protocol.h",
                                  "radio_slots.h"},
     "Common/src/hop.c":         {"hop.h", "radio_phy.h"},
+    # No sha256.h: a hash arrives through kdf.h, never as an implementation.
+    "Common/src/exchange.c":    {"exchange.h"},
     "Common/inc/grid.h":        set(),
     "Common/inc/gridmaster.h":  {"grid.h"},
     "Common/inc/superframe.h":  {"grid.h", "radio_slots.h"},
     "Common/inc/beacon.h":      {"superframe.h", "radio_slots.h"},
     "Common/inc/hop.h":         set(),
+    "Common/inc/exchange.h":    {"kdf.h", "radio_protocol.h"},
+    "Common/inc/kdf.h":         set(),
 }
 # Freestanding only; <stdio.h> pulls newlib into a file with no part under it.
 PORTABLE_ANGLE = {"stddef.h", "stdint.h", "stdbool.h", "string.h", "limits.h"}

@@ -3,23 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* For the point width, which is the wire struct's and not a literal here. */
-#include "radio_protocol.h"
+/* The salt, the transcript and the point width, from the file that owns them. */
+#include "exchange.h"
 
 /**
  * @file crypto.h
- * @brief Asymmetric and key-derivation crypto, on CM7 where the curve runs. ADR-0011
+ * @brief Asymmetric crypto and the schedule's backend, on CM7. ADR-0011, ADR-0031
+ *
+ * The schedule itself is not here and must not come back: it is exchange.c,
+ * which both firmwares compile.
+ * radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md
  */
-
-/* Every point in the transcript, from the wire struct: 33 outlived the curve once.
- * radio_devices_docs/radio/decisions/0025-x25519-replaces-p256.md */
-#define CRYPTO_POINT_LEN   ((uint32_t)sizeof(((radio_pair_req_t *)0)->pubkey))
-
-/** @brief hub_id | dev_id | superframe | dev_nonce, big-endian throughout. */
-#define CRYPTO_SALT_LEN    (4u + 4u + 4u + 8u)
-
-/** @brief The salt, then the hub's static, the hub's ephemeral and the device's. */
-#define CRYPTO_TRANSCRIPT_LEN  (CRYPTO_SALT_LEN + 3u * CRYPTO_POINT_LEN)
 
 typedef enum {
     CRYPTO_TEST_DRBG = 0,
@@ -97,33 +91,39 @@ int crypto_x25519_ecdh(const uint8_t priv[32], const uint8_t peer_pub[32],
  * radio_devices_docs/radio/crypto/key-lifecycle.md
  */
 typedef struct crypto_pair_out {
-    uint8_t eph_pub[32];      /**< goes out in PAIR_RSP */
-    uint8_t key_session[16];  /**< seals PAIR_ACCEPT and every uplink report */
-    uint8_t confirm_hub[16];  /**< goes out in PAIR_RSP */
-    uint8_t confirm_dev[16];  /**< what PAIR_CONF must contain */
-    uint8_t transcript[CRYPTO_TRANSCRIPT_LEN]; /**< what the confirmations were taken over */
+    uint8_t eph_pub[32];                   /**< goes out in PAIR_RSP */
+    uint8_t key_session[EXCHANGE_KEY_LEN]; /**< seals PAIR_ACCEPT and every uplink */
+    uint8_t confirm_hub[EXCHANGE_CONFIRM_LEN]; /**< goes out in PAIR_RSP */
+    uint8_t confirm_dev[EXCHANGE_CONFIRM_LEN]; /**< what PAIR_CONF must contain */
+    uint8_t transcript[EXCHANGE_TRANSCRIPT_LEN]; /**< what the confirmations covered */
 } crypto_pair_out_t;
 
 /**
- * @brief One pairing's arithmetic, 61 ms measured, with dev_pub shape-checked first.
+ * @brief One pairing's curve arithmetic, then the library's schedule over it.
  * @param hub_priv        this hub's scalar
  * @param hub_pub         its u-coordinate, bound into the transcript
  * @param dev_pub         the device's; any 32 bytes is a u-coordinate, RFC 7748
+ * @param eph_priv        the ephemeral this exchange draws, supplied by the caller
+ * @param eph_pub         its u-coordinate, bound into the transcript and sent
  * @param hub_id          bound into the salt, and byte order differs from the wire
  * @param dev_id          the enrolled device
  * @param req_superframe  the request's own field, not the live counter
  * @param dev_nonce       the device's contribution to freshness
  * @param out             receives the session key, both confirmations and the transcript
  * @retval  0  every output is filled
- * @retval !=0 an mbedTLS error, or the all-zero secret a low-order point gives
+ * @retval !=0 an mbedTLS error, the all-zero secret a low-order point gives, or
+ *             the schedule's own refusal; out is zeroed
  *
+ * The ephemeral is a parameter so the core that owns the identity is the core
+ * that draws it, and so a self-test can pin only that one input. ADR-0031
  * radio_devices_docs/open_hub/security/self-tests.md
  */
-int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
-                       const uint8_t dev_pub[32],
-                       uint32_t hub_id, uint32_t dev_id,
-                       uint32_t req_superframe, const uint8_t dev_nonce[8],
-                       crypto_pair_out_t *out);
+int crypto_pair_keys(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
+                     const uint8_t dev_pub[32], const uint8_t eph_priv[32],
+                     const uint8_t eph_pub[32],
+                     uint32_t hub_id, uint32_t dev_id,
+                     uint32_t req_superframe, const uint8_t dev_nonce[8],
+                     crypto_pair_out_t *out);
 
 /**
  * @brief The printable name of a self-test, so a failure names itself.

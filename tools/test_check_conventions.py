@@ -93,6 +93,9 @@ def link_corpus(**edits):
         "Common/inc/superframe.h": '#include <stdint.h>\n#include "grid.h"\n',
         "Common/inc/beacon.h":     '#include <stdint.h>\n#include "superframe.h"\n',
         "Common/inc/hop.h":        "#include <stdint.h>\n",
+        "Common/src/exchange.c":   '#include "exchange.h"\nint f;\n',
+        "Common/inc/exchange.h":   '#include <stdint.h>\n#include "kdf.h"\n',
+        "Common/inc/kdf.h":        "#include <stdint.h>\n",
     }
     for key, body in edits.items():
         path = key.replace("__", "/").replace("_c", ".c").replace("_h", ".h")
@@ -121,6 +124,16 @@ LINK_CASES = [
     ("timebase back in grid.c",
      link_corpus(**{"Common__src__grid_c":
                     '#include "grid.h"\n#include "timebase.h"\nint a;\n'}),
+     1, "not on this file"),
+    # The include a listing cannot see, because it is reached through a header.
+    # radio_devices_docs/specs/03-roadmap.md
+    ("sha256.h back in exchange.c",
+     link_corpus(**{"Common__src__exchange_c":
+                    '#include "exchange.h"\n#include "sha256.h"\nint f;\n'}),
+     1, "not on this file"),
+    ("sha256.h back in exchange.h",
+     link_corpus(**{"Common__inc__exchange_h":
+                    '#include <stdint.h>\n#include "kdf.h"\n#include "sha256.h"\n'}),
      1, "not on this file"),
 ]
 CASES = CASES + LINK_CASES

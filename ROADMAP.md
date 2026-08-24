@@ -562,6 +562,34 @@ population the run will have.**
 
 ## Defects
 
+### 86. `device add` refuses the one command that re-pairs, and offers one that cannot — `defect`
+
+**Two commands, and the CLI has them the wrong way round.** `cfg_enrol()` is
+idempotent by design: on a known id it keeps the slot, bumps `key_gen`, wipes
+`root_key` and `session_key`, and returns OK — that **is** the re-pair. And
+`device add` is the only path that reaches `RFM_open_pairing()`, whose single
+caller is `IPC_REQ_ADD_DEVICE`, so it is the only command that opens **CM4's**
+ears.
+
+The CLI refuses it on a paired device — *"would discard its session key"* — and
+points at `device window`, which calls `pairing_arm_init()` and arms **CM7's
+invitation sender** alone. So invitations go on air while CM4 drops every
+`PAIR_REQ` answering them, and the operator sees a window that is open and a
+device that will not pair.
+
+**Cost, measured 2026-08-25:** six enrolment windows in a batch executed neither
+command and read as six failed pairings. `device remove` then `device add` is
+the way through and is what the bench procedure does now.
+
+The guard is not wrong to exist — discarding a working session key by accident
+is worth refusing. What is wrong is that the refusal names a replacement that
+does not do the job. Either `device window` opens CM4's ears too, or the message
+says `device remove` first. **Agree with the server session**: its enrolment UI
+offers `pair_window` for the same reason.
+
+`radio_devices_docs/open_hub/radio/pairing.md`, `bench/journal/2026-08-25-architect.md`.
+
+
 ### 7. A join beacon still shares the first invitation's superframe — `defect`
 
 `PAIR_INIT` targets round up to `RADIO_PAIR_INIT_EVERY` (4) and the join beacon
@@ -931,7 +959,7 @@ belongs with the other prerequisites, not after them.
 
 ## Contract debts
 
-### 80. The crypto backend is counted as done and shares two names with the device's — `contract`
+### 80. The crypto backend is counted as done and shares two names with the device's — `contract` `closed 2026-08-25`
 
 ADR-0028 says two of the library's three backends already exist and names
 `crypto.h` as one of them.
@@ -978,6 +1006,25 @@ rather than a tidy-up.
 
 Agree with the device session before it lands. `radio_devices_docs/radio/phy-seam.md`
 § the crypto seam does not exist.
+
+**Closed 2026-08-25, and the declared surface is narrower than ADR-0029's.**
+`Common/inc/kdf.h` declares `crypto_hkdf_sha256` and `crypto_hmac_sha256` and
+nothing else, because that is what `exchange.c` calls; this tree supplies both
+from mbedTLS. A header named `crypto.h` holding two of the record's nine names
+would have been a name broader than its coverage, and would have been shadowed
+by the `crypto.h` already on this tree's include path — step 1's hazard again.
+
+`crypto_pair_derive()` is deleted. What replaces it is `crypto_pair_keys()`:
+two ECDH terms, the guard that they differ, and the library's schedule over
+them, with the ephemeral passed in rather than drawn inside. `CRYPTO_POINT_LEN`,
+`CRYPTO_SALT_LEN` and `CRYPTO_TRANSCRIPT_LEN` went with it — three lengths this
+tree defined a second time.
+
+**Verified on air, ten windows per arm, and by the published set.** 27 responses
+across both arms with every `confirm_hub` accepted and `bad_confirm` 0;
+`pair_v4 derive+confirm` and `superframe provenance` reproduce the immutable
+vectors at 59 ms and 120 ms against 60 and 121 before.
+`radio_devices_docs/specs/03-roadmap.md` phase 9 steps 4 and 5.
 
 ### 73. `RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement — `contract`
 
@@ -1543,3 +1590,42 @@ this time: `telem` and `ip` read *during* the outage rather than after, `lwip`
 statistics, and whether the host saw any SYN at all. Item 78 is a prerequisite for
 even noticing the outage promptly — the server's `connected` flag was up to two
 minutes stale throughout, which is why this was found late.
+
+### 82. The server's roster UI has never met a real hub — `debt`
+
+`openhub-server` enrols and removes devices from its page as of
+`feat(ui): enrol a device and remove one, from the page`. Every path was driven
+against `fakehub` and in a browser; **none of it has been run against the H755.**
+What the fake hub cannot answer, in the order to answer it:
+
+- **`device_add` for a device the store does not hold.** `hub.pair_state` reaches
+  `listen`, the page's countdown and `RADIO_PAIR_WINDOW_MS` agree to the second,
+  `paired_total` moves by exactly one on the join, and the device appears in the
+  table on its first report rather than at the join.
+- **Whether `quiesce` is observable at all.** It lasts
+  `RADIO_PAIR_QUIESCE_SUPERFRAMES` = 2 superframes, about 4 s, and a snapshot is
+  `OPENHUB_SNAPSHOT_MS` = 5 s apart, so it may pass between two snapshots every
+  time. If it does, the page's one diagnostic separating *the device never
+  answered* from *the exchange started and died* is decorative, and the fix is a
+  pushed event rather than a faster poll.
+- **`device_add` for a device already paired** — the re-pair. `cfg_enrol()` keeps
+  the slot, bumps `key_gen` and wipes both keys; confirm the node rejoins rather
+  than going silent, since this is what an operator gets when they retry.
+- **`device_remove`, both halves.** `ok` against `radio_err`, and whether the node
+  keeps reporting after its own removal — the page's `reported_since` marks the
+  radio's half and no real hub has ever produced one.
+- **Pre-register the attempt count before any of it.** Item 59 puts a fresh
+  enrolment at about 1 in 5 once anything is paired, so a single `no_join` says
+  nothing about this page, and reading one as a defect in it is item 59 missed.
+
+**The copy this would stop needing** — `contract`, so it is agreed before it
+lands: `OPENHUB_PAIR_WINDOW_MS` duplicates `RADIO_PAIR_WINDOW_MS` because no
+telemetry field carries the window, and a copy of a compile-time constant is
+wrong the first time the constant moves. `ipc_pair_state_t` already holds
+`window_left_ms`, `dev_id`, `reqs_seen` and `reqs_dropped`, and `telemetry.c`
+already reads the struct — publishing those four is a schema addition plus two
+lines there, and it turns the page's countdown from an expectation into a
+measurement. `EVT_PAIRED` and `EVT_PAIR_WINDOW` are wire codes nothing sends,
+which is the same gap seen from the other side.
+
+`../openhub-server/README.md` § The roster.

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "crypto.h"
+#include "exchange.h"
 #include "rng.h"
 
 #include "mbedtls/ctr_drbg.h"
@@ -158,55 +159,32 @@ done:
     return rc;
 }
 
+/* --- the key schedule's backend ---------------------------------------- */
+
+/* This side's supply of kdf.h; the schedule over it is exchange.c. ADR-0029 */
+int crypto_hkdf_sha256(const uint8_t *salt, uint32_t salt_len,
+                       const uint8_t *ikm, uint32_t ikm_len,
+                       const uint8_t *info, uint32_t info_len,
+                       uint8_t *out, uint32_t out_len) {
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+
+    if (md == NULL)
+        return CRYPTO_MISMATCH;
+    return mbedtls_hkdf(md, salt, salt_len, ikm, ikm_len, info, info_len,
+                        out, out_len);
+}
+
+int crypto_hmac_sha256(const uint8_t *key, uint32_t key_len,
+                       const uint8_t *msg, uint32_t msg_len,
+                       uint8_t out[CRYPTO_SHA256_LEN]) {
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+
+    if (md == NULL)
+        return CRYPTO_MISMATCH;
+    return mbedtls_md_hmac(md, key, key_len, msg, msg_len, out);
+}
+
 /* --- pairing ----------------------------------------------------------- */
-
-static void be32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
-    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
-}
-
-/* Big-endian, unlike the packed frame structs these values also travel in.
- * radio_devices_docs/radio/crypto/wire-crypto.md */
-static void pair_salt(uint8_t salt[20], uint32_t hub_id, uint32_t dev_id,
-                      uint32_t req_superframe, const uint8_t dev_nonce[8]) {
-    be32(salt, hub_id);
-    be32(salt + 4, dev_id);
-    be32(salt + 8, req_superframe);
-    memcpy(salt + 12, dev_nonce, 8);
-}
-
-/* Both hub keys are bound; hub_static is never transmitted. */
-static void pair_transcript(uint8_t t[116], uint32_t hub_id, uint32_t dev_id,
-                            uint32_t req_superframe, const uint8_t dev_nonce[8],
-                            const uint8_t hub_pub[32], const uint8_t eph_pub[32],
-                            const uint8_t dev_pub[32]) {
-    be32(t, hub_id);
-    be32(t + 4, dev_id);
-    be32(t + 8, req_superframe);
-    memcpy(t + 12, dev_nonce, 8);
-    memcpy(t + 20, hub_pub, 32);
-    memcpy(t + 52, eph_pub, 32);
-    memcpy(t + 84, dev_pub, 32);
-}
-
-static int hkdf16(const uint8_t *z, const uint8_t salt[20], const char *info,
-                  uint8_t *out, size_t len) {
-    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-
-    return mbedtls_hkdf(md, salt, 20, z, 64,
-                        (const unsigned char *)info, strlen(info), out, len);
-}
-
-static int confirm(const uint8_t key[32], const uint8_t t[116], uint8_t out[16]) {
-    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    uint8_t full[32];
-    int rc = mbedtls_md_hmac(md, key, 32, t, 116, full);
-
-    if (rc == 0)
-        memcpy(out, full, 16);
-    mbedtls_platform_zeroize(full, sizeof(full));
-    return rc;
-}
 
 int crypto_x25519_ecdh(const uint8_t priv[32], const uint8_t peer_pub[32],
                        uint8_t shared[32]) {
@@ -246,23 +224,27 @@ done:
     return rc;
 }
 
-/* The ephemeral is supplied rather than drawn, so a self-test can pin only it.
+/* The ephemeral is supplied, so the core that owns the identity draws it.
  * radio_devices_docs/open_hub/security/self-tests.md */
-static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
-                           const uint8_t dev_pub[32], const uint8_t eph_priv[32],
-                           const uint8_t eph_pub[32],
-                           uint32_t hub_id, uint32_t dev_id,
-                           uint32_t req_superframe, const uint8_t dev_nonce[8],
-                           crypto_pair_out_t *out) {
+int crypto_pair_keys(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
+                     const uint8_t dev_pub[32], const uint8_t eph_priv[32],
+                     const uint8_t eph_pub[32],
+                     uint32_t hub_id, uint32_t dev_id,
+                     uint32_t req_superframe, const uint8_t dev_nonce[8],
+                     crypto_pair_out_t *out) {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point D;
     mbedtls_mpi d, z;
     uint8_t k[32];
-    uint8_t zz[64];
-    uint8_t salt[20];
-    uint8_t t[116];
-    uint8_t ck_hub[32], ck_dev[32];
+    uint8_t zz[EXCHANGE_Z_LEN];
+    uint8_t salt[EXCHANGE_SALT_LEN];
+    uint8_t t[EXCHANGE_TRANSCRIPT_LEN];
+    exchange_keys_t keys;
     int rc;
+
+    if (hub_priv == NULL || hub_pub == NULL || dev_pub == NULL ||
+        eph_priv == NULL || eph_pub == NULL || dev_nonce == NULL || out == NULL)
+        return -1;
 
     memset(out, 0, sizeof(*out));
     mbedtls_ecp_group_init(&grp);
@@ -306,57 +288,30 @@ static int pair_derive_eph(const uint8_t hub_priv[32], const uint8_t hub_pub[32]
      * radio_devices_docs/open_hub/security/self-tests.md */
     if (memcmp(zz, zz + 32, 32) == 0) { rc = CRYPTO_MISMATCH; goto done; }
 
-    pair_salt(salt, hub_id, dev_id, req_superframe, dev_nonce);
-    pair_transcript(t, hub_id, dev_id, req_superframe, dev_nonce,
-                    hub_pub, eph_pub, dev_pub);
+    /* One schedule, and it is the library's: the device compiles it too.
+     * radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md */
+    exchange_salt(hub_id, dev_id, req_superframe, dev_nonce, salt);
+    exchange_transcript(hub_id, dev_id, req_superframe, dev_nonce,
+                        hub_pub, eph_pub, dev_pub, t);
     memcpy(out->transcript, t, sizeof(out->transcript));
 
-    rc = hkdf16(zz, salt, "openhub/v1/session", out->key_session, 16);
-    if (rc != 0) goto done;
-    rc = hkdf16(zz, salt, "openhub/v1/confirm/hub", ck_hub, 32);
-    if (rc != 0) goto done;
-    rc = hkdf16(zz, salt, "openhub/v1/confirm/dev", ck_dev, 32);
+    rc = exchange_derive(zz, zz + EXCHANGE_Z_TERM_LEN, salt, t, &keys);
     if (rc != 0) goto done;
 
-    /* Two keys, so one side's confirmation cannot be reflected back at it. */
-    rc = confirm(ck_hub, t, out->confirm_hub);
-    if (rc != 0) goto done;
-    rc = confirm(ck_dev, t, out->confirm_dev);
-    if (rc != 0) goto done;
-
-    memcpy(out->eph_pub, eph_pub, 32);
+    memcpy(out->key_session, keys.session, sizeof(out->key_session));
+    memcpy(out->confirm_hub, keys.confirm_hub, sizeof(out->confirm_hub));
+    memcpy(out->confirm_dev, keys.confirm_dev, sizeof(out->confirm_dev));
+    memcpy(out->eph_pub, eph_pub, sizeof(out->eph_pub));
 
 done:
     mbedtls_platform_zeroize(zz, sizeof(zz));
-    mbedtls_platform_zeroize(ck_hub, sizeof(ck_hub));
-    mbedtls_platform_zeroize(ck_dev, sizeof(ck_dev));
+    mbedtls_platform_zeroize(&keys, sizeof(keys));
     mbedtls_mpi_free(&z);
     mbedtls_mpi_free(&d);
     mbedtls_ecp_point_free(&D);
     mbedtls_ecp_group_free(&grp);
     if (rc != 0)
         memset(out, 0, sizeof(*out));
-    return rc;
-}
-
-int crypto_pair_derive(const uint8_t hub_priv[32], const uint8_t hub_pub[32],
-                       const uint8_t dev_pub[32],
-                       uint32_t hub_id, uint32_t dev_id,
-                       uint32_t req_superframe, const uint8_t dev_nonce[8],
-                       crypto_pair_out_t *out) {
-    uint8_t eph_priv[32], eph_pub[32];
-    int rc;
-
-    if (hub_priv == NULL || hub_pub == NULL || dev_pub == NULL ||
-        dev_nonce == NULL || out == NULL)
-        return -1;
-
-    memset(out, 0, sizeof(*out));
-    rc = crypto_x25519_keygen(eph_priv, eph_pub);
-    if (rc == 0)
-        rc = pair_derive_eph(hub_priv, hub_pub, dev_pub, eph_priv, eph_pub,
-                             hub_id, dev_id, req_superframe, dev_nonce, out);
-    mbedtls_platform_zeroize(eph_priv, sizeof(eph_priv));
     return rc;
 }
 
@@ -498,19 +453,19 @@ done:
 
 static int test_pair_v4(void) {
     crypto_pair_out_t o;
-    uint8_t salt[20], t[116];
+    uint8_t salt[EXCHANGE_SALT_LEN], t[EXCHANGE_TRANSCRIPT_LEN];
     int rc;
 
     /* The two builders first, in isolation, and by bytes rather than by length.
      * radio_devices_docs/open_hub/security/self-tests.md */
-    pair_salt(salt, 0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME, PV_DEV_NONCE);
+    exchange_salt(0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME, PV_DEV_NONCE, salt);
     if (memcmp(salt, PV_SALT, sizeof(PV_SALT)) != 0) return CRYPTO_MISMATCH;
 
-    pair_transcript(t, 0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
-                    PV_DEV_NONCE, V_HUB_PUB, PV_HUB_EPH_PUB, V_DEV_PUB);
+    exchange_transcript(0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
+                        PV_DEV_NONCE, V_HUB_PUB, PV_HUB_EPH_PUB, V_DEV_PUB, t);
     if (memcmp(t, PV_TRANSCRIPT, sizeof(PV_TRANSCRIPT)) != 0) return CRYPTO_MISMATCH;
 
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
+    rc = crypto_pair_keys(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
@@ -535,7 +490,7 @@ static int test_pair_v4(void) {
 
     /* X25519 returns zero here rather than failing, so the derivation refuses.
      * radio_devices_docs/open_hub/security/self-tests.md */
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_REJECT_U,
+    rc = crypto_pair_keys(V_HUB_PRIV, V_HUB_PUB, V_REJECT_U,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
@@ -795,7 +750,7 @@ static int test_superframe_provenance(void) {
 
     /* The transcript hashes the REQUEST's superframe, and nothing else does.
      * radio_devices_docs/open_hub/security/self-tests.md */
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
+    rc = crypto_pair_keys(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_REQ_SUPERFRAME,
                          PV_DEV_NONCE, &o);
@@ -803,7 +758,7 @@ static int test_superframe_provenance(void) {
     if (memcmp(o.confirm_hub, PV_CONFIRM_HUB, 16) != 0) return CRYPTO_MISMATCH;
 
     /* A different superframe must produce a different confirmation. */
-    rc = pair_derive_eph(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
+    rc = crypto_pair_keys(V_HUB_PRIV, V_HUB_PUB, V_DEV_PUB,
                          PV_HUB_EPH_PRIV, PV_HUB_EPH_PUB,
                          0x33442211u, 0x0000002Au, PAIR_INIT_SUPERFRAME,
                          PV_DEV_NONCE, &o2);

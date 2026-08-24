@@ -1150,12 +1150,15 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                 (unsigned long)ps->paired, (unsigned long)ps->installed);
         if (ps->not_enrolled || ps->bad_fingerprint || ps->zero_nonce ||
             ps->repeat_nonce || ps->bad_confirm || ps->no_hub_key ||
-            ps->derive_failed || ps->store_failed || ps->timed_out)
+            ps->no_eph_key || ps->derive_failed || ps->store_failed ||
+            ps->timed_out)
             cli_out(cli, "cm7 refusals: enrol %lu, fingerprint %lu, nonce %lu/%lu, "
-                    "confirm %lu, hubkey %lu, derive %lu, store %lu, timeout %lu\r\n",
+                    "confirm %lu, hubkey %lu, ephkey %lu, derive %lu, store %lu, "
+                    "timeout %lu\r\n",
                     (unsigned long)ps->not_enrolled, (unsigned long)ps->bad_fingerprint,
                     (unsigned long)ps->zero_nonce, (unsigned long)ps->repeat_nonce,
                     (unsigned long)ps->bad_confirm, (unsigned long)ps->no_hub_key,
+                    (unsigned long)ps->no_eph_key,
                     (unsigned long)ps->derive_failed, (unsigned long)ps->store_failed,
                     (unsigned long)ps->timed_out);
         /* Both halves: a wrong key and a wrong domain refuse identically.
@@ -1750,9 +1753,9 @@ static int cmd_device_transcript(cli_data_t *cli) {
     static const struct { const char *name; uint8_t len; } f[] = {
         { "hub_id    ", 4 }, { "dev_id    ", 4 },
         { "superframe", 4 }, { "dev_nonce ", 8 },
-        { "hub_pub   ", (uint8_t)CRYPTO_POINT_LEN },
-        { "eph_pub   ", (uint8_t)CRYPTO_POINT_LEN },
-        { "dev_pub   ", (uint8_t)CRYPTO_POINT_LEN },
+        { "hub_pub   ", (uint8_t)EXCHANGE_POINT_LEN },
+        { "eph_pub   ", (uint8_t)EXCHANGE_POINT_LEN },
+        { "dev_pub   ", (uint8_t)EXCHANGE_POINT_LEN },
     };
     uint32_t off = 0;
 
@@ -1764,11 +1767,11 @@ static int cmd_device_transcript(cli_data_t *cli) {
         off += f[i].len;
     }
     /* The fields must cover the buffer exactly, or one of them names nothing. */
-    _Static_assert(4u + 4u + 4u + 8u + 3u * CRYPTO_POINT_LEN == CRYPTO_TRANSCRIPT_LEN,
+    _Static_assert(4u + 4u + 4u + 8u + 3u * EXCHANGE_POINT_LEN == EXCHANGE_TRANSCRIPT_LEN,
                    "the transcript's fields do not add up to the transcript");
 
-    cli_out(cli, "flat %u:\r\n", (unsigned)CRYPTO_TRANSCRIPT_LEN);
-    for (uint32_t b = 0; b < CRYPTO_TRANSCRIPT_LEN; b++) {
+    cli_out(cli, "flat %u:\r\n", (unsigned)EXCHANGE_TRANSCRIPT_LEN);
+    for (uint32_t b = 0; b < EXCHANGE_TRANSCRIPT_LEN; b++) {
         cli_out(cli, "%02x", t[b]);
         if ((b % 32u) == 31u) cli_out(cli, "\r\n");
     }

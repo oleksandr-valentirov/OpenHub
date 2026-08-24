@@ -123,3 +123,10 @@ radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone 
 # ADR-0031 counts and cites across both trees.
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:ipc_  # the prefix the reference count is over, not an identifier
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:test_period  # a suite in wl55_device, quoted for the figures that did not move
+
+# Deleted 2026-08-25, phase 9 step 5. These four pages record the decision to
+# delete it and the argument for it, so naming it is the history rather than a
+# stale claim; every live page that named it has been rewritten.
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_pair_derive  # the record that ordered its deletion
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:crypto_pair_derive  # likewise, decision 4
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:crypto_pair_derive  # likewise, decision 5

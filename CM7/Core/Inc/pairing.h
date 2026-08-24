@@ -24,6 +24,7 @@ typedef struct pairing_stats {
     uint32_t zero_nonce;
     uint32_t repeat_nonce;
     uint32_t no_hub_key;
+    uint32_t no_eph_key;     /**< the ephemeral keygen refused, before any schedule */
     uint32_t derive_failed;
     uint32_t bad_confirm;
     uint32_t no_pending;

@@ -18,6 +18,7 @@
 #include "keystore.h"
 #include "cfgstoreapi.h"
 #include "crypto.h"
+#include "exchange.h"
 #include "ipc.h"
 #include "radio_protocol.h"
 #include "radio_slots.h"
@@ -59,7 +60,7 @@ static pairing_stats_t stats;
 
 /* The transcript the live derive hashed, kept past its exchange.
  * radio_devices_docs/open_hub/radio/pairing.md */
-static uint8_t  last_t[116];
+static uint8_t  last_t[EXCHANGE_TRANSCRIPT_LEN];
 static uint8_t  last_t_valid;
 static uint32_t last_t_dev;
 static uint32_t last_t_sf;
@@ -101,6 +102,7 @@ static void serve_pair_req(const ipc_msg_t *m) {
     ipc_pair_rsp_evt_t r;
     const cfg_device_t *rec;
     uint8_t hub_priv[32];
+    uint8_t eph_priv[32], eph_pub[32];
     uint8_t fp[32];
     uint8_t status = IPC_ST_BAD_ARG;
 
@@ -148,16 +150,25 @@ static void serve_pair_req(const ipc_msg_t *m) {
         goto refuse;
     }
 
+    /* Drawn on the core that holds the identity, then passed in. ADR-0031 */
     drop_pending();
-    if (crypto_pair_derive(hub_priv, hub_pub, e.pubkey, PAIRING_HUB_ID,
-                           e.dev_id, e.superframe, e.dev_nonce,
-                           &pending.out) != 0) {
+    if (crypto_x25519_keygen(eph_priv, eph_pub) != 0) {
         mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+        stats.no_eph_key++;
+        status = IPC_ST_RADIO_ERR;
+        goto refuse;
+    }
+    if (crypto_pair_keys(hub_priv, hub_pub, e.pubkey, eph_priv, eph_pub,
+                         PAIRING_HUB_ID, e.dev_id, e.superframe, e.dev_nonce,
+                         &pending.out) != 0) {
+        mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+        mbedtls_platform_zeroize(eph_priv, sizeof(eph_priv));
         stats.derive_failed++;
         status = IPC_ST_RADIO_ERR;
         goto refuse;
     }
     mbedtls_platform_zeroize(hub_priv, sizeof(hub_priv));
+    mbedtls_platform_zeroize(eph_priv, sizeof(eph_priv));
 
     /* From the value passed, never re-read: which superframe reached the transcript. */
     memcpy(last_t, pending.out.transcript, sizeof(last_t));
