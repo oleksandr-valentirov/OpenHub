@@ -33,6 +33,14 @@ import hops
 import phy
 
 
+
+def median(sorted_vals):
+    """The middle of an already-sorted list; C6 uses it and the table prints it."""
+    n = len(sorted_vals)
+    if n % 2:
+        return sorted_vals[n // 2]
+    return (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
+
 def positions(c, device):
     """Every position a superframe should carry, as (name, microseconds)."""
     p = [("beacon", c["RADIO_BEACON_OFFSET_US"], phy.constants()["sizeof radio_data_beacon_t"]),
@@ -277,16 +285,16 @@ def main():
     if peak < 1.5:
         fails.append("C1 no phase stands out - the grid does not describe this air")
 
-    print("\nposition                    n   air ms (mean)   predicted   channels")
+    print("\nposition                    n  air ms (median)  predicted   channels")
     for name, off, payload in pos:
         v = buckets[name]
         pred = phy.air_us(payload) / 1000.0
         if not v:
             print("  %-24s %3d        -           %6.2f      -" % (name, 0, pred))
             continue
-        mean_air = sum(b[1] for b in v) / len(v)
+        med_air = median(sorted(b[1] for b in v))
         print("  %-24s %3d     %6.2f          %6.2f      %s"
-              % (name, len(v), mean_air, pred,
+              % (name, len(v), med_air, pred,
                  ",".join(str(x) for x in sorted({b[3] for b in v}))))
 
     ups = [p[0] for p in pos if p[0].startswith("uplink")]
@@ -378,9 +386,18 @@ def main():
         if not v:
             continue
         pred = phy.air_us(payload) / 1000.0
-        mean_air = sum(b[1] for b in v) / len(v)
-        if abs(mean_air - pred) > 2.5:
-            bad.append("%s %.2f vs %.2f ms" % (name, mean_air, pred))
+        # The median: one foreign burst on a position's phase destroys a mean.
+        # radio_devices_docs/specs/03-roadmap.md
+        air = sorted(b[1] for b in v)
+        med_air = median(air)
+        mean_air = sum(air) / len(air)
+        if abs(med_air - pred) > 2.5:
+            bad.append("%s %.2f vs %.2f ms" % (name, med_air, pred))
+        # Printed, not asserted: a runaway mean is foreign traffic, not a frame.
+        if mean_air > 3.0 * max(med_air, 0.1):
+            print("   note: %s median %.2f ms but mean %.2f - %d burst(s), "
+                  "longest %.2f ms, which is not the frame"
+                  % (name, med_air, mean_air, len(air), air[-1]))
     checked = sum(1 for name, _, _ in pos if buckets[name])
     print("C6 air time matches the payload: %s  (%d of %d positions had bursts)"
           % ("yes" if not bad else "NO", checked, len(pos)))

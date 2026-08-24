@@ -257,8 +257,8 @@ _Static_assert((uint32_t)RADIO_PAIR_REGIONS * (SUPERFRAME_US / 1000u) <
  * radio_devices_docs/radio/tdma.md */
 #define RADIO_QUIESCE_MIN_GAP      4u
 
-/* A cost assertion, not a behavioural one: normal is 1-10 us and a fault is
- * milliseconds. radio_devices_docs/radio/tdma.md */
+/* A cost assertion: normal is 26-41 us measured, a fault is milliseconds.
+ * radio_devices_docs/radio/tdma.md */
 #ifndef RADIO_BEACON_LATE_LIMIT_US       /* lowered to prove the detector
                                           * non-vacuous */
 #define RADIO_BEACON_LATE_LIMIT_US 500u
