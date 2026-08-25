@@ -1891,26 +1891,59 @@ count, and nothing in the output says so.
 
 `open_hub/radio/superloop.md`.
 
-### 99. The foreign transmitter has voided two consecutive regression runs — `blocking`
+### 99. One out-of-grid emitter is real; the transmitter that voided two runs was not — `debt`
 
-`bandscan.py` on run `2026-08-25-2`'s 600 s capture: channels **-2 (864.900 MHz,
-1.67 %), -1 (865.000 MHz, 1.33 %) and 29 (868.000 MHz, 3.52 %)** busy outside the
-grid, 80-165 bursts on no grid position, and one burst **3570 ms** long which is
-nobody's frame on this bench. Run `2026-08-25-1` was voided by the same thing.
+**Filed 2026-08-25 as *the foreign transmitter has voided two consecutive runs*
+and rewritten 2026-08-26, because that headline was wrong in its main clause and
+its evidence was an artifact of the tool that produced it.** Kept rather than
+deleted: the wrong version was cited in a product report and in a run record, and
+a retracted claim needs somewhere to point.
 
-The tool states the consequence itself: *a run whose window overlaps them is void
-for any absolute level, and suspect for any loss figure*. The `regression` skill
-states the other half - **a run that keeps going void for the same reason is a
-bench defect that belongs in a queue rather than in the next attempt**, which is
-why this is here rather than in the next run's notes.
+`bandscan.py`'s `--busy 1.0` sat **below its own false-positive rate**. Its
+noise-only self-test - synthetic noise, nothing transmitting - reads **2.80 %** on
+the busiest channel, and under the old fixed rule that same empty noise reports
+**37 of 37** channels busy. Runs `2026-08-25-1` and `2026-08-25-2` were voided on
+1.67 % and 1.33 %, both under that figure, while the 2.80 % was printing in tier 0
+the whole time.
 
-Nothing in this system can stop it transmitting. What is missing is a way to
-measure around it: a quiet window found rather than assumed, or per-position
-statistics robust to it, or an antenna change that puts our own signal far enough
-above it that a level gate separates the two.
+**Fixed in `claude_sdr_skill` `20c42c9`**, found by `radio-project-space-44` and
+verified here from this repository's own capture before the item was rewritten.
+The bar is now printed rather than implied:
 
-**A second, independent corruption in the same run:** the capture clipped the ADC
-at gain 25 - `hops.py` reported worst burst 29.76 %, **284 of 485 bursts** over
-the rail threshold - while `RESOURCES.md` records 25 dB clean at 0 of 88 earlier
-the same day. The receiver did not change; the geometry did. `06-regression.md`
-now chooses the gain per capture by a rail check instead of printing one.
+    band reference over 32 trusted channel(s): median 1.46 %, MAD 0.10
+    busy = at least 1.00 % AND at least median + 6 MAD = 2.09 %
+
+with the absolute floor kept as a second guard, and an outright refusal when
+`MAD >= median` - a band with no quiet majority cannot supply a reference. The
+reference is the flat region rather than the grid, because the rate being
+estimated is the **receiver's** and restricting it to the grid would exclude the
+channels a verdict is usually about.
+
+Re-read that way, run `2026-08-25-2` gives **0 of 29 grid channels standing
+clear** and one channel outside it: **29, 868.000 MHz, 3.52 %, +19.7 MAD**. The
+20 s control capture from the same run agrees independently - ch 29 at 3.90 %,
+grid clean for 100 % of it. Channels -2 and -1 fall under the bar and are no
+longer reported; **-1 was 1.33 % against a band median of 1.46 %, quieter than the
+band it sat in.**
+
+**Two other things that read as an interferer and are not.**
+
+- **The worst-looking grid channel was the one the tool declares blind.** Ch 13 at
+  1.95 % is the DC-notched channel - the receiver's own zero-IF spike past a
+  five-bin notch - and the same output that prints `this tool is BLIND on it` was
+  willing to call it busy. Now excluded by name: *a channel the instrument cannot
+  see is not one it may accuse.*
+- **The 3570 ms bursts are ours.** Three of them sit at **77.4, 77.2 and 76.6 dB**
+  with 2-tone separation 50.8 and 48.8 kHz - our level and `2 x RADIO_DEVIATION_HZ`
+  - while real foreign traffic on this bench has sat at 16-23 dB. They are our own
+  transmissions bridged by a burst detector running over a capture where 284 of
+  485 bursts were clipping, not a three-second emission by somebody else.
+
+**What is left, and it is why this is `debt` and no longer `blocking`.** The
+instrument half is closed. What is not settled is the emitter at 868.000 MHz: it
+is adjacent to the band rather than in it, it is real by two independent captures,
+and nothing here measures whether it desensitises the hub's receiver. That needs a
+clean capture at a rail-checked gain, which no run has taken yet.
+
+`bench/runs/2026-08-25-2/RESULT.md` § correction of 2026-08-26.
+
