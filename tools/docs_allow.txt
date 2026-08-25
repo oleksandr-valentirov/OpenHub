@@ -126,3 +126,7 @@ radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-lay
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_pair_derive  # the record that ordered its deletion
 radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:crypto_pair_derive  # likewise, decision 4
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:crypto_pair_derive  # likewise, decision 5
+
+# A Linux kernel module, named while diagnosing a wedged ST-Link console. It is
+# the host's, not this project's, and the diagnosis is worthless without it.
+open_hub/testing/on-target.md:cdc_acm  # the kernel's CDC ACM driver, not a symbol here
