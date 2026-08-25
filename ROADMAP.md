@@ -1222,6 +1222,55 @@ were the hub's alone and all three were generated vector headers.
 
 `../radio_stack/ROADMAP.md` item 3.
 
+### 90. CM7's half of the region split is done — `closed` 2026-08-25
+
+[ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
+decision 8, built in `2a82866`. CM7 is compiled with no `RADIO_PROFILE` at all.
+
+**Exit, checked in both directions.** CM7's `compile_commands.json` holds **0**
+occurrences of `RADIO_PROFILE` against 18 on CM4, and a CM7 file naming
+`RADIO_CH_BASE_HZ` **fails to compile** - the control was run rather than
+assumed.
+
+Five CM7 includes moved to `radio_layout.h`, and `Common/inc/cfgstore.h` with
+them: it was reaching the profile for `RADIO_DEVICE_MAX` and `SUPERFRAME_PER_DAY`,
+both structure. `cli.c`'s `rxbw` lost its third line, which re-derived on CM7 a
+figure CM4 had just reported from the same header.
+
+`RADIO_HUB_HANDLE_SLACK_US` rides in `ipc_evt_latency_t` now, from the core that
+owns the band. **The value did not move**: 210750 us computed from the pre-split
+headers and 210750 from the post-split ones.
+
+**On the board, and not from the console, which was down.** Verified northbound
+after flashing both cores and a hard reset: `hub_connected` true with the schema
+agreeing, `connects 1`, grid running at `period_us 2000000`, `calib_windows 529`
+with `calib_rejects 0`, and **`ipc_ready` true with `ipc_stale_replies 0`** -
+which is the check that matters here, because `ipc_evt_latency_t` grew by four
+bytes and both cores had to be flashed together. Beacon lateness read
+`late_last_us 27`, `late_max_us 40`, `late_over 0`, against 40, 41 and 39 on the
+three images before it: within one tick, which is the resolution the instrument
+has.
+
+**What is not verified on hardware:** the `slack_us` field itself. It is served
+only by the console, and all three ST-Link VCPs are silent - `../bench/RESOURCES.md`.
+
+### 91. `GENERATED_VEC` names a directory that moved — `debt`
+
+`tools/check_conventions.py` excludes `Common/test/vectors/.*\.(txt|h)$` from the
+comment rules. **That path moved to `radio_stack/test/vectors/` in phase 9 step 6**
+and the regex did not follow, so it now matches nothing.
+
+It is inert here and was invisible for the same reason: the vectors are in the
+submodule and not in this tree's `git ls-files`, so nothing was being wrongly
+scanned or wrongly skipped. The library's own checker carries the correct
+exclusion — the published vectors are generated and immutable, so the rules
+cannot hold there.
+
+Found 2026-08-25 by comparing two checkers over the same files: three findings
+were the hub's alone and all three were generated vector headers.
+
+`../radio_stack/ROADMAP.md` item 3.
+
 ### 90. The region has to leave CM7 — `debt` `contract`
 
 [ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
