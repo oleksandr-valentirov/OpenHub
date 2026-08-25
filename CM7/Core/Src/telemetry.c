@@ -24,7 +24,7 @@ _Static_assert(sizeof(BUILD_ID) <= 32u, "BUILD_ID does not fit oht_hello_t.build
 #include "hubconfig.h"
 #include "pairing.h"
 #include "radio_protocol.h"
-#include "radio_slots.h"
+#include "radio_layout.h"
 #include "rng.h"
 #include "hop_v1.h"
 #include "pair_v4.h"

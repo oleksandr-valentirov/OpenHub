@@ -21,7 +21,7 @@
 #include "exchange.h"
 #include "ipc.h"
 #include "radio_protocol.h"
-#include "radio_slots.h"
+#include "radio_layout.h"
 #include "telemetry.h"
 
 #include "mbedtls/sha256.h"

@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "radio_slots.h"
+#include "radio_layout.h"
 
 /**
  * @file keystore.h

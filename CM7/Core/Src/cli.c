@@ -35,7 +35,7 @@
 #include "pair_v4.h"
 /* For the fingerprint device list computes from the stored key. */
 #include "mbedtls/sha256.h"
-#include "radio_slots.h"
+#include "radio_layout.h"
 #include "radio_protocol.h"
 #include "rng.h"
 #include "crypto.h"
@@ -1585,10 +1585,10 @@ static int cmd_device_latency(cli_data_t *cli) {
             (unsigned long)l.rtt_last_us, (unsigned long)l.rtt_min_us,
             (unsigned long)l.rtt_max_us,
             (unsigned long)(l.rtt_sum_us / l.replied));
-    /* One number against one budget, and it is an upper bound on both terms. */
+    /* One budget, from the core that owns the band. ADR-0031 decision 8 */
     cli_out(cli, "hub half at worst %lu us of the %lu us the deadline leaves\r\n",
             (unsigned long)(l.arrival_max_us + l.rtt_max_us),
-            (unsigned long)RADIO_HUB_HANDLE_SLACK_US);
+            (unsigned long)l.slack_us);
     return 0;
 }
 
@@ -2096,8 +2096,6 @@ static int cmd_device(cli_data_t *cli, int argc, char **argv) {
          * ROADMAP item 23 */
         cli_out(cli, "\r\nrxbw asked %lu Hz, set %lu Hz, RegRxBw %02X\r\n",
                 (unsigned long)b.asked_hz, (unsigned long)b.set_hz, b.reg);
-        cli_out(cli, "  header says %lu Hz; a reset puts it back\r\n",
-                (unsigned long)RADIO_RX_BANDWIDTH_HZ);
         return 0;
     }
 

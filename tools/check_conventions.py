@@ -293,7 +293,8 @@ PORTABLE = {
     "radio_stack/inc/kdf.h":         set(),
     # The profile is chosen here, so radio_phy.h and radio_slots.h reach it.
     "radio_stack/inc/radio_phy.h":   {"profile.h", "radio_slots.h"},
-    "radio_stack/inc/radio_slots.h": {"profile.h"},
+    "radio_stack/inc/radio_layout.h": set(),
+    "radio_stack/inc/radio_slots.h": {"profile.h", "radio_layout.h"},
     "radio_stack/profiles/profile.h":          {"profile_ids.h", "profile_asbuilt.h",
                                                 "profile_hosttest.h"},
     "radio_stack/profiles/profile_ids.h":      set(),

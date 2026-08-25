@@ -88,8 +88,6 @@ set(CMAKE_CXX_COMPILER_FORCED "true")
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE 
     # Add user defined symbols
     DATA_IN_D2_SRAM
-    # The band this image transmits on, taken whole. ADR-0028 decision 3
-    RADIO_PROFILE=RADIO_PROFILE_ASBUILT
 )
 
 # --- mbedTLS ---

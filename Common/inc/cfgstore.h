@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "radio_slots.h"
+#include "radio_layout.h"
 
 #define CFG_MAGIC            0x4F484347u   /* "OHCG": a record starting at a slot */
 #define CFG_VERSION          1u

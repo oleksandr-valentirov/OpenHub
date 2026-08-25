@@ -426,6 +426,7 @@ typedef struct ipc_evt_latency {
     uint32_t rtt_max_us;
     uint64_t rtt_sum_us;        /**< a sum, so the reader divides by a stated n */
     uint32_t stale;             /**< replies nobody was waiting for, never silent */
+    uint32_t slack_us;          /**< what the deadline leaves, from the core that owns the band */
 } __attribute__((packed)) ipc_evt_latency_t;
 
 _Static_assert(sizeof(ipc_evt_latency_t) <= IPC_PAYLOAD_MAX,

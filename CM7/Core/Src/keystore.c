@@ -10,7 +10,7 @@
 #include "main.h"
 #include "keystore.h"
 #include "crypto.h"
-#include "radio_slots.h"
+#include "radio_layout.h"
 
 #define KS_MAGIC        0x534B484Fu   /* 'OHKS' little-endian */
 /* 5: pubkey is 32-byte X25519 and is empty at enrol. ADR-0024, ADR-0025

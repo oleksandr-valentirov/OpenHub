@@ -940,6 +940,9 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         l.rtt_sum_us      = evt_rtt_sum_us;
         l.stale           = evt_stale;
         l.arrival_bad     = evt_arrival_bad;
+        /* The budget rides with the measurement: the band is this core's.
+         * radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md */
+        l.slack_us        = RADIO_HUB_HANDLE_SLACK_US;
         (void)ipc_send_reply(req, IPC_ST_OK, &l, (uint8_t)sizeof(l));
         return;
     }
