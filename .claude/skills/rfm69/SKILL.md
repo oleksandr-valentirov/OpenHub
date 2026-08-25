@@ -85,12 +85,25 @@ corner. `RFM69_DCC_DEFAULT` is `0x80` (DccFreq 4).
 
 ### The bandwidth field of the same register, and how a rate change spent it
 
+**`RegRxBw` programs the SINGLE-SIDE bandwidth, and this file said otherwise for
+months.** The datasheet says it three times over: 2.4.3 opens with *"RxBw =
+10 kHz (Single Side Bandwidth) as programmed in RegRxBw"*, Table 6 names the
+symbol `BW_SSB` at 2.6 to 500 kHz, and 500.0 is exactly the top of the encodable
+table. So the filter a number buys is **twice** that number, and every comparison
+below against a *double-sided* signal width was out by a factor of two.
+
+The consequence is the opposite of what was written here: at 125 kHz programmed
+the channel filter passes **250 kHz** against a 100 kHz signal, which is **±75 kHz**
+of room, not the zero margin this section used to claim. **Measured, 2026-08-25:**
+widening to 200 kHz was pre-registered as the fix for a 67 % uplink loss and went
+red - 9 of 41 against 14 of 43, p = 0.33, with the AFC spread unchanged. The
+filter was never the constraint. See
+[ADR-0033](../../../../radio_devices_docs/open_hub/decisions/0033-the-hub-does-not-run-afc.md).
+
 `rfm69_rx_bandwidth_to_reg()` picks **the narrowest encodable setting that is at
-least what it is asked for**, so asking for the signal width gets a filter
-exactly as wide as the signal and not one hertz wider. At 25 kbps the hub asked
-for 100 kHz against a 75 kHz signal and carried 25 kHz of slack it never knew it
-had. Doubling to 50 kbps made the signal 100 kHz and spent all of it in one
-constant change, with nothing in the build disagreeing.
+least what it is asked for** - so it rounds *up*, and asking for 166 700 gets
+200 000 because 166 666 is a hair under. Read the register back rather than the
+constant.
 
 The signature is specific and worth recognising: **sync word matches, payload
 fails CRC.** The preamble and the four sync bytes survive a filter that clips
@@ -101,20 +114,22 @@ mismatch and not a level problem — it is the channel filter.
 Three things make it invisible until it fails:
 
 - **`AfcAutoOn` was 0 here for the whole of that period**, so nothing corrected an
-  off-centre carrier and `RegFei` read `0x0000` — the one measurement that would
-  have sized the margin was the one the configuration disabled. It is on now, and
-  the first thing it measured was 11230 Hz against a 12000 Hz allowance.
-- The required width is `2 * (fdev + BR/2) + 2 * carrier_error`, and the carrier
-  error term is usually absent from whatever assert guards it. Carson's rule
-  alone is the zero-margin case.
+  off-centre carrier and `RegFei` read `0x0000`. It was turned on, and the 11230 Hz
+  it then "measured against a 12000 Hz allowance" was **the part measuring noise** -
+  see the AFC section below. It is off again and the reasoning is ADR-0033.
+- The required width is `2 * (fdev + BR/2) + 2 * carrier_error` **double-sided**,
+  against `2 * RegRxBw`. Both halves of that sentence have been got wrong here:
+  the carrier error term is usually absent from whatever assert guards it, and the
+  filter side was read as single-sided for months.
 - The device's value and the hub's are chosen independently. Here the WL55 side
   held `0x0Bu` (117.3 kHz) behind a comment reading "nearest step above the hub's
   100 kHz" — anchored to the hub's number at a bit rate that had since changed,
   and invisible to any assert on the hub's constant.
 
-Encodable steps near this range, `FXOSC / (mant << (exp + 2))`: 83.3 (24,2),
-**100.0 (20,2)**, **125.0 (16,2)**, 166.7 (24,1), 200.0 (20,1) kHz. Each step up
-costs `10 log10` of the ratio in noise bandwidth — 100 → 125 kHz is ~0.97 dB.
+Encodable steps near this range, `FXOSC / (mant << (exp + 2))`, **all single-side**:
+83.3 (24,2), **100.0 (20,2)**, **125.0 (16,2)**, 166.7 (24,1), 200.0 (20,1) kHz.
+Each step up costs `10 log10` of the ratio in noise bandwidth — 100 → 125 kHz is
+~0.97 dB.
 
 **Read `0x19` back off the part after changing it.** `0x8a` is (20,2); `0x82` is
 (16,2). The constant in the header is what was asked for, not what was encoded.
@@ -369,25 +384,93 @@ identical with board, so it says nothing about level. The solid result runs the
 other way on the other board: 15 of 30 at −72 dBm against 31 of 34 at −40,
 **p = 0.0003**. More signal helps, up to a turnover this data cannot locate.
 
-## AFC: the one latch that is tied to its packet
+## AFC measures whatever is at the input when the receiver is enabled
 
-`RegAfcFei` bit 2 is `AfcAutoOn` and bit 3 `AfcAutoclearOn`. With both set the
-correction is measured at every receiver start-up and the previous one dropped
-first, so `RegAfcValue` read after `PayloadReady` belongs to the packet just
-received. That is the difference from RSSI and it is why the AFC read needs no
-trigger of its own.
+**This is the single most expensive thing in this file. It cost 30 % of the
+hub's uplinks for months and every other explanation looked better.**
 
-- **Read it before draining the FIFO.** `AutoRxRestartOn` re-arms the receiver
-  when the payload is read out, and the next start-up overwrites the value.
+`RegAfcFei` bit 2 is `AfcAutoOn` and bit 3 `AfcAutoclearOn`. The datasheet is
+exact about what that buys and about what it demands in return:
+
+- 3.4.15 — AFC runs *"each time the receiver is enabled"*, and *"AfcValue is
+  directly subtracted to the register that defines the frequency of operation of
+  the chip, FRF"*.
+- 3.4.14, on the FEI the AFC is built from — *"The operation **must be done
+  during the reception of preamble**"*.
+
+**Nothing enforces the second one.** `AfcDone` sets on noise; this file already
+said so and the sentence was read as trivia. It is not trivia: with `AfcAutoOn`
+set, enabling a receiver on an empty channel writes a **random number into the
+operating frequency** and leaves it there until the receiver is enabled again.
+
+The hub does exactly that. `uplink_service()` opens the receiver once at
+50 000 µs and holds it open for the whole 1.82 s uplink region; the first
+preamble arrives at 50 610 µs. **There is no moment in that schedule where
+enabling the receiver coincides with a preamble.**
+
+What it looked like from inside, and why every reading was believable:
+
+```
+AFC reported            mean +4397 Hz, spread -10376 .. +19531
+the air actually was    +3.6 kHz   (SDR, node uplink vs hub downlink,
+                                    matched at 39 bytes on one channel)
+```
+
+**The mean was right to 755 Hz and the spread was four times what the air could
+account for.** A correct mean is what makes this so hard to catch: the number
+looks calibrated. The hub's own AFC-versus-grid regressor put only 3.1 kHz of a
+28 kHz spread on the channel number, and that residual was the tell.
+
+At β = `2 * fdev / BR` = 1.0 the discriminator decides at ±25 kHz, so a 16–20 kHz
+garbage correction eats 65–80 % of its margin. Frames die **before sync**, which
+reads as a dead link rather than as a tuning fault.
+
+```
+arm                       on air   sync   share
+AFC on                      159     110    69 %
+AFC OFF                     176     165    94 %
+AFC on, flashed back        168     119    71 %      <- the reversion arm
+```
+
+`p = 3.5e-09` off against before, `p = 0.81` between the two AFC-on arms. CRC
+failures went 4 of 14 and 2 of 103 to **0 of 151**.
+
+**It is off on this hub — [ADR-0033](../../../../radio_devices_docs/open_hub/decisions/0033-the-hub-does-not-run-afc.md).**
+A receiver that listens continuously cannot use `AfcAutoOn`, and the alternative
+`AfcStart` needs to know when a frame is coming, which is what the sync word is
+for. If you turn it on, **turn it on for a receiver that is enabled per expected
+frame**, and never for one holding a region open.
+
+### If you ever do need AFC here, you need the low-beta half too
+
+`RegAfcCtrl` (0x0B) bit 5 `AfcLowBetaOn`, reset 0: *"Improved AFC routine for
+signals with modulation index **lower than 2**"*. This profile runs β = 1.0, so
+it is squarely in that regime and the bit is 0.
+
+**It is one half of a pair and the other half was once set alone.** 3.4.4:
+*"The DAGC is enabled by setting RegTestDagc to 0x20 for low modulation index
+systems (i.e. **when AfcLowBetaOn=1**), and 0x30 for other systems."* On
+2026-08-21 `0x20` was tried on the strength of the constant's name with
+`AfcLowBetaOn` still 0, reception went from 8-10 sync matches in 21 to **0 in
+15**, and it was reverted. The datasheet says why: those two values are not
+alternatives, they are the two halves of one setting. The full routine also wants
+a `LowBetaAfcOffset` in `RegTestAfc`, `Offset = LowBetaAfcOffset x 488 Hz`,
+chosen to exceed `DccFreqAfc`'s corner.
+
+**None of that fixes measuring noise.** It changes what the correction is once
+taken, not whether the measurement landed on a preamble.
+
+### The reads, which still hold
+
+- **Read `RegAfcValue` before draining the FIFO.** `AutoRxRestartOn` re-arms the
+  receiver when the payload is read out, and the next start-up overwrites it.
 - `RegAfcValue` is the correction *applied*; `RegFei` is what is left after it,
   and reads near zero while AFC is on. Reading `RegFei` to measure the error with
   AFC enabled returns the residual and looks like a clean carrier.
-- **`AfcDone` sets on noise.** It proves the block runs, which is worth knowing
-  once, and says nothing about any frame. A first non-zero value is evidence
-  about the instrument before it is evidence about the carrier.
-- Measured on this board: **11230 Hz** on the first sample, against a
-  `RADIO_CARRIER_ERR_HZ` of 12000 that had never been measured. About 13 ppm at
-  866 MHz, which is an ordinary crystal and not a fault in anyone's code.
+- **With `AfcAutoOn` off, `RegAfcValue` stays 0**, which makes the frame ring's
+  `afc` column a live check on the setting rather than a number to interpret.
+- **Measure the carrier with the SDR, never with this register.** The one figure
+  that survived contact with an outside witness came off the air.
 - The sign convention has **not** been verified against an outside witness.
 
 ## Telling a dead receiver from an empty band

@@ -121,17 +121,34 @@ P=/opt/st/stm32cubeclt_1.21.0/STM32CubeProgrammer/bin/STM32_Programmer_CLI
 HUB=sn=0049004A3234510637333934        # the H755 probe, never a bare -c port=SWD
 $P -c port=SWD $HUB mode=UR -w CM7/build/testHubFreeRTOS_CM7.elf -v
 $P -c port=SWD $HUB mode=UR -w CM4/build/testHubFreeRTOS_CM4.elf -v
-$P -c port=SWD $HUB mode=HOTPLUG --rst
+$P -c port=SWD $HUB mode=HOTPLUG -hardRst   # NOT --rst; see below
 ```
+
+**End on `-hardRst`, never on `--rst`.** `--rst` is a *software* reset: the
+programmer prints `Reset mode : Software reset` for it and it never pulses
+nRESET. On a Nucleo-144 the Ethernet PHY's reset line is tied to the MCU's
+nRESET, so a software reset leaves the PHY in whatever state it was already in.
+The hard reset costs nothing and removes that as a variable.
+
+**What it does not buy is a northbound link that returns promptly.** After a
+reflash the hub can read `down, last reason: connect failed` for minutes while
+being **completely healthy** - on 2026-08-25 it answered ping at 0 % loss with ARP
+resolved the whole time, and then connected on its own retry. `-hardRst` was
+credited with fixing that once and did not: the second reflash ended in
+`-hardRst` and the link still came up late. That is `ROADMAP.md` item 79
+reproducing, not a reset problem, and **a measurement window opened before the
+link returns reads zero through the server while the console reads normal
+traffic.** Check `/api/health` for `hub_connected` before starting one.
 
 Console: `/dev/serial/by-id/usb-STMicroelectronics_STLINK-V3_0049004A3234510637333934-if02`
 at 115200 8N1 — not `/dev/ttyACM<N>`, whose numbering shifts when other boards are
 plugged in.
 
-Three traps, with the reasoning in
+Four traps, with the reasoning in
 [`on-target.md`](../radio_devices_docs/open_hub/testing/on-target.md): gate the
 flash on the build's **exit code** rather than on grepping its output; always pin
-the probe, because WL55 device boards share the bus; and **never erase bank 1 from
+the probe, because WL55 device boards share the bus; end on **`-hardRst`**, or the
+PHY keeps the state the link died in; and **never erase bank 1 from
 CM7** — it has bricked this board twice and needs an external programmer to
 recover ([`keystore.md`](../radio_devices_docs/open_hub/arch/keystore.md)).
 

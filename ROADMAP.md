@@ -174,7 +174,7 @@ finally went right.
 
 `open_hub/testing/on-target.md`. Never erase bank 1 from CM7.
 
-### 30. Two thirds of the device's frames never arrive, and the loss grows with offset into the superframe — `blocking` `defect`
+### 30. The bulk cause is found and fixed; the k-gradient is not yet re-measured — `defect`
 
 Counted by both sides over one agreed superframe range, sf 647403..647694, with
 the device transmitting 151 cycles on all three opportunities:
@@ -233,6 +233,34 @@ is still entirely before sync. **Eleven decibels between the two boards moves th
 delivered fraction by one point**, which is another arm against a level or
 sensitivity ceiling and was taken without arranging anything - the two boards
 simply sit at different distances.
+
+**Cause found 2026-08-25 and fixed: the hub was running AFC on an empty channel.**
+`AfcAutoOn` measures when the receiver is *enabled*, the uplink region opens
+610 us before the first preamble and then stays open for 1.8 s, and SX1231H
+3.4.14 requires the measurement to land on a preamble. The correction it drew
+from noise went straight into `FRF`. `open_hub/decisions/0033-the-hub-does-not-run-afc.md`.
+
+One node at one report per superframe, its own telemetry as the denominator:
+
+| arm | on air | sync | share |
+|---|---|---|---|
+| AFC on | 159 | 110 | 69 % |
+| **AFC off** | 176 | **165** | **94 %** |
+| AFC on, flashed back | 168 | 119 | 71 % |
+
+`p = 3.5e-09` off against before; **`p = 0.81` between the two AFC-on arms**, which
+is the control that separates the register from the reset that carried it. CRC
+failures went to 0 of 151.
+
+**Three things this does not close.**
+
+- **The k-gradient at the head of this item is unmeasured with AFC off.** Every
+  window above ran at `k = 0` on one node. The 39/15/6 % rows were taken with AFC
+  on, so they are a measurement of the fault, and re-running the three-opportunity
+  comparison is the arm this item now waits on.
+- **A residual of 14 % survives** — item 94.
+- **Delivery moved with the report rate** and nothing explains it — item 96.
+
 
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
@@ -1672,6 +1700,23 @@ statistics, and whether the host saw any SYN at all. Item 78 is a prerequisite f
 even noticing the outage promptly — the server's `connected` flag was up to two
 minutes stale throughout, which is why this was found late.
 
+**Reproduced twice on 2026-08-25, and the recovery is now known.** Both times a
+CM4 reflash left the hub reading `down, last reason: connect failed` with
+`connects 0`. The board was **healthy throughout** — it answered ping at 0 % loss
+with ARP resolved, the console was live, the radio counters kept climbing, and
+the host could open 7420 on its own address while the container stayed
+`(healthy)`.
+
+**The counter stops incrementing, so the hub is not retrying** — it is not slow to
+return, it has stopped. `telem off` then `telem on` does **not** restart the
+dialler. A hard reset does: the link came back **15 s** after `-hardRst`, watched
+rather than assumed.
+
+The cost is not the outage. **A measurement window opened before the link returns
+reads zero through the server while the console reads normal traffic**, which
+looks exactly like a total radio failure. It cost two windows here before the
+pattern was recognised, and `/api/health` is the cheap guard.
+
 ### 82. The server's roster UI has never met a real hub — `debt`
 
 `openhub-server` enrols and removes devices from its page as of
@@ -1710,3 +1755,54 @@ measurement. `EVT_PAIRED` and `EVT_PAIR_WINDOW` are wire codes nothing sends,
 which is the same gap seen from the other side.
 
 `../openhub-server/README.md` § The roster.
+
+
+### 94. A seventh of the uplinks still go missing with AFC off — `defect`
+
+With `AfcAutoOn` off and the node transmitting every superframe, 25 of 176
+transmissions did not arrive. The split matters and both halves are small:
+
+    11 of 176   never reached sync at all
+    14 of 176   reached sync and produced no payload event, CRC or otherwise
+
+The second half is the odder one — the hardware matched a sync word and the
+packet then never completed, so it is not a demodulation margin. `drain_frame()`
+and `restart_rx()` in `CM4/Core/Src/phy_rfm69.c` are where a frame can be
+abandoned after sync, and `rx_flushes` is the counter that would show it.
+
+This is what is left of the K2 knot after ADR-0033, and it is a seventh rather
+than two thirds. `open_hub/radio/configuration.md`.
+
+
+### 95. `up_sync` under-counts sync edges and the hardware counter does not — `debt`
+
+`phy_poll()` returns `PHY_EV_FRAME` as soon as `PayloadReady` is set and never
+reports the sync rise that preceded it, so `up_sync` counts only the edges a poll
+happened to catch *between* sync and payload. The DIO3 hardware edge behind
+`device syncstats` counts all of them: 25 against 21 on one read.
+
+Every arm in item 30 shares the bias, so it does not threaten those comparisons —
+it makes each of them **conservative**, since the true sync share is at least what
+`up_sync` reports. But a single figure quoted from `up_sync` is a floor and not a
+count, and nothing in the output says so.
+
+`open_hub/radio/superloop.md`.
+
+
+### 96. Delivery moved with the report rate and nothing explains it — `defect`
+
+Same board, same power, same channel plan, AFC on, one hour apart:
+
+    report every 8    43 on air, 14 reached the payload    33 %
+    report every 1   159 on air, 103 reached the payload   65 %
+
+The node's own transmit offset is identical across both (601-637 us into a 1400 us
+guard), so it is not placement. A node at `every 8` sleeps ~16 s between bursts and
+one at `every 1` does not, which makes the transmitter's warm-up the first
+suspect — `RADIO_UPLINK_LATCH_US` is documented as a **warm** figure with the cold
+one unmeasured.
+
+Measured before ADR-0033, so it may be an interaction with the AFC fault rather
+than an effect of its own. **Re-measure at both rates with AFC off before
+spending anything on it.**
+
