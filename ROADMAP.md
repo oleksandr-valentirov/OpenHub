@@ -1939,11 +1939,31 @@ band it sat in.**
   transmissions bridged by a burst detector running over a capture where 284 of
   485 bursts were clipping, not a three-second emission by somebody else.
 
+**Both runs were re-analysed against their own captures and they agree on both
+halves**, which is the two-instrument standard this project means rather than one
+capture read twice:
+
+              grid clear   outside the grid            bar
+    -1 (am)   0 of 29      29, 868.000 MHz, 2.75 %     median 1.49 %, MAD 0.12
+    -2 (pm)   0 of 29      29, 868.000 MHz, 3.52 %     median 1.46 %, MAD 0.10
+
+Twelve hours apart, different noise floors, different gains, same conclusion and
+the same single channel. Evidence is `bandscan.REANALYSED.txt` in each run
+directory, saved beside the originals, which are untouched.
+
 **What is left, and it is why this is `debt` and no longer `blocking`.** The
 instrument half is closed. What is not settled is the emitter at 868.000 MHz: it
-is adjacent to the band rather than in it, it is real by two independent captures,
-and nothing here measures whether it desensitises the hub's receiver. That needs a
-clean capture at a rail-checked gain, which no run has taken yet.
+sits 100 kHz above the top grid channel, it is real by two independent captures,
+and **nothing here has ever put it in front of the hub's receiver.** The arm for
+that is a clean capture at a rail-checked gain plus the hub's own counters on the
+adjacent channel, and it belongs with whoever takes the next run.
+
+**Two things this does not say, and must not be read as saying.** +10.2 MAD in the
+morning against +19.7 in the evening is **not** evidence the emitter got louder -
+the two captures have different noise floors and different gains, and the second
+one clipped. And ch 29's occupancy per 20 s slice on run `-2` swings 2.3 to 8.4 %,
+which is either a duty cycle or an artifact of that clipping; a clipped capture
+cannot tell the two apart.
 
 `bench/runs/2026-08-25-2/RESULT.md` § correction of 2026-08-26.
 
