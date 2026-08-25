@@ -1910,17 +1910,27 @@ the whole time.
 verified here from this repository's own capture before the item was rewritten.
 The bar is now printed rather than implied:
 
-    band reference over 32 trusted channel(s): median 1.46 %, MAD 0.10
-    busy = at least 1.00 % AND at least median + 6 MAD = 2.09 %
+    band reference over 32 trusted channel(s), the analog filter's flat region
+    busy = at least 1.00 % AND at least 1.5 x the band median
 
-with the absolute floor kept as a second guard, and an outright refusal when
-`MAD >= median` - a band with no quiet majority cannot supply a reference. The
-reference is the flat region rather than the grid, because the rate being
-estimated is the **receiver's** and restricting it to the grid would exclude the
-channels a verdict is usually about.
+with the absolute floor as a second guard and an outright refusal when the band
+has no quiet majority to reference. The reference is the flat region rather than
+the grid, because the rate being estimated is the **receiver's** and a grid-only
+reference excludes the channels a verdict is usually about.
+
+**The first fix chose its bar instead of measuring it, and had to be corrected
+too.** It gated on `median + 6 MAD`; asked by `radio-project-space-24` whether
+noise alone could reach that, 52 synthetic draws put the busiest channel of pure
+noise at **5.7 MAD** - three tenths of a MAD under a criterion that voids runs.
+That is a bar under the noise for the second time in one day, in the repair for
+the first one. The gate is the **ratio** now because it is the stable statistic:
+its noise maximum sits 1.10x its own mean where the MAD distance's sits 1.9x.
+Measured noise maximum **1.281x**, bar 1.5x. MAD is still printed as a second
+view and is no longer the gate.
 
 Re-read that way, run `2026-08-25-2` gives **0 of 29 grid channels standing
-clear** and one channel outside it: **29, 868.000 MHz, 3.52 %, +19.7 MAD**. The
+clear** and one channel outside it: **29, 868.000 MHz, 3.52 %, 2.41x the band
+median**. The
 20 s control capture from the same run agrees independently - ch 29 at 3.90 %,
 grid clean for 100 % of it. Channels -2 and -1 fall under the bar and are no
 longer reported; **-1 was 1.33 % against a band median of 1.46 %, quieter than the
@@ -1943,13 +1953,19 @@ band it sat in.**
 halves**, which is the two-instrument standard this project means rather than one
 capture read twice:
 
-              grid clear   outside the grid            bar
-    -1 (am)   0 of 29      29, 868.000 MHz, 2.75 %     median 1.49 %, MAD 0.12
-    -2 (pm)   0 of 29      29, 868.000 MHz, 3.52 %     median 1.46 %, MAD 0.10
+                        ch 29, outside the grid   top grid channel   grid clear
+    -1 (am)  med 1.49 %   2.75 %  = 1.85 x           1.78 %  = 1.19 x    0 of 29
+    -2 (pm)  med 1.46 %   3.52 %  = 2.41 x           1.85 %  = 1.27 x    0 of 29
 
-Twelve hours apart, different noise floors, different gains, same conclusion and
-the same single channel. Evidence is `bandscan.REANALYSED.txt` in each run
-directory, saved beside the originals, which are untouched.
+against a bar of 1.5x and a measured noise maximum of 1.281x. Twelve hours apart,
+different noise floors, different gains, same conclusion and the same single
+channel. Evidence is `bandscan.REANALYSED.txt` in each run directory, beside the
+originals, which are untouched.
+
+**The margin on the grid is thin and should be written as thin**: the busiest
+grid channel of run `-2` is 1.27x, which is under the bar but also essentially
+*at* the noise maximum of 1.281x. "0 of 29 stand clear" is the right verdict and
+it is not a comfortable one.
 
 **What is left, and it is why this is `debt` and no longer `blocking`.** The
 instrument half is closed. What is not settled is the emitter at 868.000 MHz: it
@@ -1958,12 +1974,23 @@ and **nothing here has ever put it in front of the hub's receiver.** The arm for
 that is a clean capture at a rail-checked gain plus the hub's own counters on the
 adjacent channel, and it belongs with whoever takes the next run.
 
-**Two things this does not say, and must not be read as saying.** +10.2 MAD in the
-morning against +19.7 in the evening is **not** evidence the emitter got louder -
+**Two things this does not say, and must not be read as saying.** 1.85x in the
+morning against 2.41x in the evening is **not** evidence the emitter got louder -
 the two captures have different noise floors and different gains, and the second
 one clipped. And ch 29's occupancy per 20 s slice on run `-2` swings 2.3 to 8.4 %,
 which is either a duty cycle or an artifact of that clipping; a clipped capture
 cannot tell the two apart.
+
+**One numerical echo, named so it does not get quoted as a finding.** Ch 29 reads
+**2.80 %** in run `-1`'s original output, which is exactly the figure the
+self-test's synthetic noise produces on its busiest channel. Two different
+quantities landing on the same number. Run `-1`'s re-analysed occupancy for that
+channel is 2.75 % against its own median of 1.49 %.
+
+**And the tell was in both original outputs.** Each of them ends
+`29 of 29 graded grid channels busy at >= 1.0%` - every channel of the grid, both
+times. A rule that calls the whole band busy on every run it is given is not
+measuring traffic, and it printed that verdict twice before anyone read it as one.
 
 `bench/runs/2026-08-25-2/RESULT.md` § correction of 2026-08-26.
 
