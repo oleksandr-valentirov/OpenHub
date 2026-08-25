@@ -110,6 +110,36 @@ behind each clause, is
 
 ## Blocking
 
+The seventh, 2026-08-25, retired **seven** and is the largest so far, because a
+regression run and a relocation landed on the same evening.
+
+**Items 89 and 93 are closed by the same rewrite.** The SDR readers could not
+open the capture `specs/06-regression.md` asks for - the whole-file path cost
+about fourteen times the capture resident and the kernel killed it twice during
+run `2026-08-25-2`. They read a 9.6 GB capture now, verified byte for byte
+against their own pre-change output, and 93's `ulimit -v` workaround goes with
+them.
+
+**Items 57, 88 and 92 moved rather than closed.** Duty-cycle attribution, the
+off-grid bursts that get blamed on the firmware, and `--device` defaulting to
+slot 1 are all debts of the tools, and the tools left this tree for
+`~/.claude/skills/sdr/` in `ed536c2`. They are items 3, 2 and 1 of that
+repository's own `ROADMAP.md`. **Do not re-file them here**: a queue that
+outlives the code it describes is a queue nobody reads.
+
+**Item 77 is retired half closed and its live half moved.** `bandscan.py` has an
+`RG-` id now - RG-A-9, which is what failed run `2026-08-25-2` - so the debt that
+nothing ran it on a schedule is paid. What it recorded about `capture.py`
+defaulting `--bandwidth` to the sample rate is still true and is item 4 in the
+skill's queue.
+
+**Item 98 is closed and was measured closed, not argued closed.** `fdf2d30`
+serves a downlink only where a device opens a window; run `2026-08-25-2` read
+`dl_sent 236` against `dl_opportunities 708` with both nodes on `every 8`, where
+the old rotation sent at every opportunity and starved one node permanently. The
+relation to assert is `sent + none_due == opportunities`. Its reasoning stays on
+`open_hub/radio/superloop.md` § the rotation scans for a listener.
+
 ### 1. Three opportunities a superframe, built and not yet on air — `blocking` `contract`
 
 One opportunity a superframe made an event wait up to **2 s — twice the
@@ -647,43 +677,6 @@ population the run will have.**
 
 ## Defects
 
-### 92. `airgrid.py --device` defaults to slot 1 — `defect`
-
-**It produced a confident negative on 2026-08-25.** Node A holds slot 0, the
-default expects a device in slot 1, and the run reported
-`uplink k=0 slot 1: 0 bursts` while the device's six real transmissions were
-listed under **foreign traffic** at phase 49.7 ms - which is
-`RADIO_UPLINK_OFFSET_US`, the start of slot 0. C1, C2, C3 and C5 all failed on
-the wrong slots. Re-run over the same capture with `--device 0` it reports six
-bursts, on the channels the hub's own frames named.
-
-It is the family the `sdr` skill's own list is about: a stale default in a
-diagnostic tool is worse than no default, because it produces a confident
-negative. The default was right when a device sat in slot 1.
-
-**The fix is not a better default.** The slot is a fact the hub owns and serves -
-`/api/devices` carries `slot` per device - so the tool should require it or read
-it, the way `phy.py` reads the PHY rather than restating it.
-
-### 93. `airgrid.py` has no bound on capture size — `defect`
-
-A 300 s capture at 4 Msps is 4.5 GB on disk and **28 GB resident** in this tool.
-Measured 2026-08-25: three OOM kills, each `python` at about 28 GB anon-rss on a
-30 GB machine, and the kernel log names the cgroup - `snap.code.code-*.scope` -
-so the editor hosting the session died with it.
-
-Memory scales with the capture's duration and **not** with `--nfft`: the
-spectrogram is rows by nfft, and that product is the sample count either way.
-
-A diagnostic that kills the machine is worse than one that declines, so the tool
-should refuse or stream a capture it cannot hold. Until then, cap the address
-space so the failure lands in Python rather than in the kernel:
-
-```bash
-ulimit -v 20000000     # 20 GB; a 90 s capture at 4 Msps fits
-```
-
-
 ### 86. `device add` refuses the one command that re-pairs, and offers one that cannot — `defect`
 
 **Two commands, and the CLI has them the wrong way round.** `cfg_enrol()` is
@@ -889,6 +882,48 @@ counts nothing. Not the cause of any zero above — those never reached the coun
 
 ---
 
+### 101. The recovery park has no channel preference and can wait on a busy one — `defect`
+
+Run `2026-08-25-2`, both nodes reset inside one capture window with nothing typed
+after. **Node A parked on grid 16 and heard the hub in 39 s; node B parked on
+grid 9 and took 95 s**, and heard it 14 dB weaker there - `rec.hit rssi=-56`
+against node A's `-42`. Grid 9 is one of the channels `../bench/RESOURCES.md`
+records foreign traffic on.
+
+Both recovered, so this is a latency defect and not a lockout. But the park
+channel is drawn without regard to what the band is doing, and the wait is
+bounded only by how often the hub visits that channel - so the worst case is set
+by the noisiest channel in the plan rather than by the rotation.
+
+`open_hub/radio/superloop.md`.
+
+### 102. `linkjoin` leaves most hub arrivals unmatched, so delivery cannot be graded — `defect`
+
+Run `2026-08-25-2`, RG-A-6. The join reported `19 sent, 19 accepted, 100.0%` with
+device placement sd 8 us - and printed
+`151 hub arrival(s) had no device record in the window` beside it. That is 89 %
+of the population unjoined, and `specs/06-regression.md` § 6.2 says a window
+where either non-vacuity figure is a large fraction **is not graded at all**.
+
+So the run has a delivery figure in the plan's reference band and may not quote
+it. The tool's own non-vacuity line is what refused it, which is the check
+working; what is missing is the reason so many arrivals have no device record,
+and whether the cursor starts before the VCP reader does.
+
+`../bench/runs/2026-08-25-2/RESULT.md`.
+
+### 103. The server's per-frame diff omits a field, so an arrival carries the previous value — `defect`
+
+`linkjoin` printed `6 arrival(s) carried the previous frame's value, not their
+own: the server's diff omitted the field` during run `2026-08-25-2`.
+
+A field that is unchanged from the previous frame is dropped from the diff, and
+the reader then attributes the old value to the new arrival. For a counter that
+is harmless; for a per-frame measurement it is a silent wrong number, and the
+reader cannot tell the two cases apart.
+
+The server's queue is this file. `openhub-server/README.md`.
+
 ## Debts
 
 ### 91. `GENERATED_VEC` names a directory that moved — `debt`
@@ -908,52 +943,6 @@ were the hub's alone and all three were generated vector headers.
 
 `../radio_stack/ROADMAP.md` item 3.
 
-
-### 88. `airgrid.py` counts bursts that are not on the grid, then accuses the firmware — `defect`
-
-Regression `2026-08-25-1`, RG-A-3. C5 reported *an uplink sat on a channel the
-hub did not name* and named **channel −6**, which is not a channel: it is
-864.50 MHz, below the band. The burst was classified as an uplink **by its
-duration** — 9.22 ms against the uplink's 8.70 — which is the failure the
-`verification` skill already records as *a control classified by the quantity it
-measures is not a control*.
-
-**Two instruments disagreeing is what found it.** `hops.py` reads the same
-bursts, marks them `!` and warns *21 burst(s) outside the 29-channel grid*;
-`bandscan.py` calls channel 30 *BEYOND FILTER — not evidence*. `airgrid.py`
-folds them into C5's uplink set and into C1's denominator.
-
-**C1's threshold failure is entirely this.** 30 beacons + 15 downlinks + 4
-uplinks = 49 ours, 22 on no grid position, and 49/71 = **69.0 %** — the exact
-figure C1 reported against its 70 % bound. The foreign bursts sit at 15.5–21 dB
-against our 74–76 dB, so a level gate as well as a channel gate would refuse them.
-
-The fix is a channel gate before classification, not a threshold change. A per-
-position statistic on this bench has to be robust to the transmitter `RESOURCES.md`
-records under `air:tx`, and this one is not.
-
-`../radio_devices_docs/open_hub/testing/sdr.md`,
-`../bench/runs/2026-08-25-1/RESULT.md`.
-
-### 89. The SDR tools cannot read the capture the regression plan asks for — `defect`
-
-`specs/06-regression.md` tier 2 says `-s 4e6 -t 300`. That is **4.8 GB**, and
-`airgrid.py` loads it whole: `np.fromfile` to float32 is 9.6 GB and the complex
-view another 9.6 GB. The kernel killed it at **26.9 GB resident on a 30 GB
-machine** — `Out of memory: Killed process`, from the kernel log rather than
-inferred.
-
-**No tool in `~/.claude/skills/sdr/tools/` takes an offset or a duration**, so there is no way to
-grade a long capture except by cutting a slice beside it with `dd`, which is what
-run `2026-08-25-1` did. Every earlier run that was actually graded used ~60 s.
-
-So the plan's own line has never been run end to end on this bench, and the two
-halves of one code block disagree: the capture command produces a file the
-analysis commands cannot open. Either the tools take a window or the line does —
-and a windowed tool is the better answer, because it also makes a long capture
-gradeable in pieces rather than discarded.
-
-`../radio_devices_docs/specs/06-regression.md` § tier 2.
 
 ### 87. `ipc_timing_t` is full at 96 of 96, so the next field silently does not fit — `debt`
 
@@ -1080,24 +1069,6 @@ gets any of the three.
 
 `open_hub/arch/ipc.md`, `open_hub/network/telemetry.md`.
 
-### 57. Duty cycle cannot be attributed to one transmitter — `debt`
-
-`dutycycle.py` scans the whole captured band, and the 1% limit is **per
-transmitter**. A wideband capture holds the hub, both devices and the foreign
-traffic seen on grid channels 9, 10, 16, 17 and 18, so its total is a ceiling for
-any one of them and cannot be compared against a per-transmitter prediction.
-
-Everything needed already exists elsewhere: `airgrid.py` classifies each burst by
-grid position — beacon, downlink, `uplink<n>` — and C6 already measures mean air
-time per position against `phy.air_us(payload)`. What is missing is summing that
-per transmitter over the capture duration.
-
-Until it exists, the regression's duty-cycle check runs on a single-transmitter
-capture with the other side holding transmit, which spends a bench agreement on
-something arithmetic should cover.
-
-`specs/06-regression.md` §6.1.
-
 ### 61. Enrolment mode SECRET has no MAC primitive any more — `debt`
 
 `crypto_pair_init_mac` was HMAC-SHA256/96 over the invitation's cleartext, keyed
@@ -1150,6 +1121,23 @@ belongs with the other prerequisites, not after them.
 `../radio_devices_docs/open_hub/arch/keystore.md`.
 
 ---
+
+### 100. Beacon lateness moved 17 us later and has no like-for-like arm — `debt`
+
+`../bench/RESOURCES.md` records `min 27, max 40, spread 13` and `27/41/14` and
+`26/40/14` across three CM4 images. Run `2026-08-25-2` on `5ecf317` reads
+**`min 44, max 58, spread 14`**.
+
+**The spread is identical and the floor is 17 us later**, which is far outside
+the "within one tick at both bounds" that every previous image was accepted on.
+Nothing in that run isolates it: the image changed, the roster changed and the
+downlink cadence changed with item 98, all at once.
+
+It is recorded rather than diagnosed. The next run should carry a like-for-like
+arm - one image difference, same roster, same grant - before this is called a
+regression or dismissed as one.
+
+`open_hub/radio/timebase.md`.
 
 ## Contract debts
 
@@ -1664,31 +1652,6 @@ prediction gives.
 The instrument to settle it is `spectrum.py` on a single plucked beacon, which
 needs no new air.
 
-### 77. `bandscan.py` is new, is load-bearing, and has no home in the test plan — `debt`
-
-Written during run `2026-08-24-1` under the `regression` skill's rule for analysis
-tools. It reports per-channel occupancy across a wideband capture and it exists
-because `airgrid.py` returns everything off-grid as one undifferentiated list, in
-which a foreign carrier and a missed uplink are indistinguishable — and they have
-opposite consequences, one a defect and the other a reason a run is void.
-
-It carries `--self-test` with both arms and refuses on an empty population. What
-it does **not** have is an `RG-` id, so nothing runs it on a schedule.
-
-Two of the run's three instrument defects were found by it and are worth keeping
-against whoever edits it next:
-
-- **The zero-IF DC spike lands on a grid channel** and reads as 100 % occupancy at
-  the loudest peak in the capture. Notched, and the notched channel is *named* —
-  a channel the tool cannot see is not a channel that is quiet.
-- **An analog filter no narrower than the sample rate puts its transition band
-  inside the analysed span**, and the rolloff reads as 12–20 % occupancy on four
-  grid channels. Re-centring the receiver moved the "traffic" to the new band
-  edges while the accused channels fell to 0.2 %. `capture.py` still **defaults
-  `--bandwidth` to the sample rate**, so every capture taken without passing it
-  explicitly carries this, and that default is the real defect.
-
-
 ### 78. The server's `connected` is a blind instrument for up to two minutes — `defect`
 
 `/api/hub` reports `connected` from the socket's own state, and nothing times out
@@ -1928,130 +1891,26 @@ count, and nothing in the output says so.
 
 `open_hub/radio/superloop.md`.
 
+### 99. The foreign transmitter has voided two consecutive regression runs — `blocking`
 
-### 98. The downlink round robin stands still where the devices are listening — `blocking` `defect` `contract`
+`bandscan.py` on run `2026-08-25-2`'s 600 s capture: channels **-2 (864.900 MHz,
+1.67 %), -1 (865.000 MHz, 1.33 %) and 29 (868.000 MHz, 3.52 %)** busy outside the
+grid, 80-165 bursts on no grid position, and one burst **3570 ms** long which is
+nobody's frame on this bench. Run `2026-08-25-1` was voided by the same thing.
 
-**Two devices on one grant, and one of them receives every downlink while the
-other receives none — permanently.** Measured 2026-08-25 with node A in slot 0
-and node B in slot 1, both at `report every 8`:
+The tool states the consequence itself: *a run whose window overlaps them is void
+for any absolute level, and suspect for any loss figure*. The `regression` skill
+states the other half - **a run that keeps going void for the same reason is a
+bench defect that belongs in a queue rather than in the next attempt**, which is
+why this is here rather than in the next run's notes.
 
-    node A   834 downlinks opened while it was the only device, 0 since node B joined
-    node B   140 opened over the same period
-    hub      718 of 718 opportunities sent, 0 no device, 0 tx err, 0 nonce refused
+Nothing in this system can stop it transmitting. What is missing is a way to
+measure around it: a quiet window found rather than assumed, or per-position
+statistics robust to it, or an antenna change that puts our own signal far enough
+above it that a level gate separates the two.
 
-Node A's count froze at the minute node B was enrolled and has not moved since.
-
-**The arithmetic, and nothing about it is intermittent.** `dl_downlink_service()`
-advances `dl_next_slot` by one **occupied** slot on every downlink opportunity,
-and opportunities are `RADIO_DOWNLINK_ON(sf)`, one superframe in
-`RADIO_DOWNLINK_EVERY` = 2. A device opens its downlink receive window in
-`device.c:667` and **nowhere else** — inside the report attempt, so only on
-`sf % report_every == 0`. Between two of those the rotation advances
-
-    report_every / RADIO_DOWNLINK_EVERY = 8 / 2 = 4 steps
-
-and 4 mod 2 devices is **0**, so the phase at the moment the devices are
-listening never moves. The rotation is fair over superframes and stationary over
-the superframes that matter, which is why the hub's own counters all read healthy.
-
-It is fine at one device and fine at three — `4 mod 3 = 1` — and starves all but
-one whenever the device count divides `report_every / RADIO_DOWNLINK_EVERY`. A
-fault with a duty cycle of 100 % cannot announce itself by working sometimes.
-
-**What makes it blocking rather than a nuisance: ADR-0023.** `tx_allowed()` is
-`tx_floor_known && ...`, and `tx_floor_known` is set only inside
-`downlink_open()`. A starved device that reboots therefore **never transmits
-again**. Node A is in that state now: it hears beacons (`rx.beacon` every 8
-superframes on its own telemetry) and answers every one with
-`tx.deny`, `reports 0`, `downlinks 0 of 0`, indefinitely.
-
-**A second defect found while reading it.** `TLM_TX_DENY` is emitted with a
-hard-coded `TLM_WHY_FLOOR`, so `why=8` is a constant and not a reading — the
-record that repeats every cycle cannot say which of the two gates is shut, while
-`TLM_TX_HOLD`, which names the gate correctly, is emitted **once** behind
-`tx_hold_said` and is therefore gone by the time anyone attaches. A reader who
-takes `why=8` at face value concludes the floor is set when it is not. Device
-tree, `Core/Src/device.c` → the `may_send` block.
-
-`CM4/Core/Src/radio.c` → the round robin in the downlink service;
-`../radio_devices_docs/radio/tdma.md`;
-`../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md`.
-
-#### The fix, built 2026-08-25 and not yet on the board
-
-The rotation scans for a device that opens a window in **this** superframe rather
-than for the next installed one. `device_due()` is the predicate and it is the
-only one in the file.
-
-**It admits a period the hub commanded and never saw acked.** A device applies a
-rate on receipt and echoes it in its next report; if every repeat is spent with no
-echo, the two sides sit on different periods. Serving neither is what strands a
-device, and the cost of being wrong the other way is one frame nobody hears.
-
-**A second defect was found while reading it and is fixed in the same change: the
-grant is never rewritten after a rate change.** `d->report_every` is set once, at
-pairing, and `score_missed_reports()` was counting against it — so a device
-commanded to a new period had its misses scored on the old one. `dev_entry_t`
-gains `every_now`, seeded from the grant and moved to what the device **said it
-applied** when a SET_RATE is acked; both the miss score and the rotation read it.
-
-**Measured live before the fix was flashed**, both nodes granted 1 at pairing and
-commanded to 8:
-
-    20:51:58   22cdec51 missed=2   fef91007 missed=2
-    20:52:04   22cdec51 missed=4   fef91007 missed=4
-    20:52:07   22cdec51 missed=0   fef91007 missed=0
-
-`missed_run` sawtooths 0→7 on both, in lockstep, because the hub scores every
-superframe as an opportunity while the devices report one in eight. **It stays
-under `link_lost_misses` = 12 only because 8 < 12**: a device commanded to a
-period above the threshold would be declared lost while perfectly healthy, and
-nothing in the output would say why. The lockstep is itself the starvation
-condition showing — both devices listen on the same superframes.
-
-`every_now` is published in `ipc_device_report_t` and the console reads it as
-`in force N` rather than deriving it, because CM4's belief is the one that decides
-which superframes get addressed and a second derivation on CM7 is a second answer.
-
-**What the change gives up.** An opportunity where nobody listens now transmits
-nothing, so `dl_sent` falls from one superframe in two to one in eight at two
-devices on `every 8` — duty cycle returned, and `none_due` is the counter that
-closes `sent` against `opportunities`. It also thins `airgrid.py`'s C5b, which
-needs a superframe carrying both a beacon and a downlink: about a fourfold drop
-in that population, so a gate capture has to be longer or run with a device on
-`every 1`.
-
-#### On the board 2026-08-25 21:09, and the control paid out
-
-Both cores flashed and hard-reset. Two windows of about ten minutes each, node A
-in slot 0 and node B in slot 1, both on `every 8` throughout — which is the
-starved configuration, `8 / 2 = 4` steps between listening superframes and
-`4 mod 2 = 0`.
-
-| | hub sent | node A opened | node B opened |
-|---|---|---|---|
-| before, 320 superframes | every opportunity, `2405 of 2405` | **0** | 40 |
-| after, 304 superframes | **38** | **19** | **19** |
-
-**Before, roughly 120 of about 160 frames were heard by nobody** and node A's
-counter did not move once. After, the two nodes are equal and
-
-    38 sent + 112 none_due == 150 opportunities        the window
-    76 sent + 145 none_due == 221 opportunities        cumulative, both reads
-
-**and `19 + 19 == 38`: every frame the hub transmitted was opened by a device.**
-That third relation was not pre-registered and is the strongest of the three,
-because it needs no assumption about which device should have got what.
-
-The pre-registered control was *both climb and neither is zero*, chosen because
-both reading zero would also show no starvation while meaning the hub had stopped
-transmitting downlinks entirely. Neither is zero. The uplink is untouched: 38
-reports each in the same window, `seen every 8` on both.
-
-**One pre-registered check did not fire, and that is not a pass.** The hub was to
-relearn each device's period from `ack_arg`, which rides every report, rather than
-from the store. After the reflash there is no SET_RATE outstanding and the store's
-grant happens to equal what both devices do, so the console reads `grant 8` with
-no `in force` clause and **the relearn path was never exercised on the board.** A
-value that happens to be right is not a value that is known to be right; the path
-stays untested and the first rate change after a hub reset is what will test it.
+**A second, independent corruption in the same run:** the capture clipped the ADC
+at gain 25 - `hops.py` reported worst burst 29.76 %, **284 of 485 bursts** over
+the rail threshold - while `RESOURCES.md` records 25 dB clean at 0 of 88 earlier
+the same day. The receiver did not change; the geometry did. `06-regression.md`
+now chooses the gain per capture by a rail check instead of printing one.
