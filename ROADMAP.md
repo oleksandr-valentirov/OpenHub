@@ -1205,6 +1205,28 @@ covers the setting not persisting rather than not being reported.
 
 ## Design agreed but unbuilt
 
+### 90. The region has to leave CM7 — `debt` `contract`
+
+[ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
+decision 8: on the H755 the band is CM4's and CM7 compiles none of it. Today both
+cores define `RADIO_PROFILE` from independent literals in their own
+`CMakeLists.txt` and nothing on the board compares them.
+
+CM7's own half is small and is not blocked on the library. Measured 2026-08-25 by
+removing the define from `CM7/CMakeLists.txt` and building: CM7 fails in **four**
+places, and only one is this repository's — `CM7/Core/Src/cli.c:2100`, the third
+line of `rxbw`, which prints the compiled receive bandwidth beside the `asked_hz`
+CM4 has just returned from the same header. It is a number re-derived on the core
+that does not own it, so the line goes rather than moves.
+
+The other three are `radio_stack/inc/radio_slots.h` and are `../radio_stack/ROADMAP.md`.
+`RADIO_HUB_HANDLE_SLACK_US` is CM7's one genuinely rate-derived symbol, used once;
+it is a cross-core budget and belongs in the mailbox.
+
+**The exit is that CM7 builds with `RADIO_PROFILE` undefined**, checked by
+removing it — not by reading this line.
+
+
 ### 25. RSSI and a sequence number in the sealed payload — `debt` `contract`
 
 Costed and designed, not written. Both belong in the **encrypted payload, not the
