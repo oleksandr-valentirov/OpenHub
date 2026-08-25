@@ -32,12 +32,7 @@
 /* A triggered RSSI measurement that does not complete is not a quiet band. */
 #define RSSI_TIMEOUT_US   500u
 
-/* Off, because this schedule cannot meet the precondition AFC has. SX1231H
- * 3.4.14 requires the measurement to run during the preamble; AfcAutoOn runs it
- * when the receiver is enabled, and the uplink region opens 610 us before any
- * preamble and then stays open for 1.8 s. So it measures noise and subtracts
- * the result from FRF. Measured: 94 % of transmissions reach sync with it off
- * against 69 % and 71 % on either side of that arm. ADR-0033
+/* Off: this schedule cannot meet AFC's precondition. ADR-0033
  * radio_devices_docs/open_hub/decisions/0033-the-hub-does-not-run-afc.md */
 #ifndef RADIO_AFC_AUTO
 #define RADIO_AFC_AUTO 0
@@ -119,8 +114,7 @@ int phy_init(void) {
      * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_rssi_threshold_dbm(&radio, -100) != RFM69_OK) return -1;
     if (rfm69_set_dagc(&radio, 0) != RFM69_OK) return -1;
-    /* RegAfcValue is the read, and it stays 0 while this is off - which is what
-     * makes the frame ring's afc column a live check on the setting.
+    /* RegAfcValue stays 0 while off, so the ring's afc column checks the setting.
      * radio_devices_docs/open_hub/radio/configuration.md */
     if (rfm69_set_afc(&radio, RADIO_AFC_AUTO) != RFM69_OK) return -1;
     /* DIO3 = SyncAddressMatch, then RegDioMapping1 read back off the part. */

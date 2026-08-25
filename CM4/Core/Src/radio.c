@@ -1325,9 +1325,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 static int device_due(const dev_entry_t *d, uint32_t sf) {
     if (!d->used)
         return 0;
-    /* Nothing heard from it this boot, so its period is not knowable here - and
-     * under ADR-0023 it may be waiting on a downlink to be allowed to transmit at
-     * all. Serve it whenever the rotation reaches it until it says otherwise.
+    /* Unheard this boot: no period, and it may be the one ADR-0023 has muted.
      * radio_devices_docs/open_hub/radio/superloop.md */
     if (d->frames_ok == 0u)
         return 1;
@@ -1335,8 +1333,8 @@ static int device_due(const dev_entry_t *d, uint32_t sf) {
         return 1;
     if ((sf % d->every_now) == 0u)
         return 1;
-    /* A SET_RATE the device applied and whose ack never arrived leaves the two
-     * sides on different periods, and serving neither is what strands a device. */
+    /* An applied rate whose ack was lost leaves the two sides on different periods.
+     * radio_devices_docs/open_hub/radio/superloop.md */
     if (d->dl_cmd == RADIO_CMD_SET_RATE && !d->dl_acked &&
         d->dl_report_every != 0u && (sf % d->dl_report_every) == 0u)
         return 1;
@@ -1916,10 +1914,8 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
         d->dl_ack_arg = rpt.ack_arg;
         dl_cmd_acked++;
     }
-    /* Read on every report and not only on the matching ack: the device carries
-     * its last applied command in each one, so a hub that has just restarted
-     * relearns the period from the first frame instead of addressing the grant
-     * for ever. radio_devices_docs/open_hub/radio/superloop.md */
+    /* Every report carries it, so a restarted hub relearns rather than assumes.
+     * radio_devices_docs/open_hub/radio/superloop.md */
     if (rpt.ack_cmd == RADIO_CMD_SET_RATE && rpt.ack_arg != 0u)
         d->every_now = rpt.ack_arg;
     d->arrival_us = timebase_ticks_to_us(timebase_now() - sfm.g.start);
@@ -2065,9 +2061,7 @@ static void downlink_service(void) {
     dl_served = sfm.g.counter;
     dl_opportunities++;
 
-    /* Round robin over the devices that open a window in *this* superframe.
-     * Rotating over opportunities instead is fair per opportunity and stationary
-     * in the subsequence a device can hear. ROADMAP item 98
+    /* Round robin over the devices listening in this superframe. ROADMAP item 98
      * radio_devices_docs/open_hub/radio/superloop.md */
     for (i = 0; i < RADIO_MAX_DEVICES; i++) {
         slot = (uint8_t)((dl_next_slot + i) % RADIO_MAX_DEVICES);

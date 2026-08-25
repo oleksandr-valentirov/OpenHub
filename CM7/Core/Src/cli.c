@@ -958,8 +958,8 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             /* Sized for the longest form: three periods, a word, and their labels. */
             char asked[80];
             char applied[12];
-            /* CM4's belief, not a second derivation of it: the two must agree and
-             * only one of them decides which superframes it addresses. */
+            /* CM4's belief, not a second derivation of it.
+             * radio_devices_docs/open_hub/radio/superloop.md */
             unsigned want = d.every_now;
 
             /* An acked command is what the hub believes; a riding one is not. */
