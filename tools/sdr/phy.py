@@ -13,14 +13,38 @@ definition and no second implementation of it to drift.
 """
 import functools
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_INC = _ROOT / "Common" / "inc"
+# The contract headers left Common/inc in phase 9 step 6.
+# radio_devices_docs/open_hub/testing/sdr.md
+_INC = _ROOT / "radio_stack" / "inc"
+_PROFILES = _ROOT / "radio_stack" / "profiles"
 
 _HEADERS = ("radio_phy.h", "radio_slots.h", "radio_protocol.h")
+
+# Read from the build, never restated: a tool naming a number names a band.
+# radio_devices_docs/specs/09-compliance-matrix.md
+_PROFILE_FROM = _ROOT / "CM4" / "CMakeLists.txt"
+
+
+@functools.lru_cache(maxsize=1)
+def built_profile():
+    """The profile CM4 is built with, or an exception rather than a guess.
+
+    Named apart from profile() below, which predates the split and returns the
+    four modem constants. Two functions, two questions, no default.
+    """
+    m = re.search(r"RADIO_PROFILE=(RADIO_PROFILE_[A-Z]+)",
+                  _PROFILE_FROM.read_text())
+    if not m:
+        raise RuntimeError(
+            "no RADIO_PROFILE in %s: this tool must not choose a band for the "
+            "firmware, so it refuses rather than defaulting" % _PROFILE_FROM)
+    return m.group(1)
 
 _NAMES = (
     "RADIO_BITRATE_BPS", "RADIO_DEVIATION_HZ", "RADIO_RX_BANDWIDTH_HZ",
@@ -64,7 +88,9 @@ def constants():
         c = pathlib.Path(d) / "dump.c"
         exe = pathlib.Path(d) / "dump"
         c.write_text("\n".join(src) + "\n")
-        cc = subprocess.run(["cc", "-std=c11", "-I", str(_INC), "-o", str(exe), str(c)],
+        cc = subprocess.run(["cc", "-std=c11", "-I", str(_INC), "-I", str(_PROFILES),
+                             "-DRADIO_PROFILE=%s" % built_profile(),
+                             "-o", str(exe), str(c)],
                             capture_output=True, text=True)
         if cc.returncode != 0:
             raise RuntimeError("the headers did not compile; a name below has moved "
