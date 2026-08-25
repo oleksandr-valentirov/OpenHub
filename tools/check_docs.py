@@ -165,7 +165,7 @@ def main():
                 continue
             if "%s:%s" % (rel, n) in allow:
                 continue
-            missing_ident.append("%s: %s" % (rel, n))
+            missing_ident.append("%s:%s" % (rel, n))
 
         for m in PATH.finditer(text):
             p = m.group(1)
@@ -175,7 +175,7 @@ def main():
                 continue
             if not any(os.path.exists(os.path.join(r, p))
                        for r in (".", "..", "../wl55_device")):
-                missing_path.append("%s: %s" % (rel, p))
+                missing_path.append("%s:%s" % (rel, p))
 
     missing_ident = sorted(set(missing_ident))
     missing_path = sorted(set(missing_path))
@@ -187,6 +187,11 @@ def main():
         print("== %s: %d ==" % (title, len(items)))
         for i in items:
             print("   " + i)
+    # Each line above IS the exemption key, ready to paste.
+    if missing_ident or missing_path:
+        print()
+        print("   to exempt one, add it to %s with a reason:" % ALLOW)
+        print("   %s  # why the code does not define it" % (missing_ident or missing_path)[0])
     return 1 if (missing_ident or missing_path or bad_allow) else 0
 
 

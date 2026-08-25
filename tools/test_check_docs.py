@@ -49,15 +49,15 @@ scope/page.md:RADIO_GHOST_ONE_US    # a deliberate quotation
 
 # Reported, and why each one is in the corpus.
 MUST_REPORT = {
-    "scope/page.md: RADIO_GHOST_TWO_US":
+    "scope/page.md:RADIO_GHOST_TWO_US":
         "a macro with arguments fell between both original regexes",
-    "scope/page.md: radio_ghost_inline_us":
+    "scope/page.md:radio_ghost_inline_us":
         "a project call named in prose",
-    "scope/page.md: radio_ghost_fenced_us":
+    "scope/page.md:radio_ghost_fenced_us":
         "live arithmetic goes in fences",
-    "scope/page.md: begin_ghost_unprefixed":
+    "scope/page.md:begin_ghost_unprefixed":
         "an owned-prefix rule alone cannot reach hub_ipc_call or begin_quiesce",
-    "scope/page.md: CM4/Core/Src/ghost_nowhere.c":
+    "scope/page.md:CM4/Core/Src/ghost_nowhere.c":
         "a path is the one claim in prose a machine can settle",
 }
 
@@ -71,7 +71,19 @@ MUST_BE_SILENT = {
 }
 
 # Exempted on another page: the allow file must not be evidence of its own names.
-MUST_REPORT_CROSS = "scope/other.md: RADIO_GHOST_THREE_US"
+MUST_REPORT_CROSS = "scope/other.md:RADIO_GHOST_THREE_US"
+
+
+def reported_keys(out):
+    """The item lines under the two "missing" headings, exactly as printed."""
+    keys, take = [], False
+    for line in out.splitlines():
+        if line.startswith("== "):
+            take = "absent from the code" in line or "do not resolve" in line
+            continue
+        if take and line.startswith("   ") and line.strip():
+            keys.append(line.strip())
+    return keys
 
 
 def run(tmp, allow_text):
@@ -113,6 +125,20 @@ def main():
         if "-- not page:name" not in out3:
             fails.append("a bare-name exemption must be reported")
 
+        # The report must print the exemption key, not a prettier rendering.
+        keys = reported_keys(run(tmp, ""))
+        if not keys:
+            fails.append("the round-trip case has no population: an empty "
+                         "allow file reported nothing")
+        else:
+            back = "".join("%s  # round-trip\n" % k for k in keys)
+            left = reported_keys(run(tmp, back))
+            if left:
+                fails.append("the report does not print the exemption key: %d "
+                             "of %d line(s) came back after being pasted into "
+                             "the allow file, first %s"
+                             % (len(left), len(keys), left[0]))
+
     # Not reachable through the CLI: a corpus allow file is not tracked.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import check_docs
@@ -135,7 +161,8 @@ def main():
         print("FAIL " + f)
     if not fails:
         print("check_docs: ok (%d reported cases, %d silent cases, 2 allow-file "
-              "defects)" % (len(MUST_REPORT) + 1, len(MUST_BE_SILENT)))
+              "defects, 1 key round-trip)"
+              % (len(MUST_REPORT) + 1, len(MUST_BE_SILENT)))
     return 1 if fails else 0
 
 
