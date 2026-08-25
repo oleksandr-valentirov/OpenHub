@@ -51,6 +51,19 @@ against a real hub. An item whose reasoning and whose fix both live in another
 tree is a number in a foreign queue, which is what the paragraph at the top of
 this file is about.
 
+The seventh, 2026-08-26, retired two, and both were closed rather than argued
+closed. **Item 102** was `linkjoin`'s cursor, not the join: `seed()` kept the last
+row of a 200-row page from a 2000-event buffer, so it started 200 events in the
+past and replayed the backlog as arrivals. The arithmetic is what gave it away -
+151 arrivals for one node against 38 frames on the hub's own ladder for both, four
+times what the air can hold. `wl55_device 3c184a6`, with the pagination contract
+pinned by a test in the tree that serves it, `openhub-server ffd99e3`. **Item 103**
+is `openhub-server 9493128`: five device fields carry `sample: true` and are never
+diffed, so on a per-frame measurement absence means only that the hub did not send
+it. The schema digest and the docs digest are byte-identical either side of it, so
+no running hub disagrees. Both readings are on `openhub-server/README.md`
+§ *Reading it honestly*.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -896,33 +909,6 @@ bounded only by how often the hub visits that channel - so the worst case is set
 by the noisiest channel in the plan rather than by the rotation.
 
 `open_hub/radio/superloop.md`.
-
-### 102. `linkjoin` leaves most hub arrivals unmatched, so delivery cannot be graded — `defect`
-
-Run `2026-08-25-2`, RG-A-6. The join reported `19 sent, 19 accepted, 100.0%` with
-device placement sd 8 us - and printed
-`151 hub arrival(s) had no device record in the window` beside it. That is 89 %
-of the population unjoined, and `specs/06-regression.md` § 6.2 says a window
-where either non-vacuity figure is a large fraction **is not graded at all**.
-
-So the run has a delivery figure in the plan's reference band and may not quote
-it. The tool's own non-vacuity line is what refused it, which is the check
-working; what is missing is the reason so many arrivals have no device record,
-and whether the cursor starts before the VCP reader does.
-
-`../bench/runs/2026-08-25-2/RESULT.md`.
-
-### 103. The server's per-frame diff omits a field, so an arrival carries the previous value — `defect`
-
-`linkjoin` printed `6 arrival(s) carried the previous frame's value, not their
-own: the server's diff omitted the field` during run `2026-08-25-2`.
-
-A field that is unchanged from the previous frame is dropped from the diff, and
-the reader then attributes the old value to the new arrival. For a counter that
-is harmless; for a per-frame measurement it is a silent wrong number, and the
-reader cannot tell the two cases apart.
-
-The server's queue is this file. `openhub-server/README.md`.
 
 ## Debts
 
