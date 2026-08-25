@@ -98,7 +98,9 @@ def link_corpus(**edits):
         "radio_stack/inc/kdf.h":        "#include <stdint.h>\n",
         "radio_stack/inc/radio_phy.h":   '#include <stdint.h>\n#include "profile.h"\n'
                                          '#include "radio_slots.h"\n',
-        "radio_stack/inc/radio_slots.h": '#include <stdint.h>\n#include "profile.h"\n',
+        "radio_stack/inc/radio_slots.h": '#include <stdint.h>\n#include "profile.h"\n'
+                                         '#include "radio_layout.h"\n',
+        "radio_stack/inc/radio_layout.h": "#include <stdint.h>\n",
         "radio_stack/profiles/profile.h": '#include "profile_ids.h"\n'
                                           '#include "profile_asbuilt.h"\n',
         "radio_stack/profiles/profile_ids.h":      "\n",
@@ -158,7 +160,9 @@ def main():
             print("FAIL %-42s exit %d (want %d)%s"
                   % (name, code, want_exit,
                      "" if want_text is None else "  looking for %r" % want_text))
-            print("     " + " | ".join(l for l in out.splitlines() if "==" in l))
+            # Whole output: a summary filter cropped the line naming the file.
+            for l in out.splitlines():
+                print("     " + l)
         else:
             print("ok   %s" % name)
     print("\n%d case(s), %d failed" % (len(CASES), bad))
