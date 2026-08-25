@@ -1,13 +1,13 @@
 /**
  * @file phy_rfm69.c
- * @brief The RFM69 behind the nine operations of phy.h, and the board under it.
+ * @brief The RFM69 behind the eight calls of phy.h, and the board under it.
  *
  * Twenty of the driver's twenty-nine calls are configuration and every one runs
  * exactly once, from values that already live in radio_phy.h. They are not the
  * protocol's business at all, so they live here and the layer above never learns
  * the chip has registers.
  *
- * The device has an SX126x under the same nine operations. That is what makes a
+ * The device has an SX126x under the same eight. That is what makes a
  * second PHY a control rather than a port: identical logic on a chip that is not
  * this one separates *the logic is wrong* from *this driver is wrong*, which no
  * counter on either side of the antenna can do.

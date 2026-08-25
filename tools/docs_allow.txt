@@ -68,11 +68,8 @@ radio/crypto/wire-crypto.md:wire_v1  # the retirement section names deleted sets
 radio/crypto/wire-crypto.md:wire_v2  # same paragraph: both were removed 2026-08-22 and are named as history
 radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rule was already following
 
-# Declared by ADR-0029 and not yet supplied by either firmware. Hub item 80,
-# device item 82; these three lines go when those close.
-radio/phy-seam.md:timebase_now  # the clock backend's read, proposed name for the two the trees disagree on
-radio/phy-seam.md:crypto_hkdf_sha256  # the key schedule's seam, mbedTLS supplies it here and sha256.c there
-radio/phy-seam.md:crypto_hmac_sha256  # same seam: both trees already have a working implementation to bind
+# Those three names are supplied now - timebase.h and kdf.h in the library - and
+# the exemptions they had went with the items that owed them, 2026-08-25.
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:hop_prf_selftest  # named as the two-stage check item 81 replaced with hop_selftest
 
 # CMSIS and nginx spell these, not this project. Named because the page is about
@@ -101,16 +98,15 @@ radio/phy-seam.md:rx_note_sync        # the same function, in the list of what p
 radio/phy-seam.md:rx_discard_frame    # likewise, absorbed 2026-08-24
 radio/phy-seam.md:sync_edge_new       # the flag phy_ev_t.sync_seq replaced
 
-# Declared by ADR-0028/0029 and not supplied by either firmware yet. These go
-# when the library exists; hub item 80, device item 82.
-radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's chosen name, still an empty remote
+# `radio_stack` is a repository, not a symbol, so no rename can make it exist in
+# a source scan; the library was built on 2026-08-25 and these lines stay for
+# that reason rather than the one they were written with.
+radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's name, read as a symbol because of the radio_ prefix
 radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_lib_HAL   # a naming the record considered and rejected
 radio/phy-seam.md:radio_stack         # the same name, in this page's layout sketch
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hkdf_sha256   # the key schedule's seam, declared there
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_hmac_sha256   # likewise
 radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_sha256        # the alternative the record weighs, declared to weigh it
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the library's chosen name, still an empty remote; this record scopes what goes in it
-radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names the empty remote
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the repository this record scopes the contents of
+radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names it
 
 # Names ADR-0030 decision 6 removed by being executed, 2026-08-24. A record has
 # to keep the words it decided in, and none of these is a live claim any more.

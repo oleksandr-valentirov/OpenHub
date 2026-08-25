@@ -14,9 +14,20 @@ extern TIM_HandleTypeDef htim2;
 
 /* Ticks per nominal microsecond, Q24, and nominal until the first LSE window. */
 static volatile uint32_t scale_q24 = 1u << 24;
+static volatile uint32_t scale_refused;
 
+/* Refused rather than clamped, and counted rather than silent.
+ * radio_devices_docs/open_hub/radio/timebase.md */
 void timebase_set_scale(uint32_t q24) {
+    if (q24 == 0u) {
+        scale_refused++;
+        return;
+    }
     scale_q24 = q24;
+}
+
+uint32_t timebase_scale_refused(void) {
+    return scale_refused;
 }
 
 uint32_t timebase_scale(void) {

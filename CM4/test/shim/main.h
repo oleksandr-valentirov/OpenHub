@@ -18,6 +18,15 @@
 #define RFM_CS_Pin           0x8000u
 #define RFM_CS_GPIO_Port     ((void *)2)
 
+/* TIM2, as much of it as timebase.c touches: a counter the test writes. */
+typedef struct {
+    uint32_t CNT;
+} TIM_TypeDef;
+typedef struct {
+    TIM_TypeDef *Instance;
+} TIM_HandleTypeDef;
+#define __HAL_TIM_GET_COUNTER(h)  ((h)->Instance->CNT)
+
 void HAL_GPIO_WritePin(void *port, uint16_t pin, int state);
 int  rfm_spi_transfer(const uint8_t *tx, uint8_t *rx, size_t len);
 /* The real one is HAL's weak symbol; phy_rfm69.c defines it on both builds. */

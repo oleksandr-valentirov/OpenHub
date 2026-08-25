@@ -40,3 +40,9 @@ void     timebase_set_scale(uint32_t scale_q24);
  * @return ticks per nominal microsecond, Q24
  */
 uint32_t timebase_scale(void);
+
+/**
+ * @brief How many scale writes were refused as unrepresentable.
+ * @return the count since boot; anything but 0 means a window produced a zero
+ */
+uint32_t timebase_scale_refused(void);

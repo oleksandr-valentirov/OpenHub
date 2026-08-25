@@ -306,7 +306,7 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 
 
 def check_portable():
-    """The include list of the library-to-be, per file rather than as a union.
+    """The include list of the library, per file rather than as a union.
 
     A union would permit grid.c a timebase.h it must not have, and a permission
     nobody needs is a permission that gets used.

@@ -15,7 +15,7 @@ sentence, so nothing anywhere disagrees when it goes stale. Name the file, the
 symbol, the commit or the ADR instead. The `device` items below are the exception
 and are hints rather than identifiers.
 
-**Cleaned three times.** The first pass retired four closed entries, moved the front-end
+**Cleaned four times.** The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
@@ -25,7 +25,25 @@ and the boot erase — leaving their reasoning on `radio/phy.md`,
 `open_hub/arch/ipc.md` and the `verification` skill. The third retired item 81,
 the hop deck stage: verified on the H755 with two swapped deck bytes as its
 control on 2026-08-24, reasoning left on `radio/hopping.md` and
-`open_hub/security/crypto-architecture.md`.
+`open_hub/security/crypto-architecture.md`. The fourth retired item 80, the
+crypto backend: it was closed on 2026-08-25 by phase 9 steps 4 and 5 and left
+here wearing a `closed` tag, which is a closed item in the costume of a status
+column. Its reasoning is on `radio/phy-seam.md` § the crypto seam does not exist,
+and the record of what the built seam narrowed to is
+[ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md).
+The fifth retired item 11, the zero timebase scale: its loop half closed when the
+stepping rule moved to `radio_stack/src/grid.c`, and its division half closed
+2026-08-25 with a guard at the setter and `CM4/test/test_timebase.c` to make that
+guard red. Reasoning on `open_hub/radio/timebase.md`; what the work turned up
+about `ipc_timing_t`'s headroom is item 87 above, because it is a different
+problem that happened to be in the way.
+
+**Nothing was added for the `.gitignore` defect found in the same hour**, and
+that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
+not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
+entry to commemorate itself. The rule the next harness needs is on
+`open_hub/testing/host-tests.md` § one of these suites was not in the repository,
+which is where somebody adding one will be.
 
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
@@ -769,20 +787,28 @@ counts nothing. Not the cause of any zero above — those never reached the coun
 
 ## Debts
 
-### 11. A zero timebase scale would wedge the grid, and only luck forbids it — `debt`
+### 87. `ipc_timing_t` is full at 96 of 96, so the next field silently does not fit — `debt`
 
-`superframe_due()` in `CM4/Core/Src/radio.c` steps the boundary by
-`superframe_tk` in a `while` loop, so a zero step is an unterminated loop with a
-runaway counter, and `timebase_ticks_to_us` divides by the same scale. The device
-session hit exactly this on 2026-08-21.
+Measured 2026-08-25, not recalled: `sizeof(ipc_timing_t)` is **96** and
+`IPC_PAYLOAD_MAX` is **96**. The `_Static_assert` beside it passes at exact
+equality, which is correct and is also the point at which it stops carrying
+information — the next reading CM4 wants to send CM7 does not fit, and what a
+reader sees is a failed assert rather than a reason.
 
-It cannot fire here, and **the reason is two derivations away from the value**:
-`calib.c` rejects any capture window outside ±2 % of nominal. Nothing between
-`timebase_set_scale`, which takes any `uint32_t`, and the loop that trusts it
-would notice a zero. The fix is to make the bad value unrepresentable at the
-setter rather than checked at the use.
+**It has already cost one instrument a reader.** `timebase_scale_refused()`
+counts scale writes refused as unrepresentable; the host suite reads it and
+nothing on the board does, because the `timing` line would need a field here.
+That is left as a tripwire with a host-side consumer rather than paid for with a
+field somewhere else, and the reasoning is on
+`open_hub/radio/timebase.md` § the refusal has no board-side reader.
 
-`open_hub/radio/timebase.md`, and the `verification` skill § failure-path sweep.
+Two ways out and neither is free: raise `IPC_PAYLOAD_MAX`, which touches the ring
+both cores compile and every other payload's headroom; or split the struct, which
+costs a second request type and a second round trip on a path that already costs
+45 ms (item 40). **Worth deciding before the next field, not after the assert
+fails.**
+
+`../radio_devices_docs/open_hub/arch/ipc.md`.
 
 ### 9. Every timing figure assumes HSE is the ST-Link MCO — `debt`
 
@@ -958,73 +984,6 @@ belongs with the other prerequisites, not after them.
 ---
 
 ## Contract debts
-
-### 80. The crypto backend is counted as done and shares two names with the device's — `contract` `closed 2026-08-25`
-
-ADR-0028 says two of the library's three backends already exist and names
-`crypto.h` as one of them.
-[phy-seam.md](../radio_devices_docs/radio/phy-seam.md) went further and said the
-hub carries Mbed TLS *under the same names* as the device. **Checked by grep
-across `CM4`, `CM7` and `Common`, excluding vendored mbedTLS, on 2026-08-24:**
-
-| Device `Core/Inc/crypto.h` | Sites here |
-|---|---|
-| `crypto_gcm_seal` | **0** |
-| `crypto_gcm_open` | **0** |
-| `crypto_rng_word` | **0** |
-| `crypto_aes_ecb_block` | **0** |
-
-This tree's surface is `CM7/crypto/crypto.h` — `crypto_init`, `crypto_random`,
-`crypto_x25519_public`, `crypto_pair_derive`. **The two headers share exactly two
-names**, `crypto_x25519_keygen` and `crypto_x25519_ecdh`.
-
-**The costly half is not the names, it is the level.** The device's `exchange.c`
-builds the key schedule itself from `hkdf_sha256` and `hmac_sha256`; this tree
-has the entire derivation behind one call, `crypto_pair_derive()`, with
-`mbedtls_hkdf` and `mbedtls_md_hmac` inside it. So the seam falls **above** the
-schedule here and **below** it there, and a library holding `exchange.c` needs it
-below on both sides.
-
-What this tree owes, per
-[ADR-0029](../radio_devices_docs/radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md):
-`crypto_hkdf_sha256` and `crypto_hmac_sha256` declared on the contract and
-supplied from mbedTLS, which already has both — no new cryptography is written on
-either side. And **`crypto_pair_derive()` goes**, because it is a second
-implementation of a schedule the library computes for both ends and nothing
-compares the two.
-
-**Its deletion is verified on air and cannot be verified by a vector.**
-`pair_v1..v3` would agree by construction the moment one schedule serves both
-sides, which is exactly the green check that means nothing. The evidence is a
-pairing that completes between this board and a WL55.
-
-**One awkward part is not crypto at all.** The schedule is used by the pairing
-path on **CM7** while `exchange.c` would be library code linked on **CM4**, so
-this is where the mailbox seam — the one ADR-0028 defers — reaches into the PHY
-one. Worth knowing before it is started, and it is why this is a contract debt
-rather than a tidy-up.
-
-Agree with the device session before it lands. `radio_devices_docs/radio/phy-seam.md`
-§ the crypto seam does not exist.
-
-**Closed 2026-08-25, and the declared surface is narrower than ADR-0029's.**
-`Common/inc/kdf.h` declares `crypto_hkdf_sha256` and `crypto_hmac_sha256` and
-nothing else, because that is what `exchange.c` calls; this tree supplies both
-from mbedTLS. A header named `crypto.h` holding two of the record's nine names
-would have been a name broader than its coverage, and would have been shadowed
-by the `crypto.h` already on this tree's include path — step 1's hazard again.
-
-`crypto_pair_derive()` is deleted. What replaces it is `crypto_pair_keys()`:
-two ECDH terms, the guard that they differ, and the library's schedule over
-them, with the ephemeral passed in rather than drawn inside. `CRYPTO_POINT_LEN`,
-`CRYPTO_SALT_LEN` and `CRYPTO_TRANSCRIPT_LEN` went with it — three lengths this
-tree defined a second time.
-
-**Verified on air, ten windows per arm, and by the published set.** 27 responses
-across both arms with every `confirm_hub` accepted and `bad_confirm` 0;
-`pair_v4 derive+confirm` and `superframe provenance` reproduce the immutable
-vectors at 59 ms and 120 ms against 60 and 121 before.
-`radio_devices_docs/specs/03-roadmap.md` phase 9 steps 4 and 5.
 
 ### 73. `RADIO_RX_BW_MIN_HZ` doubles a single-sided requirement — `contract`
 
@@ -1257,17 +1216,18 @@ is correct and not what the operator last chose.
 ### 75. `radio.c` is the chip and the protocol in one file — `debt`
 
 **Step 1 of the cut is done: the PHY contract is one file.**
-`Common/inc/phy.h` now holds the nine operations and the four-kind event, and
-`wl55_device/Core/Inc/phy.h` is **deleted** rather than copied — the device
-already builds against this directory through `OPENHUB_PATH`. Verified in both
+It holds the eight calls and the four-kind event, and
+`wl55_device/Core/Inc/phy.h` is **deleted** rather than copied. Verified in both
 directions: the device's ROM is byte-for-byte the same size across the move, and
-**removing `Common/inc/phy.h` fails the device's build** at `phy_sx126x.c:9` and
+**removing the shared header fails the device's build** at `phy_sx126x.c:9` and
 `hublogic.c:11`, which is ADR-0028 phase 9b's exit criterion demonstrated on one
-header.
+header. It lived in `Common/inc/` and reached the device through `OPENHUB_PATH`
+until phase 9 step 6; it is `radio_stack/inc/phy.h` now and both firmwares reach
+it through the submodule, which is the same claim over a different path.
 
 That is the cheap half. **What is left is the hub having no implementation of it**
 — `radio.c` still calls the driver directly, and the survey below is what has to
-move behind the nine operations:
+move behind the contract:
 
 | Kind | Distinct | Sites | Where |
 |---|---|---|---|
@@ -1300,7 +1260,7 @@ and not a PHY constant. The RC oscillator calibration consequently runs *before*
 the carrier is set rather than after; that was an argument until the run above,
 and is now a measurement.
 
-**Step 3 is done: five of the nine operations are behind the contract.**
+**Step 3 is done: five of the driver's nine operation kinds are behind the contract.**
 `phy_init`, `phy_tune`, `phy_standby`, `phy_listen`, `phy_transmit` and
 `phy_rssi_now` are implemented; `radio.c` is **2530 lines** and its direct driver
 calls are down from **53 to 30**. `transmit()`, `build_frame()` and `tx_buffer`
@@ -1327,12 +1287,32 @@ clock is TIM2's tick and not a calibrated microsecond, so the `_us` in those nam
 is a wart rather than a promise — left alone, because renaming a field two
 firmwares compile has to be worth more than a better name.
 
-**Step 4 is done: `phy_poll` is cut, and seven of the nine are behind the
-contract.** `rx_note_sync`, `rx_discard_frame`, the flag reading inside
+**Step 4 is done: `phy_poll` is cut.** Progress on this item used to be reported
+as *seven of the nine*, and that denominator could not be checked against
+anything: `phy.h` declares **eight** calls, the survey below counts **nine**
+driver operation *kinds*, and the table further down lists **twelve** distinct
+operation symbols. Three numbers, one word. What replaces them is one grep each,
+measured 2026-08-25:
+
+| population | where | count |
+|---|---|---|
+| distinct driver symbols `radio.c` reached | `9df30a1`, at 2649 lines | **36** |
+| the same today | `c552b06` onward | **10**, over 18 sites |
+| the contract that replaced them | `radio_stack/inc/phy.h` | **8** |
+
+The middle row is what this item closes on and it is the one to re-run. The
+survey's nine and this table's twelve differ because one groups by kind and the
+other counts symbols; neither is wrong and neither describes the header.
+`radio_devices_docs/radio/phy-seam.md` § where the seam falls.
+
+`phy_poll` being cut means `rx_note_sync`, `rx_discard_frame`, the flag reading inside
 `rx_frame_ready`, the DIO3 interrupt and all four FIFO-read paths are under the
 seam; the AFC ring, the per-grid regression, the slot attribution and the floor
-measurement stayed above it. `radio.c` is **2467 lines** and its direct driver
-calls **18**, from 30.
+measurement stayed above it. `radio.c` was **2467 lines** at that step and its
+direct driver calls **18**, from 30. **Counted again on 2026-08-25, after the
+library left this tree: 2492 lines and the same 18 calls.** The line count is the
+weaker of the two figures and moved without the seam moving; the call count is
+the one this entry closes on.
 
 `phy_ev_t` gained four fields, not three. `afc_hz`, `afc_valid` and `lna_gain`
 were the ones this entry already owed. The fourth is **`sync_seq`**, and it is

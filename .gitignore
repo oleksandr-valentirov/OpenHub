@@ -28,8 +28,10 @@ cmake_install.cmake
 compile_commands.json
 Makefile
 
-# ... but not the host test harness, which the pattern above hid.
+# ... but not the host test harnesses. One negation per harness.
+# radio_devices_docs/open_hub/testing/host-tests.md
 !Common/test/Makefile
+!CM4/test/Makefile
 
 # Python tooling
 __pycache__/
@@ -48,3 +50,4 @@ Common/test/test_ipc
 Common/test/test_oht
 Common/test/test_cfg
 CM4/test/test_phy
+CM4/test/test_timebase
