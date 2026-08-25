@@ -955,9 +955,12 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         /* Granted against observed, never a grant restated as a measurement.
          * radio_devices_docs/open_hub/cli.md */
         {
-            char asked[56];
+            /* Sized for the longest form: three periods, a word, and their labels. */
+            char asked[80];
             char applied[12];
-            unsigned want = d.report_every;
+            /* CM4's belief, not a second derivation of it: the two must agree and
+             * only one of them decides which superframes it addresses. */
+            unsigned want = d.every_now;
 
             /* An acked command is what the hub believes; a riding one is not. */
             if (d.cmd_state == 2u) {
@@ -967,12 +970,12 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                 else
                     snprintf(applied, sizeof(applied), "%u", d.ack_arg);
                 snprintf(asked, sizeof(asked),
-                         "grant %u, commanded %u acked, applied %s",
-                         d.report_every, d.cmd_every, applied);
-                want = d.cmd_every;
+                         "grant %u, commanded %u acked, applied %s, in force %u",
+                         d.report_every, d.cmd_every, applied, d.every_now);
             } else if (d.cmd_state == 1u) {
-                snprintf(asked, sizeof(asked), "grant %u, commanded %u riding",
-                         d.report_every, d.cmd_every);
+                snprintf(asked, sizeof(asked),
+                         "grant %u, commanded %u riding, in force %u",
+                         d.report_every, d.cmd_every, d.every_now);
             } else {
                 snprintf(asked, sizeof(asked), "grant %u", d.report_every);
             }
@@ -1027,6 +1030,10 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                     (unsigned long)dl.sent, (unsigned long)dl.opportunities,
                     dl.next_slot, (unsigned long)dl.seal_err,
                     (unsigned long)dl.tx_err, (unsigned long)dl.no_device);
+            /* The gap between sent and opportunities has one cause and it is named. */
+            cli_out(cli, "  %lu fell where no device listens; a frame nobody can"
+                         " hear is duty cycle spent\r\n",
+                    (unsigned long)dl.none_due);
             /* Only ever 0, so it says nothing yet. ROADMAP item 36 */
             if (dl.nonce_refused != 0u)
                 cli_out(cli, "downlink: %lu seal(s) refused, the nonce tuple was"

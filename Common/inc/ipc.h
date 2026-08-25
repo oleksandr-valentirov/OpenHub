@@ -467,6 +467,7 @@ typedef struct ipc_downlink_state {
     uint32_t cmd_acked;      /**< the device echoed the seq back */
     uint32_t cmd_lost;       /**< every repeat spent and no echo ever came */
     uint32_t nonce_refused;  /**< seals refused because the tuple was not new */
+    uint32_t none_due;       /**< no installed device opens a window in that superframe */
 } __attribute__((packed)) ipc_downlink_state_t;
 _Static_assert(sizeof(ipc_downlink_state_t) <= IPC_PAYLOAD_MAX,
                "ipc_downlink_state_t too large");
@@ -538,6 +539,7 @@ typedef struct ipc_device_report {
     uint16_t cyc_min;          /**< shortest gap between cycles: the observed cadence */
     uint16_t cyc_n;            /**< gaps measured, so the mean has a stated n */
     uint32_t cyc_sum;          /**< ... their sum; the mean carries delivery loss too */
+    uint8_t  every_now;        /**< the period the hub believes is in force, grant or acked */
 } __attribute__((packed)) ipc_device_report_t;
 
 _Static_assert(sizeof(ipc_pair_req_evt_t)  <= IPC_PAYLOAD_MAX, "ipc_pair_req_evt_t too large");

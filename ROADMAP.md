@@ -38,6 +38,19 @@ guard red. Reasoning on `open_hub/radio/timebase.md`; what the work turned up
 about `ipc_timing_t`'s headroom is item 87 above, because it is a different
 problem that happened to be in the way.
 
+The sixth, 2026-08-25, retired three. **Items 30 and 96** were both measurements
+of ADR-0033's fault rather than of the link — the k-gradient and the report-rate
+effect are gone with the register off, and both are on
+`open_hub/known-defects.md` with the arm neither of them has. **Item 97 is
+retired without ever having been fixed here**, because it was never this
+repository's work: the false half-removal is `openhub-server`'s bookkeeping and
+is repaired in its `8c05879`, its reasoning is that repository's `README.md`
+§ *A removal is a memory, and the hub can undo it without saying so*, and **the
+bench half it leaves behind is inside item 82**, which already owed a re-enrolment
+against a real hub. An item whose reasoning and whose fix both live in another
+tree is a number in a foreign queue, which is what the paragraph at the top of
+this file is about.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -1697,7 +1710,7 @@ never has to infer one from a connection state.
 This one cost time on 2026-08-24: a hub whose radio was healthy read as a stale
 device record for six minutes, and the first hypotheses were about the radio.
 
-### 79. The northbound link took seven minutes to return, once — `defect` `not reproduced`
+### 79. The northbound link takes minutes to return, and one attempt shape is unrecorded — `defect`
 
 **Seen once, on 2026-08-24, after a CM4 reflash.** The hub ran normally on its own
 console throughout — CM4 accepting frames, the grid advancing, `devices` healthy —
@@ -1743,6 +1756,44 @@ reads zero through the server while the console reads normal traffic**, which
 looks exactly like a total radio failure. It cost two windows here before the
 pattern was recognised, and `/api/health` is the cheap guard.
 
+#### 2026-08-25: "it has stopped" is wrong, and there is an attempt shape no counter here records
+
+**The hub recovered unaided, with no reset.** A flash of both cores at about
+21:10 and a server container recreate at 21:11 left the link down. Console:
+
+    21:23:55   down, last reason: connect failed (accepted)
+               connects 0, disconnects 0, connect failures 2
+               events 0 pushed, 88 dropped
+    21:25:10   connects 1, disconnects 0, connect failures 2
+
+Nothing was reset between those reads. So the paragraph above — *the counter stops
+incrementing, so the hub is not retrying, it has stopped* — **is refuted**: it is
+slow to return, about fourteen minutes here, and it returns on its own.
+
+Everything the outage would be blamed on was measured and was clean **throughout**:
+the hub answered ping at `192.168.137.203` with 0 % loss, the host held
+`192.168.137.1/24` on `enp6s0`, `7420` and `8080` were both `LISTEN` on `0.0.0.0`,
+and a `/dev/tcp` probe to `192.168.137.1:7420` accepted.
+
+**And the server's log holds an attempt this hub's counters cannot see.** The
+server session reports a connection at 21:24:27 that opened TCP and closed in the
+same millisecond with no HELLO, then the connection at 21:24:40 that completed
+one. Across those the hub's `connect failures` stayed at 2 and `disconnects` at 0.
+So an attempt that **completes the TCP connect and abandons before HELLO** is
+neither a `connect`, nor a `connect failure`, nor a `disconnect` here — it lands
+in no bucket, and the only instrument that saw it was on the other side of the
+link. That is the same shape as a counter conflating four conditions: a reader
+watching `telem` alone sees a hub doing nothing for fourteen minutes, and it was
+not doing nothing.
+
+**One earlier event at 21:19:39 is unattributable and is not counted.** The server
+session's own `/dev/tcp` probe and a hub dial produce identical log lines and both
+arrive through the bridge as `172.19.0.1`, so nothing recorded separates them —
+their words, and they withdrew the "zero attempts" reading built on it.
+
+What is owed: a bucket for the abandoned-before-HELLO case, and the retry interval
+printed rather than inferred from two failures and a success.
+
 ### 82. The server's roster UI has never met a real hub — `debt`
 
 `openhub-server` enrols and removes devices from its page as of
@@ -1766,7 +1817,15 @@ What the fake hub cannot answer, in the order to answer it:
 - **`device_remove`, both halves.** `ok` against `radio_err`, and whether the node
   keeps reporting after its own removal — the page's `reported_since` marks the
   radio's half and no real hub has ever produced one. **Run 2026-08-25 and it
-  produced a false one**: item 97.
+  produced a false one** — this server's own memory of its own command, not the
+  radio's half; the page now judges a reporting removed device on `paired_total`,
+  the `hub.devices` low-water mark and the silence in the device's own
+  superframes, and answers `cannot_say` where they disagree
+  (`fix(state): a removal is a memory, and three witnesses judge it`,
+  `openhub-server` `8c05879`). **The re-enrolment path has still never met this
+  hub**: what is owed is a `device_remove` here followed by a `device add` at the
+  console, and the verdict reading `re_enrolled` rather than
+  `removed, still reporting`.
 - **Pre-register the attempt count before any of it.** Item 59 puts a fresh
   enrolment at about 1 in 5 once anything is paired, so a single `no_join` says
   nothing about this page, and reading one as a defect in it is item 59 missed.
@@ -1855,47 +1914,6 @@ count, and nothing in the output says so.
 `open_hub/radio/superloop.md`.
 
 
-### 97. A re-enrolment made anywhere but this server reads as a half-removal — `defect`
-
-Node B was removed **through the server** on 2026-08-25 at 00:07 — command 8,
-`result: ok`, a whole removal — and re-enrolled from the **hub console** at 18:31,
-`device add FEF91007`, slot 1, paired on the first window. The page then read
-`removed, still reporting`, whose tooltip says *"The hub has sent this device
-again since, which is the radio's half."* No half-removal happened.
-
-`note_roster_command()` writes `self.removed[dev]` on a `device_remove` this
-server issued and pops it on a `device_add` **this server issued**. Nothing else
-clears it, ever. The record is this server's memory of its own command and it is
-rendered in the badge column beside measurements — the shape the `verification`
-skill files under a configuration value sharing a column with a reading.
-
-`reported_since` is `dev.updated > gone.ts`, which is true for the radio's half
-of a bad removal, true for a re-enrolment on the console, and true for a re-pair
-by any other route. **One expression, three causes, one badge**, and the tooltip
-asserts the rarest of the three.
-
-**The contradiction was already on the page.** `hub holds` read 2 and
-`paired_total` 1 while the badge said removed, and the page's own note calls
-`hub holds` "the number to read a removal against". The discriminators are all
-served: both counters moved at the join, and the device object had been stale for
-18 h beforehand, where the radio's half of a removal has no gap at all.
-
-The fix item 82 already names is the one that closes it: **the roster is a fact
-the hub owns and does not publish.** `cfg_device_t.state`, which `device list`
-prints as `enrolled` or `paired`, reaches no telemetry field, and
-`OHT_EVT_PAIRED` and `OHT_EVT_PAIR_WINDOW` are declared in
-`Common/inc/oht_proto.h` and in `../openhub-server/openhub_server/protocol/wire.py`
-and **sent by nothing** — checked in HEAD, the enum is the only occurrence on this
-side. Until one of them lands the server cannot read a removal, only remember one.
-
-This is item 86 arriving on the north side: the guard there pushes the bench onto
-`device remove` then `device add` at the console, which is the one path this
-server cannot see, so it recurs on every re-enrolment.
-
-`../openhub-server/openhub_server/state.py` `note_roster_command`,
-`../openhub-server/openhub_server/ui/index.html` `status`.
-
-
 ### 98. The downlink round robin stands still where the devices are listening — `blocking` `defect` `contract`
 
 **Two devices on one grant, and one of them receives every downlink while the
@@ -1943,3 +1961,82 @@ tree, `Core/Src/device.c` → the `may_send` block.
 `CM4/Core/Src/radio.c` → the round robin in the downlink service;
 `../radio_devices_docs/radio/tdma.md`;
 `../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md`.
+
+#### The fix, built 2026-08-25 and not yet on the board
+
+The rotation scans for a device that opens a window in **this** superframe rather
+than for the next installed one. `device_due()` is the predicate and it is the
+only one in the file.
+
+**It admits a period the hub commanded and never saw acked.** A device applies a
+rate on receipt and echoes it in its next report; if every repeat is spent with no
+echo, the two sides sit on different periods. Serving neither is what strands a
+device, and the cost of being wrong the other way is one frame nobody hears.
+
+**A second defect was found while reading it and is fixed in the same change: the
+grant is never rewritten after a rate change.** `d->report_every` is set once, at
+pairing, and `score_missed_reports()` was counting against it — so a device
+commanded to a new period had its misses scored on the old one. `dev_entry_t`
+gains `every_now`, seeded from the grant and moved to what the device **said it
+applied** when a SET_RATE is acked; both the miss score and the rotation read it.
+
+**Measured live before the fix was flashed**, both nodes granted 1 at pairing and
+commanded to 8:
+
+    20:51:58   22cdec51 missed=2   fef91007 missed=2
+    20:52:04   22cdec51 missed=4   fef91007 missed=4
+    20:52:07   22cdec51 missed=0   fef91007 missed=0
+
+`missed_run` sawtooths 0→7 on both, in lockstep, because the hub scores every
+superframe as an opportunity while the devices report one in eight. **It stays
+under `link_lost_misses` = 12 only because 8 < 12**: a device commanded to a
+period above the threshold would be declared lost while perfectly healthy, and
+nothing in the output would say why. The lockstep is itself the starvation
+condition showing — both devices listen on the same superframes.
+
+`every_now` is published in `ipc_device_report_t` and the console reads it as
+`in force N` rather than deriving it, because CM4's belief is the one that decides
+which superframes get addressed and a second derivation on CM7 is a second answer.
+
+**What the change gives up.** An opportunity where nobody listens now transmits
+nothing, so `dl_sent` falls from one superframe in two to one in eight at two
+devices on `every 8` — duty cycle returned, and `none_due` is the counter that
+closes `sent` against `opportunities`. It also thins `airgrid.py`'s C5b, which
+needs a superframe carrying both a beacon and a downlink: about a fourfold drop
+in that population, so a gate capture has to be longer or run with a device on
+`every 1`.
+
+#### On the board 2026-08-25 21:09, and the control paid out
+
+Both cores flashed and hard-reset. Two windows of about ten minutes each, node A
+in slot 0 and node B in slot 1, both on `every 8` throughout — which is the
+starved configuration, `8 / 2 = 4` steps between listening superframes and
+`4 mod 2 = 0`.
+
+| | hub sent | node A opened | node B opened |
+|---|---|---|---|
+| before, 320 superframes | every opportunity, `2405 of 2405` | **0** | 40 |
+| after, 304 superframes | **38** | **19** | **19** |
+
+**Before, roughly 120 of about 160 frames were heard by nobody** and node A's
+counter did not move once. After, the two nodes are equal and
+
+    38 sent + 112 none_due == 150 opportunities        the window
+    76 sent + 145 none_due == 221 opportunities        cumulative, both reads
+
+**and `19 + 19 == 38`: every frame the hub transmitted was opened by a device.**
+That third relation was not pre-registered and is the strongest of the three,
+because it needs no assumption about which device should have got what.
+
+The pre-registered control was *both climb and neither is zero*, chosen because
+both reading zero would also show no starvation while meaning the hub had stopped
+transmitting downlinks entirely. Neither is zero. The uplink is untouched: 38
+reports each in the same window, `seen every 8` on both.
+
+**One pre-registered check did not fire, and that is not a pass.** The hub was to
+relearn each device's period from `ack_arg`, which rides every report, rather than
+from the store. After the reflash there is no SET_RATE outstanding and the store's
+grant happens to equal what both devices do, so the console reads `grant 8` with
+no `in force` clause and **the relearn path was never exercised on the board.** A
+value that happens to be right is not a value that is known to be right; the path
+stays untested and the first rate change after a hub reset is what will test it.

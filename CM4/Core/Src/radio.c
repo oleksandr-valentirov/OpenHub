@@ -74,7 +74,8 @@ _Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 typedef struct dev_entry {
     uint8_t  used;
     uint8_t  slot;
-    uint8_t  report_every;
+    uint8_t  report_every;      /**< granted at pairing, and never rewritten after it */
+    uint8_t  every_now;         /**< the period in force: the grant until a SET_RATE is acked */
     uint8_t  flags;             /**< RADIO_REPORT_FLAG_* from the last report */
     uint32_t dev_id;
     uint32_t key_gen;
@@ -241,6 +242,7 @@ static uint32_t up_sync_unpaired;
  * radio_devices_docs/open_hub/radio/superloop.md */
 static uint8_t  dl_next_slot;
 static uint32_t dl_sent, dl_seal_err, dl_tx_err, dl_no_device, dl_served;
+static uint32_t dl_none_due;        /* the opportunity fell where nobody listens */
 static uint32_t dl_prf_err, dl_last_hz, dl_last_sf;
 
 /* pair_v4's invitation. Opaque here: CM4 keys the bytes it was given. ADR-0021 */
@@ -625,6 +627,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->temp_c_x10      = e->temp_c_x10;
     d->missed_run      = e->missed_run;
     d->report_every    = e->report_every;
+    d->every_now       = e->every_now;
     d->flags           = e->flags;
     d->ack_arg         = e->dl_ack_arg;
     d->arrival_us      = e->arrival_us;
@@ -1187,6 +1190,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.seal_err      = dl_seal_err;
         d.tx_err        = dl_tx_err;
         d.no_device     = dl_no_device;
+        d.none_due      = dl_none_due;
         d.nonce_refused = dl_nonce_refused;
         d.prf_err       = dl_prf_err;
         d.last_hz       = dl_last_hz;
@@ -1316,6 +1320,29 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 }
 
 
+/* A device opens its downlink window and reports only on its own superframes.
+ * radio_devices_docs/radio/tdma.md */
+static int device_due(const dev_entry_t *d, uint32_t sf) {
+    if (!d->used)
+        return 0;
+    /* Nothing heard from it this boot, so its period is not knowable here - and
+     * under ADR-0023 it may be waiting on a downlink to be allowed to transmit at
+     * all. Serve it whenever the rotation reaches it until it says otherwise.
+     * radio_devices_docs/open_hub/radio/superloop.md */
+    if (d->frames_ok == 0u)
+        return 1;
+    if (d->every_now == 0u)
+        return 1;
+    if ((sf % d->every_now) == 0u)
+        return 1;
+    /* A SET_RATE the device applied and whose ack never arrived leaves the two
+     * sides on different periods, and serving neither is what strands a device. */
+    if (d->dl_cmd == RADIO_CMD_SET_RATE && !d->dl_acked &&
+        d->dl_report_every != 0u && (sf % d->dl_report_every) == 0u)
+        return 1;
+    return 0;
+}
+
 /* The superframe that just closed: over, so its answer cannot still change.
  * radio_devices_docs/open_hub/radio/configuration.md */
 static void score_missed_reports(void) {
@@ -1324,10 +1351,8 @@ static void score_missed_reports(void) {
     for (uint8_t i = 0; i < RADIO_MAX_DEVICES; i++) {
         dev_entry_t *d = &devices[i];
 
-        if (!d->used || d->report_every == 0u)
-            continue;
-        /* Only an opportunity the grant actually named counts as a miss. */
-        if ((past % d->report_every) != 0u)
+        /* The period in force, not the grant: a rate change moves the opportunities. */
+        if (!device_due(d, past))
             continue;
         if (d->frames_ok != 0u && d->last_superframe == past)
             d->missed_run = 0;
@@ -1712,6 +1737,7 @@ static int install_device(const ipc_device_keys_t *k) {
     d->dev_id       = k->dev_id;
     d->key_gen      = k->key_gen;
     d->report_every = (k->report_every == 0u) ? 1u : k->report_every;
+    d->every_now    = d->report_every;
     memcpy(d->session_key, k->session_key, sizeof(d->session_key));
 
     /* Seed the replay floor from the durable counter, never from zero.
@@ -1890,6 +1916,12 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
         d->dl_ack_arg = rpt.ack_arg;
         dl_cmd_acked++;
     }
+    /* Read on every report and not only on the matching ack: the device carries
+     * its last applied command in each one, so a hub that has just restarted
+     * relearns the period from the first frame instead of addressing the grant
+     * for ever. radio_devices_docs/open_hub/radio/superloop.md */
+    if (rpt.ack_cmd == RADIO_CMD_SET_RATE && rpt.ack_arg != 0u)
+        d->every_now = rpt.ack_arg;
     d->arrival_us = timebase_ticks_to_us(timebase_now() - sfm.g.start);
     /* The edge is global, so it is paired to this frame or the field stays absent.
      * radio_devices_docs/open_hub/radio/sync-timestamp.md */
@@ -2033,18 +2065,24 @@ static void downlink_service(void) {
     dl_served = sfm.g.counter;
     dl_opportunities++;
 
-    /* Round robin, scanned rather than indexed because slots are sparse.
+    /* Round robin over the devices that open a window in *this* superframe.
+     * Rotating over opportunities instead is fair per opportunity and stationary
+     * in the subsequence a device can hear. ROADMAP item 98
      * radio_devices_docs/open_hub/radio/superloop.md */
     for (i = 0; i < RADIO_MAX_DEVICES; i++) {
         slot = (uint8_t)((dl_next_slot + i) % RADIO_MAX_DEVICES);
-        if (devices[slot].used) {
+        if (device_due(&devices[slot], sfm.g.counter)) {
             d = &devices[slot];
             dl_next_slot = (uint8_t)((slot + 1u) % RADIO_MAX_DEVICES);
             break;
         }
     }
     if (d == NULL) {
-        dl_no_device++;
+        /* An empty roster and a superframe nobody listens in are different facts. */
+        if (device_count == 0u)
+            dl_no_device++;
+        else
+            dl_none_due++;
         return;
     }
 
