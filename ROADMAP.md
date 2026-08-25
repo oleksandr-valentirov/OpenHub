@@ -787,6 +787,52 @@ counts nothing. Not the cause of any zero above — those never reached the coun
 
 ## Debts
 
+### 88. `airgrid.py` counts bursts that are not on the grid, then accuses the firmware — `defect`
+
+Regression `2026-08-25-1`, RG-A-3. C5 reported *an uplink sat on a channel the
+hub did not name* and named **channel −6**, which is not a channel: it is
+864.50 MHz, below the band. The burst was classified as an uplink **by its
+duration** — 9.22 ms against the uplink's 8.70 — which is the failure the
+`verification` skill already records as *a control classified by the quantity it
+measures is not a control*.
+
+**Two instruments disagreeing is what found it.** `hops.py` reads the same
+bursts, marks them `!` and warns *21 burst(s) outside the 29-channel grid*;
+`bandscan.py` calls channel 30 *BEYOND FILTER — not evidence*. `airgrid.py`
+folds them into C5's uplink set and into C1's denominator.
+
+**C1's threshold failure is entirely this.** 30 beacons + 15 downlinks + 4
+uplinks = 49 ours, 22 on no grid position, and 49/71 = **69.0 %** — the exact
+figure C1 reported against its 70 % bound. The foreign bursts sit at 15.5–21 dB
+against our 74–76 dB, so a level gate as well as a channel gate would refuse them.
+
+The fix is a channel gate before classification, not a threshold change. A per-
+position statistic on this bench has to be robust to the transmitter `RESOURCES.md`
+records under `air:tx`, and this one is not.
+
+`../radio_devices_docs/open_hub/testing/sdr.md`,
+`../bench/runs/2026-08-25-1/RESULT.md`.
+
+### 89. The SDR tools cannot read the capture the regression plan asks for — `defect`
+
+`specs/06-regression.md` tier 2 says `-s 4e6 -t 300`. That is **4.8 GB**, and
+`airgrid.py` loads it whole: `np.fromfile` to float32 is 9.6 GB and the complex
+view another 9.6 GB. The kernel killed it at **26.9 GB resident on a 30 GB
+machine** — `Out of memory: Killed process`, from the kernel log rather than
+inferred.
+
+**No tool in `tools/sdr/` takes an offset or a duration**, so there is no way to
+grade a long capture except by cutting a slice beside it with `dd`, which is what
+run `2026-08-25-1` did. Every earlier run that was actually graded used ~60 s.
+
+So the plan's own line has never been run end to end on this bench, and the two
+halves of one code block disagree: the capture command produces a file the
+analysis commands cannot open. Either the tools take a window or the line does —
+and a windowed tool is the better answer, because it also makes a long capture
+gradeable in pieces rather than discarded.
+
+`../radio_devices_docs/specs/06-regression.md` § tier 2.
+
 ### 87. `ipc_timing_t` is full at 96 of 96, so the next field silently does not fit — `debt`
 
 Measured 2026-08-25, not recalled: `sizeof(ipc_timing_t)` is **96** and
