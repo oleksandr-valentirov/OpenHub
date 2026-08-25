@@ -1205,6 +1205,23 @@ covers the setting not persisting rather than not being reported.
 
 ## Design agreed but unbuilt
 
+### 91. `GENERATED_VEC` names a directory that moved — `debt`
+
+`tools/check_conventions.py` excludes `Common/test/vectors/.*\.(txt|h)$` from the
+comment rules. **That path moved to `radio_stack/test/vectors/` in phase 9 step 6**
+and the regex did not follow, so it now matches nothing.
+
+It is inert here and was invisible for the same reason: the vectors are in the
+submodule and not in this tree's `git ls-files`, so nothing was being wrongly
+scanned or wrongly skipped. The library's own checker carries the correct
+exclusion — the published vectors are generated and immutable, so the rules
+cannot hold there.
+
+Found 2026-08-25 by comparing two checkers over the same files: three findings
+were the hub's alone and all three were generated vector headers.
+
+`../radio_stack/ROADMAP.md` item 3.
+
 ### 90. The region has to leave CM7 — `debt` `contract`
 
 [ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
