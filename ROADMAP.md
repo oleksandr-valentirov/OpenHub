@@ -1791,6 +1791,21 @@ session's own `/dev/tcp` probe and a hub dial produce identical log lines and bo
 arrive through the bridge as `172.19.0.1`, so nothing recorded separates them —
 their words, and they withdrew the "zero attempts" reading built on it.
 
+**The regime matters and a control separated it the same evening.** A second
+container recreate at 21:25, same hub and same network, was answered by a
+completed HELLO in **2.2 seconds** — the server session's measurement. So the
+minutes-long return is a property of **a hub that has just been reset**, not of
+reconnecting: a healthy stack answers at once, and a recreate costs seconds. The
+13.5 minute outage began at the reset at 21:10 and the recreate at 21:11 landed
+inside it, which is a treatment's cost being read as the cost of the next
+treatment to arrive.
+
+Both figures are small: two failures and a success is `n = 2` intervals, the 2.2 s
+is `n = 1`. The ratio is about 350x, so the direction is not in question and
+neither number is a distribution. **The sentence an operator needs is "after a hub
+reset the northbound link retries about every 5 to 7 minutes"**, and it is wrong
+if it is read as the cost of a reconnect in general.
+
 What is owed: a bucket for the abandoned-before-HELLO case, and the retry interval
 printed rather than inferred from two failures and a success.
 
