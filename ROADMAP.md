@@ -943,7 +943,7 @@ view another 9.6 GB. The kernel killed it at **26.9 GB resident on a 30 GB
 machine** — `Out of memory: Killed process`, from the kernel log rather than
 inferred.
 
-**No tool in `tools/sdr/` takes an offset or a duration**, so there is no way to
+**No tool in `~/.claude/skills/sdr/tools/` takes an offset or a duration**, so there is no way to
 grade a long capture except by cutting a slice beside it with `dd`, which is what
 run `2026-08-25-1` did. Every earlier run that was actually graded used ~60 s.
 

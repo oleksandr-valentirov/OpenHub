@@ -130,3 +130,18 @@ radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-lay
 # A Linux kernel module, named while diagnosing a wedged ST-Link console. It is
 # the host's, not this project's, and the diagnosis is worthless without it.
 open_hub/testing/on-target.md:cdc_acm  # the kernel's CDC ACM driver, not a symbol here
+
+# The SDR tools left this repository on 2026-08-25 (ed536c2) for
+# ~/.claude/skills/sdr/tools/, so the names they define are no longer in any
+# scan this checker can reach. Each line names where the symbol actually lives,
+# because an exemption whose reason is "it moved" stops being checkable the
+# moment it moves again.
+open_hub/testing/sdr.md:find_bursts  # iqfile.py in the sdr skill's tools; also used by decode/dutycycle/carrier/spectrum
+open_hub/testing/sdr.md:find_sync  # gfsk.py in the sdr skill's tools, called from decode.py
+open_hub/testing/sdr.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
+open_hub/testing/sdr.md:rtl_test  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
+radio/decisions/0018-compressed-points-on-the-wire.md:build_frame  # inject.py in the sdr skill's tools
+radio/joining.md:find_bursts  # iqfile.py in the sdr skill's tools
+radio/joining.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
+radio/pairing.md:find_bursts  # iqfile.py in the sdr skill's tools
+radio/pairing.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools

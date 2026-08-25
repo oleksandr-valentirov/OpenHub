@@ -160,7 +160,7 @@ One capture separates them, and it belongs to the post-flash routine rather than
 to debugging:
 
 ```bash
-cd tools/sdr
+cd ~/.claude/skills/sdr/tools
 ../../.venv/bin/python capture.py air.iq -f 866.56e6 -s 2.4e6 -t 120 -g 30 --label hub
 ../../.venv/bin/python airgrid.py air.iq        # non-zero on any failed check
 ```
