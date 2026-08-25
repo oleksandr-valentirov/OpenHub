@@ -580,6 +580,43 @@ population the run will have.**
 
 ## Defects
 
+### 92. `airgrid.py --device` defaults to slot 1 — `defect`
+
+**It produced a confident negative on 2026-08-25.** Node A holds slot 0, the
+default expects a device in slot 1, and the run reported
+`uplink k=0 slot 1: 0 bursts` while the device's six real transmissions were
+listed under **foreign traffic** at phase 49.7 ms - which is
+`RADIO_UPLINK_OFFSET_US`, the start of slot 0. C1, C2, C3 and C5 all failed on
+the wrong slots. Re-run over the same capture with `--device 0` it reports six
+bursts, on the channels the hub's own frames named.
+
+It is the family the `sdr` skill's own list is about: a stale default in a
+diagnostic tool is worse than no default, because it produces a confident
+negative. The default was right when a device sat in slot 1.
+
+**The fix is not a better default.** The slot is a fact the hub owns and serves -
+`/api/devices` carries `slot` per device - so the tool should require it or read
+it, the way `phy.py` reads the PHY rather than restating it.
+
+### 93. `airgrid.py` has no bound on capture size — `defect`
+
+A 300 s capture at 4 Msps is 4.5 GB on disk and **28 GB resident** in this tool.
+Measured 2026-08-25: three OOM kills, each `python` at about 28 GB anon-rss on a
+30 GB machine, and the kernel log names the cgroup - `snap.code.code-*.scope` -
+so the editor hosting the session died with it.
+
+Memory scales with the capture's duration and **not** with `--nfft`: the
+spectrogram is rows by nfft, and that product is the sample count either way.
+
+A diagnostic that kills the machine is worse than one that declines, so the tool
+should refuse or stream a capture it cannot hold. Until then, cap the address
+space so the failure lands in Python rather than in the kernel:
+
+```bash
+ulimit -v 20000000     # 20 GB; a 90 s capture at 4 Msps fits
+```
+
+
 ### 86. `device add` refuses the one command that re-pairs, and offers one that cannot — `defect`
 
 **Two commands, and the CLI has them the wrong way round.** `cfg_enrol()` is
@@ -786,6 +823,24 @@ counts nothing. Not the cause of any zero above — those never reached the coun
 ---
 
 ## Debts
+
+### 91. `GENERATED_VEC` names a directory that moved — `debt`
+
+`tools/check_conventions.py` excludes `Common/test/vectors/.*\.(txt|h)$` from the
+comment rules. **That path moved to `radio_stack/test/vectors/` in phase 9 step 6**
+and the regex did not follow, so it now matches nothing.
+
+It is inert here and was invisible for the same reason: the vectors are in the
+submodule and not in this tree's `git ls-files`, so nothing was being wrongly
+scanned or wrongly skipped. The library's own checker carries the correct
+exclusion — the published vectors are generated and immutable, so the rules
+cannot hold there.
+
+Found 2026-08-25 by comparing two checkers over the same files: three findings
+were the hub's alone and all three were generated vector headers.
+
+`../radio_stack/ROADMAP.md` item 3.
+
 
 ### 88. `airgrid.py` counts bursts that are not on the grid, then accuses the firmware — `defect`
 
@@ -1204,94 +1259,6 @@ covers the setting not persisting rather than not being reported.
 ---
 
 ## Design agreed but unbuilt
-
-### 91. `GENERATED_VEC` names a directory that moved — `debt`
-
-`tools/check_conventions.py` excludes `Common/test/vectors/.*\.(txt|h)$` from the
-comment rules. **That path moved to `radio_stack/test/vectors/` in phase 9 step 6**
-and the regex did not follow, so it now matches nothing.
-
-It is inert here and was invisible for the same reason: the vectors are in the
-submodule and not in this tree's `git ls-files`, so nothing was being wrongly
-scanned or wrongly skipped. The library's own checker carries the correct
-exclusion — the published vectors are generated and immutable, so the rules
-cannot hold there.
-
-Found 2026-08-25 by comparing two checkers over the same files: three findings
-were the hub's alone and all three were generated vector headers.
-
-`../radio_stack/ROADMAP.md` item 3.
-
-### 90. CM7's half of the region split is done — `closed` 2026-08-25
-
-[ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
-decision 8, built in `2a82866`. CM7 is compiled with no `RADIO_PROFILE` at all.
-
-**Exit, checked in both directions.** CM7's `compile_commands.json` holds **0**
-occurrences of `RADIO_PROFILE` against 18 on CM4, and a CM7 file naming
-`RADIO_CH_BASE_HZ` **fails to compile** - the control was run rather than
-assumed.
-
-Five CM7 includes moved to `radio_layout.h`, and `Common/inc/cfgstore.h` with
-them: it was reaching the profile for `RADIO_DEVICE_MAX` and `SUPERFRAME_PER_DAY`,
-both structure. `cli.c`'s `rxbw` lost its third line, which re-derived on CM7 a
-figure CM4 had just reported from the same header.
-
-`RADIO_HUB_HANDLE_SLACK_US` rides in `ipc_evt_latency_t` now, from the core that
-owns the band. **The value did not move**: 210750 us computed from the pre-split
-headers and 210750 from the post-split ones.
-
-**On the board, and not from the console, which was down.** Verified northbound
-after flashing both cores and a hard reset: `hub_connected` true with the schema
-agreeing, `connects 1`, grid running at `period_us 2000000`, `calib_windows 529`
-with `calib_rejects 0`, and **`ipc_ready` true with `ipc_stale_replies 0`** -
-which is the check that matters here, because `ipc_evt_latency_t` grew by four
-bytes and both cores had to be flashed together. Beacon lateness read
-`late_last_us 27`, `late_max_us 40`, `late_over 0`, against 40, 41 and 39 on the
-three images before it: within one tick, which is the resolution the instrument
-has.
-
-**What is not verified on hardware:** the `slack_us` field itself. It is served
-only by the console, and all three ST-Link VCPs are silent - `../bench/RESOURCES.md`.
-
-### 91. `GENERATED_VEC` names a directory that moved — `debt`
-
-`tools/check_conventions.py` excludes `Common/test/vectors/.*\.(txt|h)$` from the
-comment rules. **That path moved to `radio_stack/test/vectors/` in phase 9 step 6**
-and the regex did not follow, so it now matches nothing.
-
-It is inert here and was invisible for the same reason: the vectors are in the
-submodule and not in this tree's `git ls-files`, so nothing was being wrongly
-scanned or wrongly skipped. The library's own checker carries the correct
-exclusion — the published vectors are generated and immutable, so the rules
-cannot hold there.
-
-Found 2026-08-25 by comparing two checkers over the same files: three findings
-were the hub's alone and all three were generated vector headers.
-
-`../radio_stack/ROADMAP.md` item 3.
-
-### 90. The region has to leave CM7 — `debt` `contract`
-
-[ADR-0031](../radio_devices_docs/radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md)
-decision 8: on the H755 the band is CM4's and CM7 compiles none of it. Today both
-cores define `RADIO_PROFILE` from independent literals in their own
-`CMakeLists.txt` and nothing on the board compares them.
-
-CM7's own half is small and is not blocked on the library. Measured 2026-08-25 by
-removing the define from `CM7/CMakeLists.txt` and building: CM7 fails in **four**
-places, and only one is this repository's — `CM7/Core/Src/cli.c:2100`, the third
-line of `rxbw`, which prints the compiled receive bandwidth beside the `asked_hz`
-CM4 has just returned from the same header. It is a number re-derived on the core
-that does not own it, so the line goes rather than moves.
-
-The other three are `radio_stack/inc/radio_slots.h` and are `../radio_stack/ROADMAP.md`.
-`RADIO_HUB_HANDLE_SLACK_US` is CM7's one genuinely rate-derived symbol, used once;
-it is a cross-core budget and belongs in the mailbox.
-
-**The exit is that CM7 builds with `RADIO_PROFILE` undefined**, checked by
-removing it — not by reading this line.
-
 
 ### 25. RSSI and a sequence number in the sealed payload — `debt` `contract`
 
