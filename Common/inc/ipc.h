@@ -255,7 +255,7 @@ typedef struct ipc_exchange_state {
 /* Reply for IPC_REQ_GET_RXDIAG: what the radio hears, below the frame layer.
  * radio_devices_docs/open_hub/radio/configuration.md */
 typedef struct ipc_rx_diag {
-    uint32_t sync_match;    /**< rising edges of SyncAddressMatch */
+    uint32_t sync_match;    /**< polls that saw SyncAddressMatch rise, not edges. ROADMAP item 95 */
     uint32_t crc_err;       /**< delivered by the part, failed its CRC */
     uint32_t frames;        /**< delivered with the CRC verified */
     uint32_t last_superframe;
@@ -339,6 +339,9 @@ typedef struct ipc_syncstats {
     uint32_t beacon_n;       /**< every beacon, which is a wider population than n */
     uint32_t beacon_min_us;
     uint32_t beacon_max_us;
+    uint32_t up_n;           /**< of the edges consumed, the ones inside the uplink region */
+    uint32_t join_n;         /**< ... and inside the join region; together they partition them */
+    uint32_t edges;          /**< the DIO3 counter itself, so what coalesced is readable here */
 } __attribute__((packed)) ipc_syncstats_t;
 
 _Static_assert(sizeof(ipc_syncstats_t) <= IPC_PAYLOAD_MAX, "ipc_syncstats_t too large");

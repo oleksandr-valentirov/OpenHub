@@ -1650,6 +1650,10 @@ static int cmd_device_syncstats(cli_data_t *cli) {
     cli_out(cli, "\r\npaired edges %lu, unpaired %lu, beacons %lu\r\n",
             (unsigned long)s.n, (unsigned long)s.unpaired,
             (unsigned long)s.beacon_n);
+    /* The pooled count answers for neither region, and it read as the uplink's. ROADMAP item 94 */
+    cli_out(cli, "by region: uplink %lu, join %lu, of %lu edges (%lu coalesced)\r\n",
+            (unsigned long)s.up_n, (unsigned long)s.join_n, (unsigned long)s.edges,
+            (unsigned long)(s.edges - s.up_n - s.join_n));
     if (s.beacon_n != 0u)
         cli_out(cli, "beacon lead alone: min %lu us, max %lu, over every beacon\r\n",
                 (unsigned long)s.beacon_min_us, (unsigned long)s.beacon_max_us);

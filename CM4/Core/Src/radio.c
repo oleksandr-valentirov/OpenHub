@@ -308,6 +308,9 @@ static int64_t  sync_cov_sum;       /* arrival against the beacon that preceded 
 static uint32_t sync_unpaired;      /* edges with no beacon of their own superframe */
 static uint32_t sync_last_superframe;
 static uint32_t sync_implausible;
+/* Which region consumed each edge: the pooled count cannot answer for one of them.
+ * radio_devices_docs/open_hub/radio/sync-timestamp.md */
+static uint32_t sync_up_n, sync_join_n;
 static uint8_t  rx_last_len, rx_last_type;
 static int8_t   rx_last_rssi;       /* off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
 /* What the refused frame actually carried, not which field mismatched. */
@@ -1013,6 +1016,10 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         s.beacon_n      = bl_n;
         s.beacon_min_us = (bl_min_us == 0xFFFFFFFFu) ? 0u : bl_min_us;
         s.beacon_max_us = bl_max_us;
+        s.up_n          = sync_up_n;
+        s.join_n        = sync_join_n;
+        /* Read here with the two it bounds, never from a second command. */
+        s.edges         = sync_edges;
         (void)ipc_send_reply(req, IPC_ST_OK, &s, (uint8_t)sizeof(s));
         return;
     }
@@ -1414,11 +1421,11 @@ static void join_sample_rssi(void) {
 
 /* Folds one captured edge into the offset statistics.
  * radio_devices_docs/radio/phy-seam.md */
-static void sync_edge_service(const phy_ev_t *ev) {
+static int sync_edge_service(const phy_ev_t *ev) {
     uint32_t offset;
 
     if (!ev->sync_valid || ev->sync_seq == sync_seq_seen)
-        return;
+        return 0;
     sync_seq_seen = ev->sync_seq;
     sync_edges    = ev->sync_seq;
     sync_edge_tk  = ev->sync_us;
@@ -1435,7 +1442,7 @@ static void sync_edge_service(const phy_ev_t *ev) {
     /* Counted and reported raw, never filtered out. */
     if (offset >= SUPERFRAME_US * 2u) {
         sync_implausible++;
-        return;
+        return 1;
     }
     if (offset < sync_min_offset_us) sync_min_offset_us = offset;
     if (offset > sync_max_offset_us) sync_max_offset_us = offset;
@@ -1443,7 +1450,7 @@ static void sync_edge_service(const phy_ev_t *ev) {
     /* Unpaired is counted, never dropped: the sums must share one population. */
     if (bl_n == 0u || bl_sf != sfm.g.counter) {
         sync_unpaired++;
-        return;
+        return 1;
     }
     if (!sync_ref_set) {
         sync_ref_us  = offset;
@@ -1459,6 +1466,7 @@ static void sync_edge_service(const phy_ev_t *ev) {
         sync_lead_sumsq += (uint64_t)bl_last_us * (uint64_t)bl_last_us;
         sync_cov_sum    += (int64_t)d * (int64_t)bl_last_us;
     }
+    return 1;
 }
 
 /* Keyed after the sync word, and lag is measured from that same edge.
@@ -2146,7 +2154,8 @@ static void uplink_service(void) {
             rx_flushes++;
             return;
         }
-        sync_edge_service(&ev);
+        if (sync_edge_service(&ev))
+            sync_up_n++;
         if (ev.kind == PHY_EV_SYNC) {
             rx_sync_match++;
             /* Counted apart from the join channel's sync, which pairing traffic moves. */
@@ -2361,7 +2370,8 @@ static void join_region_service(void) {
         if (phy_poll(&ev) != 0)
             rx_flushes++;
         else {
-            sync_edge_service(&ev);
+            if (sync_edge_service(&ev))
+                sync_join_n++;
             if (ev.kind == PHY_EV_SYNC) {
                 rx_sync_match++;
                 sync_rssi_sample(&ev);

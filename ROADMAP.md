@@ -109,18 +109,24 @@ cycle that fits` with `feat(wire): link_v4` — 194 slots of 9400 µs, stride 65
 exactly 64 devices, the 1400 µs guard untouched, largest gap 778 ms and
 210 750 µs left for the hub.
 
-**What is left is the part no assert can do.** At 50 kbps two thirds of the
-device's frames do not arrive (item 30), so the geometry that buys the deadline
-has never delivered against it. A PER run at the new rate is the acceptance
-evidence, not the host tests. Sensitivity is ~3 dB worse plus about a dB for the
-h = 1 demod penalty, and neither side has read the datasheet row.
+**What is left is the part no assert can do.** A PER run at the new rate is the
+acceptance evidence, not the host tests. Sensitivity is ~3 dB worse plus about a
+dB for the h = 1 demod penalty, and neither side has read the datasheet row.
 
-**Measured 2026-08-24, and item 30's figure reproduces.** Two 600 s windows, the
-denominator taken off the device rather than derived here: 38 sent and 13
-accepted, then 38 sent and 13 accepted. 47 of 76 never reached sync. The
-deadline is therefore met by the *grid* and missed by the *link*, and the two
-numbers must not be quoted together — a 778 ms worst-case gap over a path that
-drops three frames in five is not a 778 ms delivery.
+**The link half is measured and it is no longer the obstacle.** Through
+2026-08-24 the reading was two thirds of the device's frames not arriving — two
+600 s windows at 38 sent and 13 accepted each, 47 of 76 never reaching sync — and
+every one of those windows ran with the hub's AFC measuring an empty channel.
+With `AfcAutoOn` off, ADR-0033, the same measurement reads **171 of 171 across
+three opportunities** and 731 of 731 at one, at −44 to −57 dBm.
+`../radio_devices_docs/open_hub/known-defects.md`.
+
+**What still must not be quoted together is a grid figure and a link figure.**
+The 778 ms worst-case gap is the *grid*, and a delivery fraction is the *link*;
+they were combined once when the link was dropping three frames in five, and the
+rule survives the link improving. The AFC-off figures are also at a different
+input level from the old ones — there is no measurement at −17 dBm with the
+register off, and item 12 records a separate failure there.
 
 `radio/tdma.md` § the event deadline, § what k = 3 breaks.
 
@@ -173,94 +179,6 @@ worked, five defects surfaced in code that could only execute after something
 finally went right.
 
 `open_hub/testing/on-target.md`. Never erase bank 1 from CM7.
-
-### 30. The bulk cause is found and fixed; the k-gradient is not yet re-measured — `defect`
-
-Counted by both sides over one agreed superframe range, sf 647403..647694, with
-the device transmitting 151 cycles on all three opportunities:
-
-    slot   1    59 accepted of 151   39 %      (64 detected, 42 %)
-    slot  66    22 accepted of 151   15 %      (24 detected, 16 %)
-    slot 131     9 accepted of 151    6 %      (15 detected, 10 %)
-
-**23 % detected, 20 % accepted**, at −17 dBm — the level both sides had been
-calling healthy. A 4x cadence change does not move it, so there is no receiver
-ceiling and no cadence effect. When this was written the hub could not compute
-the denominator at all — `accepted / delivered` was 81 % while
-`delivered / transmitted` was 31 %, and only the numerator existed on this side.
-**The device counts its own sends now**, so the population comes off the far side
-of the antenna: two 600 s windows, 38 sent and 13 accepted in each.
-
-**Decomposed 2026-08-22: the loss is entirely before sync.** `sync_match` equals
-`frames + crc_err` exactly, so nothing is lost after detection, and the CRC
-failure *rate* is flat across k while the counts are not. Level (sd 0.7 dB), AFC
-and LNA gain are flat across k as well, and the receive window is open from
-50 000 to 1 873 600 µs, so no window closes between opportunities. Item 37's
-`worst lag 658 us` bounds the superloop three orders of magnitude below the
-611 ms between opportunities, which kills FIFO blocking as the mechanism.
-
-**This item shares its whole signature with 60 and 63**, which is why the three are
-one knot rather than three investigations: pre-sync in all of them, device to hub in
-all of them, one receiver in common. An arm run against any of them is evidence
-about the other two. `../radio_devices_docs/specs/03-roadmap.md` § K2.
-
-**What is left is placement.** Per-cycle slopes of arrival against k change sign
-between cycles (+480, −107, +357 …), so this is per-cycle placement noise rather
-than a constant clock-scale difference, and the statistic to grade is the
-*spread* of those slopes. Neither side's placement instrument can see the class
-alone: each measures its own frames against its own computed target.
-
-**The discriminator is running.** Window 2, cut at superframe 713752, separates
-the two boards by `SUPERFRAME_PERIOD_BASELINE` (1 against 64) at a matched
-received level — treatment and control split by **board rather than by time**,
-which is what every earlier window lacked. Grading is pre-registered: the spread
-of per-cycle slopes and the k-gradient between boards, reported as *not measured*
-if either board reaches fewer than 8 cycles.
-
-`radio/phy.md`, `open_hub/radio/configuration.md`.
-
-**Two devices at once, 2026-08-24, run `2026-08-24-4`, both denominators off the
-nodes:**
-
-| | the node sent | the hub accepted | delivered | bad |
-|---|---|---|---|---|
-| node A, slot 1, −44 dBm up | **42** | 12 | **29 %** | 0 |
-| node B, slot 0, −55 dBm up | **47** | 14 | **30 %** | 0 |
-
-Both at `report every 8` and `k = 0`, so this is the single-opportunity figure and
-not comparable to the 151-cycle k=3 rows above. `frames_bad 0` on both: the loss
-is still entirely before sync. **Eleven decibels between the two boards moves the
-delivered fraction by one point**, which is another arm against a level or
-sensitivity ceiling and was taken without arranging anything - the two boards
-simply sit at different distances.
-
-**Cause found 2026-08-25 and fixed: the hub was running AFC on an empty channel.**
-`AfcAutoOn` measures when the receiver is *enabled*, the uplink region opens
-610 us before the first preamble and then stays open for 1.8 s, and SX1231H
-3.4.14 requires the measurement to land on a preamble. The correction it drew
-from noise went straight into `FRF`. `open_hub/decisions/0033-the-hub-does-not-run-afc.md`.
-
-One node at one report per superframe, its own telemetry as the denominator:
-
-| arm | on air | sync | share |
-|---|---|---|---|
-| AFC on | 159 | 110 | 69 % |
-| **AFC off** | 176 | **165** | **94 %** |
-| AFC on, flashed back | 168 | 119 | 71 % |
-
-`p = 3.5e-09` off against before; **`p = 0.81` between the two AFC-on arms**, which
-is the control that separates the register from the reset that carried it. CRC
-failures went to 0 of 151.
-
-**Three things this does not close.**
-
-- **The k-gradient at the head of this item is unmeasured with AFC off.** Every
-  window above ran at `k = 0` on one node. The 39/15/6 % rows were taken with AFC
-  on, so they are a measurement of the fault, and re-running the three-opportunity
-  comparison is the arm this item now waits on.
-- **A residual of 14 % survives** — item 94.
-- **Delivery moved with the report rate** and nothing explains it — item 96.
-
 
 ### 59. The pairing exchange is twice the join region it runs in — `blocking` `contract`
 
@@ -422,6 +340,60 @@ that defect - `pair_region_owned()` at `CM4/Core/Src/radio.c:1906` is exactly th
 guard the other role was missing - so the two-in-five is a different cause and
 that arm is closed rather than open.
 
+#### 2026-08-25: every arm above predates ADR-0033, and the signature is the one AFC produced
+
+**Not re-measured since the hub stopped running AFC.** The latest arm here is
+run `2026-08-24-4`; `AfcAutoOn` went off on 2026-08-25. Item 30 states the knot's
+own rule - *pre-sync in all of them, device to hub in all of them, one receiver
+in common, and an arm run against any of them is evidence about the other two* -
+and the finding this item rests on is **that no sync word matched**, which is
+exactly what a receiver detuned by a noise-derived correction produces.
+
+**Two enrolments have since run with AFC off, and both went first-window.**
+Node B at 18:31: `join reqs 1 seen, 0 dropped`, `req 1 -> rsp 1 -> conf 1 ->
+accept 1`. Node A re-enrolled at 19:20, likewise. In the same hours the uplink
+carried **619 of 619** with `crc_err 0`.
+
+**That is two trials and it establishes nothing on its own** - at the rate this
+item records, two successes in two attempts happen 18 % of the time. It is
+recorded because it is the whole population taken since the fix, and because a
+pre-registered series is now the cheap thing to run: at the old per-request rate
+of 6 in 14, seven consecutive successes would be `p = 0.003`.
+
+
+#### 2026-08-25, AFC off: eight of eight, on every leg
+
+Eight enrolments of node B with node A left paired in slot 0 throughout, so the
+hub was never on the `device_count == 0` branch. n = 8 was fixed before the first
+trial, and both denominators come off the **device** - `join` on the node gives
+`req sent` and `conf sent`, differenced per trial.
+
+| leg | recorded here | 2026-08-25 | Fisher two-sided |
+|---|---|---|---|
+| requests the hub registered | 6 of 14 | **8 of 8** | `p = 0.018` |
+| confirmations the hub registered | 5 of 12 | **8 of 8** | `p = 0.015` |
+| enrolments completed | 5 of 10 | **8 of 8** | `p = 0.036` |
+
+Two independent implementations of the test agree to every digit. The exact
+one-sided lower bound on 8 of 8 is **0.688**, against a recorded 0.43. And the
+qualitative half: **every trial radiated exactly one request**, where the arms
+above needed one to four with retries covering the loss.
+
+**The limit, which the numbers do not carry.** This is a historical control and
+not a concurrent one. Between those arms and these the bench changed by the AFC
+register, by a hub reset and a different roster, by node A's firmware and
+pairing, and by an 868 MHz interferer recorded at 59-73 dB that no hub counter
+can see. AFC is the only one of those with a mechanism that predicts **this**
+signature - it detunes `FRF` by a noise-derived correction and kills frames
+before sync, and the finding in both items is that no sync word matched at all.
+
+**What would close it is the arm ADR-0033 already ran for the uplink**: flash
+CM4 with `AfcAutoOn` back on, repeat this series, flash off again. There it
+returned `p = 0.81` between the two AFC-on arms, which is what separated the
+register from the reset that carried it. No such reversion arm exists for the
+pairing legs, so **the cause is strongly indicated and not established.**
+
+
 ### 63. The hub misses a PAIR_REQ that reached its antenna — `blocking` `defect`
 
 Item 60's twin and a separate leg: the confirmation is lost while the hub
@@ -544,6 +516,60 @@ nodes sent seven requests between them and the hub saw five. In the same window
 it saw two confirmations of five. **The rate is the same order at both frame
 types and the direction is the same**, which is the argument for reading this and
 item 60 as one receiver rather than two defects. `bench/runs/2026-08-24-4/RESULTS.md`.
+
+#### 2026-08-25: every arm above predates ADR-0033, and the signature is the one AFC produced
+
+**Not re-measured since the hub stopped running AFC.** The latest arm here is
+run `2026-08-24-4`; `AfcAutoOn` went off on 2026-08-25. Item 30 states the knot's
+own rule - *pre-sync in all of them, device to hub in all of them, one receiver
+in common, and an arm run against any of them is evidence about the other two* -
+and the finding this item rests on is **that no sync word matched**, which is
+exactly what a receiver detuned by a noise-derived correction produces.
+
+**Two enrolments have since run with AFC off, and both went first-window.**
+Node B at 18:31: `join reqs 1 seen, 0 dropped`, `req 1 -> rsp 1 -> conf 1 ->
+accept 1`. Node A re-enrolled at 19:20, likewise. In the same hours the uplink
+carried **619 of 619** with `crc_err 0`.
+
+**That is two trials and it establishes nothing on its own** - at the rate this
+item records, two successes in two attempts happen 18 % of the time. It is
+recorded because it is the whole population taken since the fix, and because a
+pre-registered series is now the cheap thing to run: at the old per-request rate
+of 6 in 14, seven consecutive successes would be `p = 0.003`.
+
+
+#### 2026-08-25, AFC off: eight of eight, on every leg
+
+Eight enrolments of node B with node A left paired in slot 0 throughout, so the
+hub was never on the `device_count == 0` branch. n = 8 was fixed before the first
+trial, and both denominators come off the **device** - `join` on the node gives
+`req sent` and `conf sent`, differenced per trial.
+
+| leg | recorded here | 2026-08-25 | Fisher two-sided |
+|---|---|---|---|
+| requests the hub registered | 6 of 14 | **8 of 8** | `p = 0.018` |
+| confirmations the hub registered | 5 of 12 | **8 of 8** | `p = 0.015` |
+| enrolments completed | 5 of 10 | **8 of 8** | `p = 0.036` |
+
+Two independent implementations of the test agree to every digit. The exact
+one-sided lower bound on 8 of 8 is **0.688**, against a recorded 0.43. And the
+qualitative half: **every trial radiated exactly one request**, where the arms
+above needed one to four with retries covering the loss.
+
+**The limit, which the numbers do not carry.** This is a historical control and
+not a concurrent one. Between those arms and these the bench changed by the AFC
+register, by a hub reset and a different roster, by node A's firmware and
+pairing, and by an 868 MHz interferer recorded at 59-73 dB that no hub counter
+can see. AFC is the only one of those with a mechanism that predicts **this**
+signature - it detunes `FRF` by a noise-derived correction and kills frames
+before sync, and the finding in both items is that no sync word matched at all.
+
+**What would close it is the arm ADR-0033 already ran for the uplink**: flash
+CM4 with `AfcAutoOn` back on, repeat this series, flash off again. There it
+returned `p = 0.81` between the two AFC-on arms, which is what separated the
+register from the reset that carried it. No such reversion arm exists for the
+pairing legs, so **the cause is strongly indicated and not established.**
+
 
 ### 12. The link fails at high input level, and the mechanism is not settled — `blocking` `defect`
 
@@ -739,8 +765,8 @@ device's number must be larger than the hub's and it is 100 µs smaller.**
 
 **Adopting either number would be the worst outcome available.** The discriminator
 is agreed and cheap: the device forges a beacon on its own boundary while the hub
-reports the lag it computes, to be run in the same boot as item 30's window so it
-does not become another two-window fraction.
+reports the lag it computes, to be run in **one** boot so it does not become
+another two-window fraction.
 
 The pre-sync term is the suspect this side can contribute to: `RADIO_PRE_SYNC_AIR_US`
 halved with the rate, 2 560 µs to 1 280, so any lag reading taken before the rate
@@ -1739,7 +1765,8 @@ What the fake hub cannot answer, in the order to answer it:
   than going silent, since this is what an operator gets when they retry.
 - **`device_remove`, both halves.** `ok` against `radio_err`, and whether the node
   keeps reporting after its own removal — the page's `reported_since` marks the
-  radio's half and no real hub has ever produced one.
+  radio's half and no real hub has ever produced one. **Run 2026-08-25 and it
+  produced a false one**: item 97.
 - **Pre-register the attempt count before any of it.** Item 59 puts a fresh
   enrolment at about 1 in 5 once anything is paired, so a single `no_join` says
   nothing about this page, and reading one as a defect in it is item 59 missed.
@@ -1757,7 +1784,7 @@ which is the same gap seen from the other side.
 `../openhub-server/README.md` § The roster.
 
 
-### 94. A seventh of the uplinks still go missing with AFC off — `defect`
+### 94. A seventh went missing once with AFC off, and the split was never measurable — `defect`
 
 With `AfcAutoOn` off and the node transmitting every superframe, 25 of 176
 transmissions did not arrive. The split matters and both halves are small:
@@ -1768,7 +1795,45 @@ transmissions did not arrive. The split matters and both halves are small:
 The second half is the odder one — the hardware matched a sync word and the
 packet then never completed, so it is not a demodulation margin. `drain_frame()`
 and `restart_rx()` in `CM4/Core/Src/phy_rfm69.c` are where a frame can be
-abandoned after sync, and `rx_flushes` is the counter that would show it.
+abandoned after sync.
+
+**The split above is not measurable by any counter this hub had, and the two
+this item sent a reader to are both the wrong instrument.** Found 2026-08-25.
+
+- **`rx_flushes` counts a different event.** It is incremented on
+  `phy_poll(&ev) != 0` and nowhere else, and `phy_poll` returns non-zero only
+  when `rfm69_get_irq_flags` fails or a **CRC-passing** frame carries a length of
+  0 or over `PHY_MAX_PAYLOAD`. A frame that matched sync and never reached
+  `PayloadReady` never enters that branch, so the counter reads 0 whatever the
+  residual is. It read 0 through a window that produced a residual.
+- **`up_sync` is a floor, not a count** — item 95 — and it currently equals
+  `up_frames` exactly, so a split built on it reports zero frames lost after sync
+  **by construction**.
+- **The only counter that cannot miss an edge pools two regions.**
+  `sync_edge_service()` is called from the uplink service and from
+  `join_region_service()`, so `paired edges` covers both. Not hypothetical:
+  `device synctime` read `offset in superframe: min 51864 us, max 1920607 us`
+  with `0 implausible`, and 1 920 607 is past `RADIO_JOIN_OFFSET_US`
+  (1 873 600). `edges - up_frames` therefore subtracts an uplink-scoped number
+  from a two-region one, and the remainder is not a loss.
+
+**The instrument is built and waits on a flash.** `ipc_syncstats_t` carries
+`up_n`, `join_n` and `edges` — the two regions and the DIO3 counter that bounds
+them — and `device syncstats` prints `by region: uplink N, join N, of N edges
+(N coalesced)`, so the pooling is visible and the coalescing has its own number
+rather than hiding inside the split. Both cores build, all three host suites and
+both checkers pass; it is not on the board yet, so **nothing below the total has
+been measured with it.**
+
+What is still honest without it is the total, which is uplink-scoped on both
+sides: a node's own `reports` against that device's `ok`. Measured with AFC off
+on 2026-08-25 over three brackets and ~1350 superframes, **731 transmissions and
+no loss observed** at `every 8` and at `every 1` alike — `crc_err 0` and
+`flushes 0` throughout, against the seventh at the head of this item. The hub's
+own total runs 3 ahead of the nodes' across the three brackets, which is the
+read-order skew the rate arms record and not a surplus. The residual was measured
+at `every 1`, and the rate arms covered `every 1` and `every 8` alike —
+`../radio_devices_docs/open_hub/known-defects.md`.
 
 This is what is left of the K2 knot after ADR-0033, and it is a seventh rather
 than two thirds. `open_hub/radio/configuration.md`.
@@ -1781,7 +1846,8 @@ reports the sync rise that preceded it, so `up_sync` counts only the edges a pol
 happened to catch *between* sync and payload. The DIO3 hardware edge behind
 `device syncstats` counts all of them: 25 against 21 on one read.
 
-Every arm in item 30 shares the bias, so it does not threaten those comparisons —
+Every arm in the k-gradient work shared the bias, so it did not threaten those
+comparisons —
 it makes each of them **conservative**, since the true sync share is at least what
 `up_sync` reports. But a single figure quoted from `up_sync` is a floor and not a
 count, and nothing in the output says so.
@@ -1789,20 +1855,91 @@ count, and nothing in the output says so.
 `open_hub/radio/superloop.md`.
 
 
-### 96. Delivery moved with the report rate and nothing explains it — `defect`
+### 97. A re-enrolment made anywhere but this server reads as a half-removal — `defect`
 
-Same board, same power, same channel plan, AFC on, one hour apart:
+Node B was removed **through the server** on 2026-08-25 at 00:07 — command 8,
+`result: ok`, a whole removal — and re-enrolled from the **hub console** at 18:31,
+`device add FEF91007`, slot 1, paired on the first window. The page then read
+`removed, still reporting`, whose tooltip says *"The hub has sent this device
+again since, which is the radio's half."* No half-removal happened.
 
-    report every 8    43 on air, 14 reached the payload    33 %
-    report every 1   159 on air, 103 reached the payload   65 %
+`note_roster_command()` writes `self.removed[dev]` on a `device_remove` this
+server issued and pops it on a `device_add` **this server issued**. Nothing else
+clears it, ever. The record is this server's memory of its own command and it is
+rendered in the badge column beside measurements — the shape the `verification`
+skill files under a configuration value sharing a column with a reading.
 
-The node's own transmit offset is identical across both (601-637 us into a 1400 us
-guard), so it is not placement. A node at `every 8` sleeps ~16 s between bursts and
-one at `every 1` does not, which makes the transmitter's warm-up the first
-suspect — `RADIO_UPLINK_LATCH_US` is documented as a **warm** figure with the cold
-one unmeasured.
+`reported_since` is `dev.updated > gone.ts`, which is true for the radio's half
+of a bad removal, true for a re-enrolment on the console, and true for a re-pair
+by any other route. **One expression, three causes, one badge**, and the tooltip
+asserts the rarest of the three.
 
-Measured before ADR-0033, so it may be an interaction with the AFC fault rather
-than an effect of its own. **Re-measure at both rates with AFC off before
-spending anything on it.**
+**The contradiction was already on the page.** `hub holds` read 2 and
+`paired_total` 1 while the badge said removed, and the page's own note calls
+`hub holds` "the number to read a removal against". The discriminators are all
+served: both counters moved at the join, and the device object had been stale for
+18 h beforehand, where the radio's half of a removal has no gap at all.
 
+The fix item 82 already names is the one that closes it: **the roster is a fact
+the hub owns and does not publish.** `cfg_device_t.state`, which `device list`
+prints as `enrolled` or `paired`, reaches no telemetry field, and
+`OHT_EVT_PAIRED` and `OHT_EVT_PAIR_WINDOW` are declared in
+`Common/inc/oht_proto.h` and in `../openhub-server/openhub_server/protocol/wire.py`
+and **sent by nothing** — checked in HEAD, the enum is the only occurrence on this
+side. Until one of them lands the server cannot read a removal, only remember one.
+
+This is item 86 arriving on the north side: the guard there pushes the bench onto
+`device remove` then `device add` at the console, which is the one path this
+server cannot see, so it recurs on every re-enrolment.
+
+`../openhub-server/openhub_server/state.py` `note_roster_command`,
+`../openhub-server/openhub_server/ui/index.html` `status`.
+
+
+### 98. The downlink round robin stands still where the devices are listening — `blocking` `defect` `contract`
+
+**Two devices on one grant, and one of them receives every downlink while the
+other receives none — permanently.** Measured 2026-08-25 with node A in slot 0
+and node B in slot 1, both at `report every 8`:
+
+    node A   834 downlinks opened while it was the only device, 0 since node B joined
+    node B   140 opened over the same period
+    hub      718 of 718 opportunities sent, 0 no device, 0 tx err, 0 nonce refused
+
+Node A's count froze at the minute node B was enrolled and has not moved since.
+
+**The arithmetic, and nothing about it is intermittent.** `dl_downlink_service()`
+advances `dl_next_slot` by one **occupied** slot on every downlink opportunity,
+and opportunities are `RADIO_DOWNLINK_ON(sf)`, one superframe in
+`RADIO_DOWNLINK_EVERY` = 2. A device opens its downlink receive window in
+`device.c:667` and **nowhere else** — inside the report attempt, so only on
+`sf % report_every == 0`. Between two of those the rotation advances
+
+    report_every / RADIO_DOWNLINK_EVERY = 8 / 2 = 4 steps
+
+and 4 mod 2 devices is **0**, so the phase at the moment the devices are
+listening never moves. The rotation is fair over superframes and stationary over
+the superframes that matter, which is why the hub's own counters all read healthy.
+
+It is fine at one device and fine at three — `4 mod 3 = 1` — and starves all but
+one whenever the device count divides `report_every / RADIO_DOWNLINK_EVERY`. A
+fault with a duty cycle of 100 % cannot announce itself by working sometimes.
+
+**What makes it blocking rather than a nuisance: ADR-0023.** `tx_allowed()` is
+`tx_floor_known && ...`, and `tx_floor_known` is set only inside
+`downlink_open()`. A starved device that reboots therefore **never transmits
+again**. Node A is in that state now: it hears beacons (`rx.beacon` every 8
+superframes on its own telemetry) and answers every one with
+`tx.deny`, `reports 0`, `downlinks 0 of 0`, indefinitely.
+
+**A second defect found while reading it.** `TLM_TX_DENY` is emitted with a
+hard-coded `TLM_WHY_FLOOR`, so `why=8` is a constant and not a reading — the
+record that repeats every cycle cannot say which of the two gates is shut, while
+`TLM_TX_HOLD`, which names the gate correctly, is emitted **once** behind
+`tx_hold_said` and is therefore gone by the time anyone attaches. A reader who
+takes `why=8` at face value concludes the floor is set when it is not. Device
+tree, `Core/Src/device.c` → the `may_send` block.
+
+`CM4/Core/Src/radio.c` → the round robin in the downlink service;
+`../radio_devices_docs/radio/tdma.md`;
+`../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md`.
