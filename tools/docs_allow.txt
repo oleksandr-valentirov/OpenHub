@@ -1,147 +1,148 @@
-# Names and paths the documentation may use that the code does not define.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #
-# One exemption per line, `page:name  # reason`, and every field is required.
-# The page scope matters: the same string was a correct historical quotation on
-# one page and a stale claim in live arithmetic on another, in one tree on one
-# day, and a name-keyed list silences both together. The reason is required
-# rather than conventional, because the failure mode of any allow list is a line
+#
 # added without one.
-#
-# This file is excluded from the source scan. It used to be read as evidence, so
-# every exemption proved its own symbol existed - the check's own setup
-# destroying the condition it was written to test.
-
+# ADR-0031 counts and cites across both trees.
 # Algebra in the slot-budget derivations, not identifiers.
-radio/tdma.md:t_air         # symbol in the deadline derivation
-radio/tdma.md:t_hub         # likewise
-radio/tdma.md:t_latch       # likewise
-radio/tdma.md:tx_seq        # likewise
-
-# The reference manual's name for the RNG clock source, not a project symbol.
-open_hub/arch/build-and-generation.md:hsi48_ck  # RCC clock-tree name
-
-# A term in the key-agreement formula, not a variable in either firmware.
-radio/crypto/key-lifecycle.md:hub_ephemeral  # ECDH operand in the derivation
-
-# Pages that name a symbol in order to say it names nothing, or to describe what
-# was replaced. Rewriting these to please the checker would falsify the record.
-open_hub/testing/on-target.md:radio_init          # listed as naming nothing
-open_hub/testing/on-target.md:pairing_arm_invite  # listed as naming nothing
-open_hub/testing/on-target.md:rfm_ms_counter      # listed as naming nothing
-radio/joining.md:RFM_add_device_routine  # the previous implementation, described
-radio/decisions/0009-fixed-join-channel.md:RFM_add_device_routine  # as decided then
-radio/pairing.md:RADIO_PAIR_EXCHANGE_US  # the macro that used to sum four frames
-radio/crypto/wire-crypto.md:wire_v2      # a superseded vector set, as history
-radio/tdma.md:RADIO_AIRTIME_US           # quoted defect, dated in the sentence
-open_hub/arch/ipc.md:ipc_poll_event_reply  # the filtering poll, described as removed
-
-# Deleted, and both pages name the path in order to say it is gone.
-open_hub/decisions/0011-mbedtls-on-cm7-only.md:CM7/Core/Src/cmox_low_level.c  # ADR record
-open_hub/security/crypto-architecture.md:CM7/Core/Src/cmox_low_level.c        # says it went
-
-# Contract pseudo-code and formula variables inside fences: what both firmwares
-# must compute, written in the units of the contract rather than in either
-# implementation's symbols.
-radio/tdma.md:superframe_start_us      # the contract in us; the code holds ticks
-open_hub/radio/timebase.md:rate_Hz     # variable in the calibration derivation
-open_hub/radio/timebase.md:true_ppm    # likewise
-# A udev device path in an untagged fence, not a symbol.
-open_hub/testing/on-target.md:STMicroelectronics_STLINK  # the console's by-id path
-
-# Telemetry field and command names. Their authority is
-# openhub-server/schema/telemetry.yaml, which is not in this tree; the header it
-# generates spells them OHT_F_*/OHT_CMD_*/OHT_RES_*, and the page uses the names
+# A Linux kernel module, named while diagnosing a wedged ST-Link console. It is
 # a REST reader actually sees. Quoting the macro instead would document a form
+# a source scan; the library was built on 2026-08-25 and these lines stay for
+# A term in the key-agreement formula, not a variable in either firmware.
+# A udev device path in an untagged fence, not a symbol.
+# because an exemption whose reason is "it moved" stops being checkable the
+# ~/.claude/skills/sdr/tools/, so the names they define are no longer in any
+# CMSIS and nginx spell these, not this project. Named because the page is about
+# Contract pseudo-code and formula variables inside fences: what both firmwares
+# day, and a name-keyed list silences both together. The reason is required
+# Deleted 2026-08-25, phase 9 step 5. These four pages record the decision to
+# Deleted, and both pages name the path in order to say it is gone.
+# delete it and the argument for it, so naming it is the history rather than a
+# destroying the condition it was written to test.
+# every exemption proved its own symbol existed - the check's own setup
+# generated header spells them OHT_F_*/OHT_CMD_*.
+# generates spells them OHT_F_*/OHT_CMD_*/OHT_RES_*, and the page uses the names
+# implementation's symbols.
+# make one exist.
+# moment it moves again.
+# must compute, written in the units of the contract rather than in either
+# Named in order to say they are gone. Rewriting these would falsify the record.
+# Names ADR-0030 decision 6 removed by being executed, 2026-08-24. A record has
+# Names and paths the documentation may use that the code does not define.
 # no client ever handles.
-open_hub/network/telemetry.md:rssi_up_sync_dbm  # schema field, OHT_F_DEVICE_RSSI_UP_SYNC_DBM here
-open_hub/network/telemetry.md:snapshot_ask_ms   # schema field, OHT_F_LINK_SNAPSHOT_ASK_MS here
+# One exemption per line, `page:name  # reason`, and every field is required.
+# one page and a stale claim in live arithmetic on another, in one tree on one
+open_hub/arch/build-and-generation.md:hsi48_ck  # RCC clock-tree name
+open_hub/arch/config-store.md:ks_legacy_  # the ks_legacy_* pattern, quoted as a family
+open_hub/arch/config-store.md:SCB_InvalidateDCache  # CMSIS cache maintenance, from the Cortex-M7 headers
+open_hub/arch/ipc.md:ipc_poll_event_reply  # the filtering poll, described as removed
+open_hub/arch/keystore.md:SCB_InvalidateDCache      # same call, same reason, on the page that found it
+open_hub/decisions/0011-mbedtls-on-cm7-only.md:CM7/Core/Src/cmox_low_level.c  # ADR record
 open_hub/network/telemetry.md:dev_app           # schema command, OHT_CMD_DEV_APP here
 open_hub/network/telemetry.md:not_implemented   # schema result, OHT_RES_NOT_IMPLEMENTED here
-radio/phy.md:link_v4  # three correct historical citations: the pre-v4 wire, and what v4 grew
-radio/decisions/0022-boot-epoch-in-the-nonce.md:store_reserve_counter  # named as the scheme ADR-0023 removed
-radio/decisions/0023-the-hub-supplies-the-transmit-floor.md:store_reserve_counter  # named as what this record deletes
-radio/decisions/0022-boot-epoch-in-the-nonce.md:reserve_extend  # named as the discarded lower bound ADR-0023 fixed
+open_hub/network/telemetry.md:report_flags  # schema field, RADIO_REPORT_FLAG_* on this side
+open_hub/network/telemetry.md:rssi_stale    # likewise
+open_hub/network/telemetry.md:rssi_up_sync_dbm  # schema field, OHT_F_DEVICE_RSSI_UP_SYNC_DBM here
+open_hub/network/telemetry.md:snapshot_ask_ms   # schema field, OHT_F_LINK_SNAPSHOT_ASK_MS here
+open_hub/network/telemetry.md:temp_stale    # a bit in that field, named as the server renders it
+open_hub/network/tls.md:ssl_ecdh_curve              # an nginx directive the config deliberately does not set
+open_hub/radio/sync-timestamp.md:rx_note_sync  # the polled counter before the seam, named as what moved
+open_hub/radio/timebase.md:rate_Hz     # variable in the calibration derivation
+open_hub/radio/timebase.md:true_ppm    # likewise
+open_hub/security/crypto-architecture.md:CM7/Core/Src/cmox_low_level.c        # says it went
 open_hub/security/self-tests.md:crypto_pair_init_key  # the page names the function ADR-0024 removed with its design, in the past tense
 open_hub/security/self-tests.md:crypto_pair_init_mac  # same passage: named as what outlived the design uncalled and was removed 2026-08-23
-radio/decisions/0025-x25519-replaces-p256.md:crypto_p256_decompress  # an ADR must be able to name the function it replaced
-radio/crypto/wire-crypto.md:wire_v1  # the retirement section names deleted sets in the past tense, by design
-radio/crypto/wire-crypto.md:wire_v2  # same paragraph: both were removed 2026-08-22 and are named as history
-radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rule was already following
-
-# Those three names are supplied now - timebase.h and kdf.h in the library - and
-# the exemptions they had went with the items that owed them, 2026-08-25.
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:hop_prf_selftest  # named as the two-stage check item 81 replaced with hop_selftest
-
-# CMSIS and nginx spell these, not this project. Named because the page is about
-# what they do to a flash driver and to a TLS handshake.
-open_hub/arch/config-store.md:SCB_InvalidateDCache  # CMSIS cache maintenance, from the Cortex-M7 headers
-open_hub/arch/keystore.md:SCB_InvalidateDCache      # same call, same reason, on the page that found it
-open_hub/network/tls.md:ssl_ecdh_curve              # an nginx directive the config deliberately does not set
-
-# Prefixes, written with a wildcard. A prefix is not a symbol and no rename can
-# make one exist.
-open_hub/arch/config-store.md:ks_legacy_  # the ks_legacy_* pattern, quoted as a family
-radio/pairing.md:RADIO_PAIR_             # RADIO_PAIR_*_BYTES, the family the sizeof asserts cover
-
-# Telemetry field names, as a REST reader sees them. Their authority is
+# openhub-server/schema/telemetry.yaml, which is not in this tree; the header it
 # openhub-server/schema/telemetry.yaml, which this tree does not contain; the
-# generated header spells them OHT_F_*/OHT_CMD_*.
-open_hub/network/telemetry.md:report_flags  # schema field, RADIO_REPORT_FLAG_* on this side
-open_hub/network/telemetry.md:temp_stale    # a bit in that field, named as the server renders it
-open_hub/network/telemetry.md:rssi_stale    # likewise
-radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md:device_add  # the northbound command; cmd_device_add is only its handler here
-
-# Named in order to say they are gone. Rewriting these would falsify the record.
-radio/crypto/wire-crypto.md:link_v5   # retired with link_v6; the retirement list names it in the past tense
-open_hub/radio/sync-timestamp.md:rx_note_sync  # the polled counter before the seam, named as what moved
-radio/phy-seam.md:rx_note_sync        # the same function, in the list of what phy_poll absorbed
-radio/phy-seam.md:rx_discard_frame    # likewise, absorbed 2026-08-24
-radio/phy-seam.md:sync_edge_new       # the flag phy_ev_t.sync_seq replaced
-
-# `radio_stack` is a repository, not a symbol, so no rename can make it exist in
-# a source scan; the library was built on 2026-08-25 and these lines stay for
-# that reason rather than the one they were written with.
-radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's name, read as a symbol because of the radio_ prefix
-radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_lib_HAL   # a naming the record considered and rejected
-radio/phy-seam.md:radio_stack         # the same name, in this page's layout sketch
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_sha256        # the alternative the record weighs, declared to weigh it
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the repository this record scopes the contents of
-radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names it
-
-# Names ADR-0030 decision 6 removed by being executed, 2026-08-24. A record has
-# to keep the words it decided in, and none of these is a live claim any more.
-radio/decisions/0009-fixed-join-channel.md:hop_slot_to_grid  # the name the join-slot skip had when this was decided
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_slot_to_grid  # this record's own account of the duplication it then removed
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_identify  # deleted with its callers, none of which existed; see phase 9 step 2
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_swap32_model  # kept as hop_prf_swap32, beside the PRF rather than inside hop.c
-radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone and what replaced it
-
-# ADR-0031 counts and cites across both trees.
-radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:ipc_  # the prefix the reference count is over, not an identifier
-radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:test_period  # a suite in wl55_device, quoted for the figures that did not move
-
-# Deleted 2026-08-25, phase 9 step 5. These four pages record the decision to
-# delete it and the argument for it, so naming it is the history rather than a
-# stale claim; every live page that named it has been rewritten.
-radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_pair_derive  # the record that ordered its deletion
-radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:crypto_pair_derive  # likewise, decision 4
-radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:crypto_pair_derive  # likewise, decision 5
-
-# A Linux kernel module, named while diagnosing a wedged ST-Link console. It is
-# the host's, not this project's, and the diagnosis is worthless without it.
 open_hub/testing/on-target.md:cdc_acm  # the kernel's CDC ACM driver, not a symbol here
-
-# The SDR tools left this repository on 2026-08-25 (ed536c2) for
-# ~/.claude/skills/sdr/tools/, so the names they define are no longer in any
-# scan this checker can reach. Each line names where the symbol actually lives,
-# because an exemption whose reason is "it moved" stops being checkable the
-# moment it moves again.
+open_hub/testing/on-target.md:pairing_arm_invite  # listed as naming nothing
+open_hub/testing/on-target.md:radio_init          # listed as naming nothing
+open_hub/testing/on-target.md:rfm_ms_counter      # listed as naming nothing
+open_hub/testing/on-target.md:STMicroelectronics_STLINK  # the console's by-id path
 open_hub/testing/sdr.md:find_bursts  # iqfile.py in the sdr skill's tools; also used by decode/dutycycle/carrier/spectrum
 open_hub/testing/sdr.md:find_sync  # gfsk.py in the sdr skill's tools, called from decode.py
 open_hub/testing/sdr.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
 open_hub/testing/sdr.md:rtl_test  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
+# Pages that name a symbol in order to say it names nothing, or to describe what
+# Prefixes, written with a wildcard. A prefix is not a symbol and no rename can
+radio/crypto/key-lifecycle.md:hub_ephemeral  # ECDH operand in the derivation
+radio/crypto/wire-crypto.md:link_v5   # retired with link_v6; the retirement list names it in the past tense
+radio/crypto/wire-crypto.md:pair_v1  # named as the precedent the retirement rule was already following
+radio/crypto/wire-crypto.md:wire_v1  # the retirement section names deleted sets in the past tense, by design
+radio/crypto/wire-crypto.md:wire_v2      # a superseded vector set, as history
+radio/crypto/wire-crypto.md:wire_v2  # same paragraph: both were removed 2026-08-22 and are named as history
+radio/decisions/0009-fixed-join-channel.md:hop_slot_to_grid  # the name the join-slot skip had when this was decided
+radio/decisions/0009-fixed-join-channel.md:RFM_add_device_routine  # as decided then
 radio/decisions/0018-compressed-points-on-the-wire.md:build_frame  # inject.py in the sdr skill's tools
+radio/decisions/0022-boot-epoch-in-the-nonce.md:reserve_extend  # named as the discarded lower bound ADR-0023 fixed
+radio/decisions/0022-boot-epoch-in-the-nonce.md:store_reserve_counter  # named as the scheme ADR-0023 removed
+radio/decisions/0023-the-hub-supplies-the-transmit-floor.md:store_reserve_counter  # named as what this record deletes
+radio/decisions/0024-the-device-id-is-the-whole-enrolment-anchor.md:device_add  # the northbound command; cmd_device_add is only its handler here
+radio/decisions/0025-x25519-replaces-p256.md:crypto_p256_decompress  # an ADR must be able to name the function it replaced
+radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_lib_HAL   # a naming the record considered and rejected
+radio/decisions/0028-the-radio-is-a-library-and-the-region-is-a-compile-time-profile.md:radio_stack     # the repository's name, read as a symbol because of the radio_ prefix
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_pair_derive  # the record that ordered its deletion
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:crypto_sha256        # the alternative the record weighs, declared to weigh it
+radio/decisions/0029-the-library-declares-four-backends-and-absorbs-no-control.md:hop_prf_selftest  # named as the two-stage check item 81 replaced with hop_selftest
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:crypto_pair_derive  # likewise, decision 4
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_identify  # deleted with its callers, none of which existed; see phase 9 step 2
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_slot_to_grid  # this record's own account of the duplication it then removed
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:hop_swap32_model  # kept as hop_prf_swap32, beside the PRF rather than inside hop.c
+radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-separate-consumer.md:radio_stack  # the repository this record scopes the contents of
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:crypto_pair_derive  # likewise, decision 5
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:ipc_  # the prefix the reference count is over, not an identifier
+radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:test_period  # a suite in wl55_device, quoted for the figures that did not move
+radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names it
+radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone and what replaced it
 radio/joining.md:find_bursts  # iqfile.py in the sdr skill's tools
+radio/joining.md:RFM_add_device_routine  # the previous implementation, described
 radio/joining.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
 radio/pairing.md:find_bursts  # iqfile.py in the sdr skill's tools
+radio/pairing.md:RADIO_PAIR_EXCHANGE_US  # the macro that used to sum four frames
+radio/pairing.md:RADIO_PAIR_             # RADIO_PAIR_*_BYTES, the family the sizeof asserts cover
 radio/pairing.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
+radio/phy.md:link_v4  # three correct historical citations: the pre-v4 wire, and what v4 grew
+radio/phy.md:RADIO_DUTY_PPM  # the retired name, kept because that section is the record of the rename to RADIO_SUSTAINED_PPM in radio_stack 3cd54af
+radio/phy-seam.md:radio_stack         # the same name, in this page's layout sketch
+radio/phy-seam.md:rx_discard_frame    # likewise, absorbed 2026-08-24
+radio/phy-seam.md:rx_note_sync        # the same function, in the list of what phy_poll absorbed
+radio/phy-seam.md:sync_edge_new       # the flag phy_ev_t.sync_seq replaced
+# `radio_stack` is a repository, not a symbol, so no rename can make it exist in
+radio/tdma.md:RADIO_AIRTIME_US           # quoted defect, dated in the sentence
+radio/tdma.md:superframe_start_us      # the contract in us; the code holds ticks
+radio/tdma.md:t_air         # symbol in the deadline derivation
+radio/tdma.md:t_hub         # likewise
+radio/tdma.md:t_latch       # likewise
+radio/tdma.md:tx_seq        # likewise
+# rather than conventional, because the failure mode of any allow list is a line
+# scan this checker can reach. Each line names where the symbol actually lives,
+# stale claim; every live page that named it has been rewritten.
+# Telemetry field and command names. Their authority is
+# Telemetry field names, as a REST reader sees them. Their authority is
+# that reason rather than the one they were written with.
+# the exemptions they had went with the items that owed them, 2026-08-25.
+# the host's, not this project's, and the diagnosis is worthless without it.
+# The page scope matters: the same string was a correct historical quotation on
+# The reference manual's name for the RNG clock source, not a project symbol.
+# The SDR tools left this repository on 2026-08-25 (ed536c2) for
+# This file is excluded from the source scan. It used to be read as evidence, so
+# Those three names are supplied now - timebase.h and kdf.h in the library - and
+# to keep the words it decided in, and none of these is a live claim any more.
+# was replaced. Rewriting these to please the checker would falsify the record.
+# what they do to a flash driver and to a TLS handshake.
