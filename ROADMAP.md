@@ -15,6 +15,12 @@ sentence, so nothing anywhere disagrees when it goes stale. Name the file, the
 symbol, the commit or the ADR instead. The `device` items below are the exception
 and are hints rather than identifiers.
 
+**A figure from a run before `2026-08-25-2` is a record, not a rate.** Every
+dataset up to and including `2026-08-25-1` was deleted on 2026-08-26 and only the
+runs' records survive (`../bench/runs/README.md`). Items 60, 63, 76 and 99 carry
+the marking at their own sites. Nothing here was retired by it — an item whose
+evidence went with the samples is *less* sourced, not closed.
+
 **Cleaned four times.** The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
@@ -398,8 +404,13 @@ that arm is closed rather than open.
 
 #### 2026-08-25: every arm above predates ADR-0033, and the signature is the one AFC produced
 
-**Not re-measured since the hub stopped running AFC.** The latest arm here is
-run `2026-08-24-4`; `AfcAutoOn` went off on 2026-08-25. Item 30 states the knot's
+**Not re-measured since the hub stopped running AFC, and the datasets are now
+gone as well.** The latest arm here is run `2026-08-24-4`; `AfcAutoOn` went off
+on 2026-08-25, and on 2026-08-26 every capture up to and including `2026-08-25-1`
+was deleted. **So every number in this item is a record and not a measurement**:
+it may be read for what was seen, and nothing here may be quoted as the current
+rate. The population that would re-establish it is a pre-registered series
+against `2026-08-25-2` or later — `../bench/runs/README.md`. Item 30 states the knot's
 own rule - *pre-sync in all of them, device to hub in all of them, one receiver
 in common, and an arm run against any of them is evidence about the other two* -
 and the finding this item rests on is **that no sync word matched**, which is
@@ -533,9 +544,11 @@ hypothesis is item 73, which is arithmetic rather than a mechanism.
 
 #### 2026-08-24: the first air-side denominator, and proximity ruled out
 
-Every arm above differenced two counters. `bench/runs/2026-08-24-1/join.iq` and
-`2026-08-24-2/` count the requests **on the air** instead, on a bladeRF over the
-join channel, so the denominator is no longer the device's own claim.
+Every arm above differenced two counters. Runs `2026-08-24-1` and `2026-08-24-2`
+counted the requests **on the air** instead, on a bladeRF over the join channel,
+so the denominator is no longer the device's own claim. **Their captures were
+deleted on 2026-08-26 and only the records survive**, so the table below can be
+read and cannot be recomputed.
 
 | window | requests radiated | hub registered |
 |---|---|---|
@@ -575,8 +588,13 @@ item 60 as one receiver rather than two defects. `bench/runs/2026-08-24-4/RESULT
 
 #### 2026-08-25: every arm above predates ADR-0033, and the signature is the one AFC produced
 
-**Not re-measured since the hub stopped running AFC.** The latest arm here is
-run `2026-08-24-4`; `AfcAutoOn` went off on 2026-08-25. Item 30 states the knot's
+**Not re-measured since the hub stopped running AFC, and the datasets are now
+gone as well.** The latest arm here is run `2026-08-24-4`; `AfcAutoOn` went off
+on 2026-08-25, and on 2026-08-26 every capture up to and including `2026-08-25-1`
+was deleted. **So every number in this item is a record and not a measurement**:
+it may be read for what was seen, and nothing here may be quoted as the current
+rate. The population that would re-establish it is a pre-registered series
+against `2026-08-25-2` or later — `../bench/runs/README.md`. Item 30 states the knot's
 own rule - *pre-sync in all of them, device to hub in all of them, one receiver
 in common, and an arm run against any of them is evidence about the other two* -
 and the finding this item rests on is **that no sync word matched**, which is
@@ -859,9 +877,11 @@ below the sync word is the SDR, not the hub.
 
 #### 2026-08-24: the first air-side denominator, and proximity ruled out
 
-Every arm above differenced two counters. `bench/runs/2026-08-24-1/join.iq` and
-`2026-08-24-2/` count the requests **on the air** instead, on a bladeRF over the
-join channel, so the denominator is no longer the device's own claim.
+Every arm above differenced two counters. Runs `2026-08-24-1` and `2026-08-24-2`
+counted the requests **on the air** instead, on a bladeRF over the join channel,
+so the denominator is no longer the device's own claim. **Their captures were
+deleted on 2026-08-26 and only the records survive**, so the table below can be
+read and cannot be recomputed.
 
 | window | requests radiated | hub registered |
 |---|---|---|
@@ -1618,7 +1638,10 @@ not assuming.
 
 ### 76. The beacon's air time is 48 % over what the payload predicts — `defect`
 
-Regression run `2026-08-24-1`, check RG-A-5. Over 31 superframes `airgrid` puts
+Regression run `2026-08-24-1`, check RG-A-5, **whose capture was deleted on
+2026-08-26** — the figures below are its record and cannot be recomputed, and the
+attribution this item asks for now needs a fresh window against `2026-08-25-2` or
+later (`../bench/runs/README.md`). Over 31 superframes `airgrid` puts
 the beacon's mean air time at **5.90 ms against a 4.00 ms prediction**, computed
 from `phy.air_us()` off the compiled headers. `radio_devices_docs/specs/06-regression.md`
 §6.1 sets the tolerance at ±10 % relative; this is +48 %.
@@ -1891,6 +1914,11 @@ the busiest channel, and under the old fixed rule that same empty noise reports
 **37 of 37** channels busy. Runs `2026-08-25-1` and `2026-08-25-2` were voided on
 1.67 % and 1.33 %, both under that figure, while the 2.80 % was printing in tier 0
 the whole time.
+
+**`2026-08-25-1`'s capture was deleted on 2026-08-26** and its re-analysis
+survives only as `bench/runs/2026-08-25-1/bandscan.REANALYSED.txt`. The
+retraction rests on `2026-08-25-2`, which still holds its samples, and on the
+tool's own noise-only self-test — neither of which needed the deleted run.
 
 **Fixed in `claude_sdr_skill` `20c42c9`**, found by `radio-project-space-44` and
 verified here from this repository's own capture before the item was rewritten.
