@@ -2008,3 +2008,42 @@ measuring traffic, and it printed that verdict twice before anyone read it as on
 
 `bench/runs/2026-08-25-2/RESULT.md` § correction of 2026-08-26.
 
+
+### 104. The downlink rotation starved the device it was written to rescue — `defect`
+
+**Fixed and host-tested 2026-08-26. Not on the board.**
+
+`dl_due()` returns 1 for any device with `frames_ok == 0`, so one this boot has
+heard nothing from is offered a downlink at every opportunity — deliberately,
+because it may be waiting on
+[ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)'s
+transmit floor. The scan then moved the cursor **past whoever it served**. Beside
+a reporting device on the same period the two compose: the unheard one spends its
+turn on the three opportunities a cycle it is not listening in, and loses the one
+it is. No downlink opens, the floor never lifts, it never transmits, `frames_ok`
+stays 0. **The rule that exists to rescue it is what guarantees it is never
+heard.**
+
+The mechanism, the arithmetic, why it arms at every reset, and what item 98's
+closure could not see are on
+[`open_hub/radio/superloop.md`](../radio_devices_docs/open_hub/radio/superloop.md)
+§ the rescue rule created the starvation it was written to prevent. **Found from
+the device side**, which is where both witnesses are: `bench/journal/2026-08-26-device.md`.
+
+**The rotation is testable now.** `dl_due()`, `dl_own_window()` and `dl_pick()`
+are `CM4/Core/Src/dlsched.c` with `dev_entry_t` in its own header — a slice of
+item 75's remaining half — and `CM4/test/test_dlsched.c` drives the real file over
+a seeded roster with no board under it. It was written red, at *the unheard device
+was served in 0 of its 7 windows*, while its two other arms passed: two heard
+devices alternate, and a lone unheard device is served in all seven.
+
+**What is owed is the board.** Both cores build, the host suite is green, and the
+image has never run on air. The arm: two devices on the roster with one of them
+fresh, and **both** must open downlinks — read per device as
+`dl <n> opened of <n> windows`, which the WL55 console prints since
+`wl55_device 8f44603`. Node A is unpaired and needs a `device add` first.
+
+**Item 98's stated invariant cannot be the check.** `sent + none_due ==
+opportunities` holds at `none_due == 0`, which *is* the failure — an identity, not
+a check. What separates the two regimes is that `none_due` cannot be zero when the
+roster's periods say most opportunities are addressed to nobody.

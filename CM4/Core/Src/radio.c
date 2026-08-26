@@ -71,44 +71,8 @@ _Static_assert(sizeof(BUILD_ID BUILD_SUFFIX) <= 24u, "build id does not fit");
 #define EX_CM7_TIMEOUT_US   2000000u
 #define EX_DEV_TIMEOUT_US   3000000u
 
-typedef struct dev_entry {
-    uint8_t  used;
-    uint8_t  slot;
-    uint8_t  report_every;      /**< granted at pairing, and never rewritten after it */
-    uint8_t  every_now;         /**< the period in force: the grant until a SET_RATE is acked */
-    uint8_t  flags;             /**< RADIO_REPORT_FLAG_* from the last report */
-    uint32_t dev_id;
-    uint32_t key_gen;
-    uint8_t  session_key[AEAD_KEY_BYTES];
-    uint32_t last_superframe;
-    uint32_t rx_floor;          /**< highest accepted, scoped to key_gen; the replay guard */
-    uint8_t  rx_floor_slot;     /**< ... and which of its three slots, so k=3 is orderable */
-    uint32_t frames_ok;
-    uint32_t frames_bad;
-    uint32_t frames_replay;
-    uint32_t uptime_s;
-    uint16_t supply_mv;
-    int16_t  temp_c_x10;        /**< as the device measured its own die */
-    int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
-    uint32_t arrival_us;        /**< into the superframe the report claimed */
-    uint32_t arrival_sync_us;   /**< the same off the DIO3 edge, or IPC_ARRIVAL_SYNC_NONE */
-    uint16_t sync_unpaired;     /**< this device's share of the hub-wide refusals */
-    int8_t   rssi_down;         /**< as the device heard the hub's last beacon */
-    uint8_t  dl_cmd;            /**< RADIO_CMD_*, queued for this device */
-    uint8_t  dl_report_every;
-    uint16_t dl_arg;
-    uint8_t  dl_repeats;        /**< downlinks left to carry it; 0 means idle */
-    uint8_t  dl_cmd_seq;        /**< names the command, so an ack can refer to it */
-    uint8_t  dl_acked;          /**< the device echoed this seq back */
-    uint8_t  dl_ack_arg;        /**< ... and what it said it applied, never what was asked */
-    uint32_t dl_nonce_sf;       /**< the superframe of the last downlink sealed for it */
-    uint8_t  dl_nonce_used;     /**< ... and whether there was one, since 0 is a real one */
-    uint16_t missed_run;        /**< report opportunities closed in a row with nothing */
-    uint32_t cyc_last_sf;       /**< superframe of the last cycle that arrived */
-    uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
-    uint16_t cyc_n;
-    uint32_t cyc_sum;           /**< ... against the mean, which also carries loss */
-} dev_entry_t;
+#include "dev_entry.h"
+#include "dlsched.h"
 
 static void RFM_send_broadcast(uint8_t flags, uint8_t resume_in);
 static void RFM_send_join_beacon(void);
@@ -1320,27 +1284,6 @@ static void RFM_serve_request(const ipc_msg_t *req) {
 }
 
 
-/* A device opens its downlink window and reports only on its own superframes.
- * radio_devices_docs/radio/tdma.md */
-static int device_due(const dev_entry_t *d, uint32_t sf) {
-    if (!d->used)
-        return 0;
-    /* Unheard this boot: no period, and it may be the one ADR-0023 has muted.
-     * radio_devices_docs/open_hub/radio/superloop.md */
-    if (d->frames_ok == 0u)
-        return 1;
-    if (d->every_now == 0u)
-        return 1;
-    if ((sf % d->every_now) == 0u)
-        return 1;
-    /* An applied rate whose ack was lost leaves the two sides on different periods.
-     * radio_devices_docs/open_hub/radio/superloop.md */
-    if (d->dl_cmd == RADIO_CMD_SET_RATE && !d->dl_acked &&
-        d->dl_report_every != 0u && (sf % d->dl_report_every) == 0u)
-        return 1;
-    return 0;
-}
-
 /* The superframe that just closed: over, so its answer cannot still change.
  * radio_devices_docs/open_hub/radio/configuration.md */
 static void score_missed_reports(void) {
@@ -1350,7 +1293,7 @@ static void score_missed_reports(void) {
         dev_entry_t *d = &devices[i];
 
         /* The period in force, not the grant: a rate change moves the opportunities. */
-        if (!device_due(d, past))
+        if (!dl_due(d, past))
             continue;
         if (d->frames_ok != 0u && d->last_superframe == past)
             d->missed_run = 0;
@@ -2041,7 +1984,7 @@ static void downlink_service(void) {
     radio_downlink_cmd_t body;
     uint8_t nonce[AEAD_NONCE_BYTES];
     dev_entry_t *d = NULL;
-    uint8_t i, slot, hop_idx;
+    uint8_t slot, hop_idx;
     uint8_t carried = 0;
 
     if (!sfm.started || pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
@@ -2061,14 +2004,15 @@ static void downlink_service(void) {
     dl_served = sfm.g.counter;
     dl_opportunities++;
 
-    /* Round robin over the devices listening in this superframe. ROADMAP item 98
+    /* Round robin over the devices listening in this superframe. ROADMAP item 104
      * radio_devices_docs/open_hub/radio/superloop.md */
-    for (i = 0; i < RADIO_MAX_DEVICES; i++) {
-        slot = (uint8_t)((dl_next_slot + i) % RADIO_MAX_DEVICES);
-        if (device_due(&devices[slot], sfm.g.counter)) {
+    {
+        int picked = dl_pick(devices, RADIO_MAX_DEVICES, &dl_next_slot,
+                             sfm.g.counter);
+
+        if (picked >= 0) {
+            slot = (uint8_t)picked;
             d = &devices[slot];
-            dl_next_slot = (uint8_t)((slot + 1u) % RADIO_MAX_DEVICES);
-            break;
         }
     }
     if (d == NULL) {

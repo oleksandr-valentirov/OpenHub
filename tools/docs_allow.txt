@@ -146,3 +146,4 @@ radio/tdma.md:tx_seq        # likewise
 # to keep the words it decided in, and none of these is a live claim any more.
 # was replaced. Rewriting these to please the checker would falsify the record.
 # what they do to a flash driver and to a TLS handshake.
+open_hub/radio/superloop.md:device_due  # the name dl_due carried until the rotation moved to dlsched.c on 2026-08-26; the page cites it as history
