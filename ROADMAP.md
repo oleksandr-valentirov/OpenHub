@@ -2011,7 +2011,7 @@ measuring traffic, and it printed that verdict twice before anyone read it as on
 
 ### 104. The downlink rotation starved the device it was written to rescue — `defect`
 
-**Fixed and host-tested 2026-08-26. Not on the board.**
+**Fixed, host-tested, flashed and verified on air 2026-08-27.**
 
 `dl_due()` returns 1 for any device with `frames_ok == 0`, so one this boot has
 heard nothing from is offered a downlink at every opportunity — deliberately,
@@ -2037,11 +2037,28 @@ a seeded roster with no board under it. It was written red, at *the unheard devi
 was served in 0 of its 7 windows*, while its two other arms passed: two heard
 devices alternate, and a lone unheard device is served in all seven.
 
-**What is owed is the board.** Both cores build, the host suite is green, and the
-image has never run on air. The arm: two devices on the roster with one of them
-fresh, and **both** must open downlinks — read per device as
-`dl <n> opened of <n> windows`, which the WL55 console prints since
-`wl55_device 8f44603`. Node A is unpaired and needs a `device add` first.
+**The board arm, pre-registered in `bench/RESOURCES.md` before the flash and taken
+2026-08-27.** Both cores to `03410b3`, `-hardRst`, `boot_id 0x8cbfb445`. Node A had
+been starved for 13.4 h at `frames_ok 0`, `missed_run 20776`; it was removed,
+re-enrolled, and its own record stream answered in three cycles:
+
+    sf 274536  rx.dlmiss rc=2   the window lost to the other device
+    sf 274544  rx.cmd rpt=2     the next window WON, and the floor latched
+    sf 274552  tx.up slot=0     the first frame since 2026-08-25 21:52
+
+**It alternates now, which is the fix**: the rescue serves between two windows no
+longer spend its turn. The hub agrees from the other side — `frames_ok` **2 and
+14**, `missed_run` **0 on both**, `uplink_ok == uplink_frames` with `bad_tag 0`.
+
+**And the second prediction landed with it.** `dl_opportunities 157` against
+`dl_sent 82` — **`none_due` 75** where it had been **0 for 12 457 opportunities**.
+The hub transmits only where somebody listens again, which is what item 98 was
+for, and its invariant is informative rather than trivially satisfied.
+
+**Held over the following window**, both devices reporting with `missed_run 0`:
+node A `frames_ok 25` against node B's 37, and the two devices opened **eleven
+downlink windows each** over the same stretch — an equal share, which is the
+alternation the fix restores and the shape a starved device cannot produce.
 
 **Item 98's stated invariant cannot be the check.** `sent + none_due ==
 opportunities` holds at `none_due == 0`, which *is* the failure — an identity, not
