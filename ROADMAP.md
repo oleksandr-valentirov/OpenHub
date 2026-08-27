@@ -21,7 +21,7 @@ runs' records survive (`../bench/runs/README.md`). Items 60, 63, 76 and 99 carry
 the marking at their own sites. Nothing here was retired by it — an item whose
 evidence went with the samples is *less* sourced, not closed.
 
-**Cleaned four times.** The first pass retired four closed entries, moved the front-end
+**Cleaned nine times.** The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
@@ -57,7 +57,37 @@ against a real hub. An item whose reasoning and whose fix both live in another
 tree is a number in a foreign queue, which is what the paragraph at the top of
 this file is about.
 
-The seventh, 2026-08-26, retired two, and both were closed rather than argued
+The seventh, 2026-08-25, retired **seven** and is the largest so far, because a
+regression run and a relocation landed on the same evening.
+
+**Items 89 and 93 are closed by the same rewrite.** The SDR readers could not
+open the capture `specs/06-regression.md` asks for - the whole-file path cost
+about fourteen times the capture resident and the kernel killed it twice during
+run `2026-08-25-2`. They read a 9.6 GB capture now, verified byte for byte
+against their own pre-change output, and 93's `ulimit -v` workaround goes with
+them.
+
+**Items 57, 88 and 92 moved rather than closed.** Duty-cycle attribution, the
+off-grid bursts that get blamed on the firmware, and `--device` defaulting to
+slot 1 are all debts of the tools, and the tools left this tree for
+`~/.claude/skills/sdr/` in `ed536c2`. They are items 3, 2 and 1 of that
+repository's own `ROADMAP.md`. **Do not re-file them here**: a queue that
+outlives the code it describes is a queue nobody reads.
+
+**Item 77 is retired half closed and its live half moved.** `bandscan.py` has an
+`RG-` id now - RG-A-9, which is what failed run `2026-08-25-2` - so the debt that
+nothing ran it on a schedule is paid. What it recorded about `capture.py`
+defaulting `--bandwidth` to the sample rate is still true and is item 4 in the
+skill's queue.
+
+**Item 98 is closed and was measured closed, not argued closed.** `fdf2d30`
+serves a downlink only where a device opens a window; run `2026-08-25-2` read
+`dl_sent 236` against `dl_opportunities 708` with both nodes on `every 8`, where
+the old rotation sent at every opportunity and starved one node permanently. The
+relation to assert is `sent + none_due == opportunities`. Its reasoning stays on
+`open_hub/radio/superloop.md` § the rotation scans for a listener.
+
+The eighth, 2026-08-26, retired two, and both were closed rather than argued
 closed. **Item 102** was `linkjoin`'s cursor, not the join: `seed()` kept the last
 row of a 200-row page from a 2000-event buffer, so it started 200 events in the
 past and replayed the backlog as arrivals. The arithmetic is what gave it away -
@@ -69,6 +99,33 @@ diffed, so on a per-frame measurement absence means only that the hub did not se
 it. The schema digest and the docs digest are byte-identical either side of it, so
 no running hub disagrees. Both readings are on `openhub-server/README.md`
 § *Reading it honestly*.
+
+The ninth, 2026-08-27, retired **item 104** — the downlink rotation that starved
+the device the rescue rule exists to save. `dl_due()` returns 1 for any device
+with `frames_ok == 0`, and the scan then moved the cursor **past whoever it
+served**, so beside a reporting device on the same period the unheard one spent
+its turn on the three opportunities a cycle it is not listening in and lost the
+one it is. Fixed in `03410b3`; the rotation is `CM4/Core/Src/dlsched.c` now and
+`CM4/test/test_dlsched.c` drives it over a seeded roster with no board under it,
+written red at *the unheard device was served in 0 of its 7 windows*. Flashed to
+both cores and verified on air from both sides of the antenna: node A latched its
+floor and transmitted for the first time in 13.4 h, the hub read `frames_ok` 2 and
+14 with `missed_run` 0 on both, and the two devices then opened **eleven downlink
+windows each** over the following stretch — the equal share a starved device
+cannot produce. Reasoning on
+[`open_hub/radio/superloop.md`](../radio_devices_docs/open_hub/radio/superloop.md)
+§ the rescue rule created the starvation it was written to prevent; found from the
+device side, `bench/journal/2026-08-26-device.md`.
+
+**And the lesson is about item 98's closure in the seventh pass, which is why it
+is kept here rather than left on the page.** That paragraph asserts
+`sent + none_due == opportunities` as the relation which proved item 98 closed.
+**The identity holds at `none_due == 0`, and `none_due == 0` *is* the starved
+regime** — it held for 12 457 consecutive opportunities while one node could not
+transmit at all. An invariant a failure satisfies is not a check, and this one was
+quoted as one for two days. What separates the regimes is that `none_due` cannot
+be zero when the roster's periods say most opportunities are addressed to nobody;
+after the fix it read **75 of 157**.
 
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
@@ -128,36 +185,6 @@ behind each clause, is
 ---
 
 ## Blocking
-
-The seventh, 2026-08-25, retired **seven** and is the largest so far, because a
-regression run and a relocation landed on the same evening.
-
-**Items 89 and 93 are closed by the same rewrite.** The SDR readers could not
-open the capture `specs/06-regression.md` asks for - the whole-file path cost
-about fourteen times the capture resident and the kernel killed it twice during
-run `2026-08-25-2`. They read a 9.6 GB capture now, verified byte for byte
-against their own pre-change output, and 93's `ulimit -v` workaround goes with
-them.
-
-**Items 57, 88 and 92 moved rather than closed.** Duty-cycle attribution, the
-off-grid bursts that get blamed on the firmware, and `--device` defaulting to
-slot 1 are all debts of the tools, and the tools left this tree for
-`~/.claude/skills/sdr/` in `ed536c2`. They are items 3, 2 and 1 of that
-repository's own `ROADMAP.md`. **Do not re-file them here**: a queue that
-outlives the code it describes is a queue nobody reads.
-
-**Item 77 is retired half closed and its live half moved.** `bandscan.py` has an
-`RG-` id now - RG-A-9, which is what failed run `2026-08-25-2` - so the debt that
-nothing ran it on a schedule is paid. What it recorded about `capture.py`
-defaulting `--bandwidth` to the sample rate is still true and is item 4 in the
-skill's queue.
-
-**Item 98 is closed and was measured closed, not argued closed.** `fdf2d30`
-serves a downlink only where a device opens a window; run `2026-08-25-2` read
-`dl_sent 236` against `dl_opportunities 708` with both nodes on `every 8`, where
-the old rotation sent at every opportunity and starved one node permanently. The
-relation to assert is `sent + none_due == opportunities`. Its reasoning stays on
-`open_hub/radio/superloop.md` § the rotation scans for a listener.
 
 ### 1. Three opportunities a superframe, built and not yet on air — `blocking` `contract`
 
@@ -2007,60 +2034,3 @@ times. A rule that calls the whole band busy on every run it is given is not
 measuring traffic, and it printed that verdict twice before anyone read it as one.
 
 `bench/runs/2026-08-25-2/RESULT.md` § correction of 2026-08-26.
-
-
-### 104. The downlink rotation starved the device it was written to rescue — `defect`
-
-**Fixed, host-tested, flashed and verified on air 2026-08-27.**
-
-`dl_due()` returns 1 for any device with `frames_ok == 0`, so one this boot has
-heard nothing from is offered a downlink at every opportunity — deliberately,
-because it may be waiting on
-[ADR-0023](../radio_devices_docs/radio/decisions/0023-the-hub-supplies-the-transmit-floor.md)'s
-transmit floor. The scan then moved the cursor **past whoever it served**. Beside
-a reporting device on the same period the two compose: the unheard one spends its
-turn on the three opportunities a cycle it is not listening in, and loses the one
-it is. No downlink opens, the floor never lifts, it never transmits, `frames_ok`
-stays 0. **The rule that exists to rescue it is what guarantees it is never
-heard.**
-
-The mechanism, the arithmetic, why it arms at every reset, and what item 98's
-closure could not see are on
-[`open_hub/radio/superloop.md`](../radio_devices_docs/open_hub/radio/superloop.md)
-§ the rescue rule created the starvation it was written to prevent. **Found from
-the device side**, which is where both witnesses are: `bench/journal/2026-08-26-device.md`.
-
-**The rotation is testable now.** `dl_due()`, `dl_own_window()` and `dl_pick()`
-are `CM4/Core/Src/dlsched.c` with `dev_entry_t` in its own header — a slice of
-item 75's remaining half — and `CM4/test/test_dlsched.c` drives the real file over
-a seeded roster with no board under it. It was written red, at *the unheard device
-was served in 0 of its 7 windows*, while its two other arms passed: two heard
-devices alternate, and a lone unheard device is served in all seven.
-
-**The board arm, pre-registered in `bench/RESOURCES.md` before the flash and taken
-2026-08-27.** Both cores to `03410b3`, `-hardRst`, `boot_id 0x8cbfb445`. Node A had
-been starved for 13.4 h at `frames_ok 0`, `missed_run 20776`; it was removed,
-re-enrolled, and its own record stream answered in three cycles:
-
-    sf 274536  rx.dlmiss rc=2   the window lost to the other device
-    sf 274544  rx.cmd rpt=2     the next window WON, and the floor latched
-    sf 274552  tx.up slot=0     the first frame since 2026-08-25 21:52
-
-**It alternates now, which is the fix**: the rescue serves between two windows no
-longer spend its turn. The hub agrees from the other side — `frames_ok` **2 and
-14**, `missed_run` **0 on both**, `uplink_ok == uplink_frames` with `bad_tag 0`.
-
-**And the second prediction landed with it.** `dl_opportunities 157` against
-`dl_sent 82` — **`none_due` 75** where it had been **0 for 12 457 opportunities**.
-The hub transmits only where somebody listens again, which is what item 98 was
-for, and its invariant is informative rather than trivially satisfied.
-
-**Held over the following window**, both devices reporting with `missed_run 0`:
-node A `frames_ok 25` against node B's 37, and the two devices opened **eleven
-downlink windows each** over the same stretch — an equal share, which is the
-alternation the fix restores and the shape a starved device cannot produce.
-
-**Item 98's stated invariant cannot be the check.** `sent + none_due ==
-opportunities` holds at `none_due == 0`, which *is* the failure — an identity, not
-a check. What separates the two regimes is that `none_due` cannot be zero when the
-roster's periods say most opportunities are addressed to nobody.

@@ -2004,7 +2004,7 @@ static void downlink_service(void) {
     dl_served = sfm.g.counter;
     dl_opportunities++;
 
-    /* Round robin over the devices listening in this superframe. ROADMAP item 104
+    /* Round robin over the devices listening in this superframe.
      * radio_devices_docs/open_hub/radio/superloop.md */
     {
         int picked = dl_pick(devices, RADIO_MAX_DEVICES, &dl_next_slot,
