@@ -243,6 +243,10 @@ static uint8_t  sync_rssi_have;     /* 0 once consumed, so no frame borrows anot
 static uint16_t sync_rssi_lag_us;   /* from the DIO3 edge to the sample */
 static uint16_t sync_rssi_lag_max_us;
 static uint32_t sync_rssi_taken, sync_rssi_late, sync_rssi_err;
+/* The pass period, counted over passes and not over arrivals. ROADMAP item 37
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static uint32_t loop_prev_tk, loop_last_us, loop_max_us, loop_passes;
+static uint8_t  loop_have_prev;
 static uint32_t rx_crc_err;
 static uint32_t rx_flushes;         /* receivers restarted after an undrainable FIFO */
 static uint32_t rx_sync_match, rx_frames;
@@ -715,6 +719,10 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         t.boot_wait_spins = bootwait_spins();
         memcpy(t.build, BUILD_ID BUILD_SUFFIX, sizeof(BUILD_ID BUILD_SUFFIX));
         t.late_over     = late_over;
+        /* Counted over passes, not arrivals. ROADMAP item 37 */
+        t.loop_last_us  = loop_last_us;
+        t.loop_max_us   = loop_max_us;
+        t.loop_passes   = loop_passes;
         (void)ipc_send_reply(req, IPC_ST_OK, &t, (uint8_t)sizeof(t));
         return;
     }
@@ -2413,6 +2421,19 @@ static uint8_t begin_quiesce(uint8_t superframes) {
 
 void RFM_Routine(void) {
     ipc_msg_t request;
+    uint32_t now_tk = timebase_now();
+
+    /* Every pass: a lag taken from samples that arrived cannot see the pass
+     * that dropped one. radio_devices_docs/open_hub/radio/configuration.md */
+    if (loop_have_prev) {
+        uint32_t us = timebase_ticks_to_us(now_tk - loop_prev_tk);
+
+        loop_last_us = us;
+        if (us > loop_max_us) loop_max_us = us;
+    }
+    loop_prev_tk   = now_tk;
+    loop_have_prev = 1u;
+    loop_passes++;
 
     if (pairing_open && timebase_elapsed(pairing_deadline_us)) {
         pairing_open = 0;

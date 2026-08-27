@@ -228,6 +228,11 @@ static void put_hub(oht_writer_t *w, const snap_t *s) {
         OHT_PUT(w, OHT_F_HUB_LATE_OVER, s->timing.late_over);
         OHT_PUT(w, OHT_F_HUB_CALIB_WINDOWS, s->timing.calib_windows);
         OHT_PUT(w, OHT_F_HUB_CALIB_REJECTS, s->timing.calib_rejects);
+        /* Counted over passes, not arrivals - the pair that lag_max_us cannot
+         * make. ROADMAP item 37 */
+        OHT_PUT(w, OHT_F_HUB_LOOP_LAST_US, s->timing.loop_last_us);
+        OHT_PUT(w, OHT_F_HUB_LOOP_MAX_US, s->timing.loop_max_us);
+        OHT_PUT(w, OHT_F_HUB_LOOP_PASSES, s->timing.loop_passes);
     }
     if (s->have_ex) {
         OHT_PUT(w, OHT_F_HUB_DEVICES, s->ex.devices);

@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "78bf543027ab6155"
+#define OHT_SCHEMA_DIGEST  "00bf858bd9eb8cdb"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -29,6 +29,9 @@
 #define OHT_F_HUB_LATE_OVER          0x0106u, OHT_T_U32
 #define OHT_F_HUB_CALIB_WINDOWS      0x0107u, OHT_T_U32
 #define OHT_F_HUB_CALIB_REJECTS      0x0108u, OHT_T_U32
+#define OHT_F_HUB_LOOP_LAST_US       0x0109u, OHT_T_U32
+#define OHT_F_HUB_LOOP_MAX_US        0x010au, OHT_T_U32
+#define OHT_F_HUB_LOOP_PASSES        0x010bu, OHT_T_U32
 #define OHT_F_HUB_DEVICES            0x0120u, OHT_T_U8
 #define OHT_F_HUB_PAIR_STATE         0x0121u, OHT_T_U8
 #define OHT_F_HUB_PAIRED_TOTAL       0x0122u, OHT_T_U32

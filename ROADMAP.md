@@ -210,6 +210,31 @@ it is not a measurement of CM7's handling time. On
 [`open_hub/arch/ipc.md`](../radio_devices_docs/open_hub/arch/ipc.md)
 § the mailbox has room again.
 
+The thirteenth, 2026-08-27, retired **item 37** — the sync-RSSI instrument was
+blind in the direction that would hurt — and it is what item 87 was cleared for.
+CM4 stamps the top of every pass now and carries `loop_last_us`, `loop_max_us`
+and `loop_passes` through the widened `ipc_timing_t` (96 -> **108 of 128**) to
+three new hub fields.
+
+**The number it found on its first boot is the point.** Over **733 951 passes**:
+mean **245 µs**, worst **8866 µs** — **36x the mean and 94 % of `RADIO_SLOT_US`**.
+The arrival-side instrument's own worst reading is **658 µs**, thirteen times
+smaller, because it is drawn only from passes that produced a sample. **A stall
+long enough to lose a frame leaves no row behind**, which is why `0 late` was
+never a statement about the superloop.
+
+**Both cores flashed 13:34** — `ipc_timing_t` grew and `OHT_SCHEMA_DIGEST` moved
+`78bf5430…` -> `00bf858b…`, so the server was rebuilt with them;
+`schema_agrees_with_hub` true, `boot_id 0xa6788f46`, `uplink_ok == uplink_frames`,
+`late_max_us 64`.
+
+**What it does not say is which pass**, and the candidates are named rather than
+guessed: a flash program in `kv_reserve()`, the boot self-tests, the exchange's
+curve work. Stamping the superframe and region of the worst pass would settle it
+and there are 20 bytes spare for it now. Reasoning on
+[`open_hub/radio/configuration.md`](../radio_devices_docs/open_hub/radio/configuration.md)
+§ the superloop's worst pass.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -947,26 +972,6 @@ halved with the rate, 2 560 µs to 1 280, so any lag reading taken before the ra
 change and compared with one after is out by a preamble and a sync word.
 
 Raised by the device session. Device items 9 and 12.
-
-### 37. The sync-RSSI window is fixed, and the instrument is still blind one way — `defect`
-
-`SYNC_RSSI_WINDOW_US` gated `sync_rssi_have` at 8000 µs from the sync edge where
-the frame ends at 6720, so samples in the gap were the noise floor admitted as a
-frame level. Fixed by `fix(cm4): the sync-RSSI window was measured from the wrong
-instant`, and read on 2026-08-22:
-
-    levels: 179 tried, 0 late, 0 failed, worst lag 658 us
-
-No level in `afcraw` is a floor reading wearing a frame's name, and the
-superloop's period — listed as unmeasured everywhere it mattered — is bounded
-above by that 658 µs.
-
-**What remains is the direction that would hurt.** The instrument records the lag
-of samples that were *taken*; a stall long enough to lose a frame produces no
-sample, so `0 late` is a statement about arrivals and not about the superloop's
-worst case.
-
-`open_hub/radio/configuration.md`.
 
 ### 64. The join region's level instrument almost never completes — `defect`
 

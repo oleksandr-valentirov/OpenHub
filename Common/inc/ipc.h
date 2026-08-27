@@ -120,6 +120,9 @@ typedef struct ipc_timing {
     uint32_t boot_wait_ms;   /**< how long this core waited on CM7's boot semaphore */
     uint32_t boot_wait_spins; /**< passes of that wait; 0 beside 0 ms is a wait that never ran */
     char     build[24];      /**< CM4's own git describe; CM7 has its own */
+    uint32_t loop_last_us;   /**< the last CM4 superloop pass; item 37 */
+    uint32_t loop_max_us;    /**< the longest since boot, over passes not arrivals */
+    uint32_t loop_passes;    /**< the denominator both are counted over */
 } __attribute__((packed)) ipc_timing_t;
 
 /* The radio's pairing state machine, shared so the CLI can name the states. */
