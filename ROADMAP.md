@@ -840,25 +840,52 @@ telescopes to two timestamps. Averaged over ~32 s it does not block the grid.
 
 `open_hub/radio/timebase.md`.
 
-### 14. `rssi_up` is read from an untriggered latch — `defect`
+### 14. The two RSSI fields have no common population — `defect`
 
-`handle_uplink_frame()` takes the level with `rfm69_get_rssi()`, which reads
-`RegRssiValue` and triggers nothing, so the sealed report carries a level with no
-provenance.
+**Rewritten 2026-08-27. The headline was `rssi_up` is read from an untriggered
+latch, and its first sentence had stopped being true.** `handle_uplink_frame()`
+does not call `rfm69_get_rssi()`; it takes `ev->rssi_dbm`, which
+`CM4/Core/Src/phy_rfm69.c` fills at `PAYLOAD_READY` — inside the packet's own
+window, before the receiver re-arms, which *is* a provenance. The entry's
+prescription, *stash the sync-match sample for the frame just delivered*, was
+written against the older code and would now collapse two measurements into one.
 
-**Half done, and the half that is done answers what the entry asks.**
-`sync_rssi_sample()` samples at the sync-match edge and `device afcraw` prints it
-per frame: **−43 dBm against a −96 dBm floor**, 53 dB apart, so the latch is not
-holding a between-frames sample. The first version triggered a fresh measurement
-instead and failed on every frame — **an RSSI trigger does not complete while
-`SyncAddressMatch` is high** — which is why the counter counts attempts and
-failures apart rather than successes alone.
+**What is actually wrong is that the two fields cannot be compared.**
+`rssi_up_sync_dbm` comes from **one row of the AFC ring** — `put_device_air()`
+walks it newest-first and returns on the first row belonging to this device — and
+the ring is nine rows shared by every device. `rssi_up_latch_dbm` is
+`d->rssi_up`, from this device's most recent accepted frame. **So the two numbers
+routinely describe different frames**, and nothing on the wire says whether they
+describe the same one.
 
-What remains is `rssi_up` itself. `afc_note()` consumes the sync-match sample
-before the frame handler runs, so the fix is to stash it for the frame just
-delivered rather than to read again.
+**Measured 2026-08-27, six reads twenty seconds apart, two nodes**, through
+`openhub-server` on `03410b3`:
 
-`CM4/Core/Src/radio.c:1378`, `:1625`, `open_hub/radio/configuration.md`.
+    node A  latch/sync  -37/-37  -36/-37  -36/-37  -39/-37  -37/-37  -38/-36
+    node B  latch/sync  -53/-53  -49/-49  -52/-50  -50/-51  -52/-52  -49/-49
+
+They differ by 0..2 dB. **That reading cannot be used**, and the reason is the
+point: *two moments inside one frame differ* and *two different frames differ*
+predict the identical spread, and the collection cannot separate them. A
+discriminator whose variable is not varied independently of the thing it is meant
+to distinguish.
+
+**So the work is to give them one population before either is quoted**, not to
+delete one of them. Two levels taken at the start and at the end of the same
+frame are a real second instrument — the AGC and a front end in compression make
+them disagree in a way that is diagnostic — but only frame by frame. The cheapest
+shape is the ring carrying both, since it already carries `in_frame`, the gain
+and the slot for exactly one arrival.
+
+**Nothing may quote either field against the other until then**, and no K2
+argument may rest on their agreement. `rssi_up_sync_dbm` alone is still sound
+within its own limits, which the schema states.
+
+`CM4/Core/Src/radio.c` -> `afc_note`, `handle_uplink_frame`;
+`CM7/Core/Src/telemetry.c` -> `put_device_air`;
+`openhub-server/schema/telemetry.yaml` 0x1010 and 0x1011, whose comment names
+this entry as the reason the two fields exist.
+`open_hub/radio/configuration.md`.
 
 ### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
 
