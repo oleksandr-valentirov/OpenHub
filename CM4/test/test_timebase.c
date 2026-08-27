@@ -11,6 +11,9 @@
 /* The real header, by path, not the one -I shim would find.
  * radio_devices_docs/open_hub/testing/host-tests.md */
 #include "../Core/Inc/clock.h"
+/* Only the staleness rule is reachable here: calib.c itself needs the HAL.
+ * radio_devices_docs/open_hub/radio/timebase.md */
+#include "../Core/Inc/calib.h"
 
 /* timebase.c reads the counter through this; the test drives it. */
 static TIM_TypeDef tim2_regs;
@@ -143,6 +146,22 @@ static void elapsed_is_correct_across_the_counter_wrap(void) {
     eq(timebase_elapsed(deadline), 1u, "and past it, having wrapped");
 }
 
+/* The grid is held on this comparison, so it is checked at its boundary.
+ * radio_devices_docs/open_hub/radio/timebase.md */
+static void the_staleness_rule_holds_at_its_own_edge(void) {
+    eq((uint32_t)calib_age_ok(0u), 1u, "a window that just landed is fresh");
+    eq((uint32_t)calib_age_ok(CALIB_STALE_US - 1u), 1u,
+       "one tick short of the limit still holds a grid");
+    /* Strict: the value a reader would pick still carries information. */
+    eq((uint32_t)calib_age_ok(CALIB_STALE_US), 0u,
+       "the limit itself is already too old");
+    eq((uint32_t)calib_age_ok(CALIB_STALE_US + 1u), 0u, "and past it");
+
+    /* What calib_age_tk() returns when no window landed: never fresh. */
+    eq((uint32_t)calib_age_ok(0xFFFFFFFFu), 0u,
+       "a window that never landed is not fresh");
+}
+
 int main(void) {
     tim2_regs.CNT = 0u;
 
@@ -153,6 +172,7 @@ int main(void) {
     a_zero_scale_is_refused_and_the_refusal_is_counted();
     a_refused_write_does_not_hide_a_later_good_one();
     elapsed_is_correct_across_the_counter_wrap();
+    the_staleness_rule_holds_at_its_own_edge();
 
     printf("timebase: %s (%d checks, %lu write(s) refused)\n",
            failures ? "FAILED" : "ok", checks,

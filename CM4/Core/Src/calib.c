@@ -166,6 +166,13 @@ void calib_poll(void) {
 }
 
 uint8_t  calib_ready(void)   { return ready; }
+
+/* Three ways in, none loud, and `ready` is sticky over a dead crystal.
+ * radio_devices_docs/open_hub/radio/timebase.md */
+uint8_t calib_disciplined(void) {
+    if (!started || !ready) return 0u;
+    return calib_age_ok(rfm_micros() - last_window_tk) ? 1u : 0u;
+}
 uint32_t calib_windows(void) { return windows; }
 uint32_t calib_rejects(void) { return rejects; }
 /* Ticks since the last accepted window: a measurement, or a memory. */

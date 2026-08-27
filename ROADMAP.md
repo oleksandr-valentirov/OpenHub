@@ -148,6 +148,31 @@ instrument written to catch it. Reasoning on
 [`open_hub/arch/ipc.md`](../radio_devices_docs/open_hub/arch/ipc.md) § a renderer
 that cannot separate its cases.
 
+The eleventh, 2026-08-27, retired **item 50** — nothing refused to run on an
+undisciplined timebase — and it is phase 1's second entry. `calib_disciplined()`
+is the predicate `calib_ready()` could not be, because `ready` is sticky over a
+dead crystal; `superframe_due()` clears `sfm.started` when it returns 0, and
+every radio service already gates on that flag, so the refusal silences the radio
+and leaves the console, the mailbox and the northbound link up. The staleness rule
+is `static inline` in `calib.h` so `CM4/test/test_timebase.c` can reach it without
+the HAL, and two mutations were made red first: the comparison relaxed to `<=`,
+and a signed compare that reads the never-landed `0xFFFFFFFF` as fresh.
+
+**Both board arms were taken, CM4 alone, and the negative one is the reason it
+counts.** Healthy at the real 10 s: the grid runs, `uplink_ok == uplink_frames`
+with every refusal bucket 0, `dl_sent 21 / dl_opportunities 27` so `none_due` is
+**6**, beacon lateness `57/61` against `62` before — within one tick. Lowered to
+1000 µs against a window cadence of ~335 ms: **`superframe` froze at 311296 while
+`calib_windows` climbed 27460 → 30677 and `uptime_ms` kept rising.** A halted grid
+beside a *rising* window count is what separates this refusal from the fault it
+refuses — a dead crystal halts the grid too, with the window count flat.
+
+**No counter went north with it**: `ipc_timing_t` is full at 96 of 96, item 87
+above, and the state already has two northbound witnesses — `superframe` stops and
+`calib_age_tk` names why. Reasoning on
+[`open_hub/radio/timebase.md`](../radio_devices_docs/open_hub/radio/timebase.md)
+§ the grid is not held on an undisciplined clock.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -878,32 +903,6 @@ sample, so `0 late` is a statement about arrivals and not about the superloop's
 worst case.
 
 `open_hub/radio/configuration.md`.
-
-### 50. Nothing refuses to run on an undisciplined timebase — `defect`
-
-`calib_ready()` has **no caller outside `CM4/Core/Src/calib.c`**, and
-`CM4/Core/Src/timebase.c` starts at the nominal `scale_q24 = 1u << 24`. So a hub
-whose LSE never delivers a window runs the TDMA grid on a scale that is
-measurably wrong and says so to nobody.
-
-Measurably is the word — the disciplined scale on this bench sits **3452 ppm**
-off nominal over 2082 accepted windows:
-
-    2 s superframe   x 3452 ppm = 6.9 ms of placement error
-    RADIO_SLOT_US 9400 us        guard 1400 us
-
-Three ways in, none loud: `calib_init()` returns after `FIRST_WINDOW_US`;
-`started` stays 0 if `span_max > htim16.Init.Period` or `HAL_TIM_IC_Start()`
-fails; and `ready` is **sticky**, so one window at boot and a dead crystal
-afterwards leaves it 1 forever. `calib_age_tk()` computes the number that would
-name all three and **nothing acts on it** — the decorative shape.
-
-The fix is not refusing to boot: a hub that cannot discipline its timebase can
-still pair, answer a server and be debugged. What it cannot do is hold a grid, so
-the refusal belongs where the grid starts, and the condition has to leave
-northbound under its own name.
-
-`open_hub/radio/timebase.md`.
 
 ### 64. The join region's level instrument almost never completes — `defect`
 

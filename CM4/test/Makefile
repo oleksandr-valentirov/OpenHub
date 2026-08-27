@@ -16,7 +16,7 @@ test_phy: test_phy.c fake_part.h ../Core/Src/phy_rfm69.c ../rfm69_lib/rfm69.c \
 # The real timebase.c, not a model of it: this is the file the grid's every
 # interval is converted by, and it had no host test at all.
 test_timebase: test_timebase.c ../Core/Src/timebase.c ../Core/Inc/clock.h \
-               ../../radio_stack/inc/timebase.h
+               ../Core/Inc/calib.h ../../radio_stack/inc/timebase.h
 	$(CC) $(CFLAGS) -o $@ test_timebase.c ../Core/Src/timebase.c
 
 # The real dlsched.c: the rotation is a pure function of the roster and the

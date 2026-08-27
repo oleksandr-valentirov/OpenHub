@@ -71,3 +71,39 @@ uint32_t calib_rejects(void);
  * @return ticks since it landed
  */
 uint32_t calib_age_tk(void);
+
+/**
+ * @brief How stale the last window may be before the grid stops being held.
+ *
+ * Windows land about three times a second on this bench, so 10 s is thirty of
+ * them. Overridable so a build can lower it and make the refusal fire on a
+ * healthy crystal - the detector is worthless until it has been seen to.
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
+#ifndef CALIB_STALE_US
+#define CALIB_STALE_US  10000000u
+#endif
+
+/**
+ * @brief The staleness rule alone, so a host test can reach it without the HAL.
+ * @param age  what calib_age_tk() returned
+ * @retval 1   recent enough to hold a grid on
+ * @retval 0   stale, or 0xFFFFFFFF for a window that never landed
+ *
+ * Strict: at exactly CALIB_STALE_US the window is already too old, so the
+ * comparison keeps carrying information at the value a reader would pick.
+ */
+static inline int calib_age_ok(uint32_t age) {
+    return age < CALIB_STALE_US;
+}
+
+/**
+ * @brief Whether the timebase is disciplined *now*, rather than ever having been.
+ * @retval 1  the capture unit runs and a window landed recently
+ * @retval 0  never started, never landed, or the reference has stopped
+ *
+ * calib_ready() is sticky by design and cannot answer this: one window at boot
+ * and a dead crystal afterwards leaves it 1 for the life of the image.
+ * radio_devices_docs/open_hub/radio/timebase.md
+ */
+uint8_t  calib_disciplined(void);

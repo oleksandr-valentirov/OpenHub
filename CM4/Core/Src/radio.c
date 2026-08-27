@@ -471,6 +471,14 @@ static int frame_send(const void *payload, uint8_t len) {
 static int superframe_due(void) {
     const uint32_t started = sfm.started;
 
+    /* An undisciplined clock cannot keep a grid's promise about when.
+     * radio_devices_docs/open_hub/radio/timebase.md */
+    if (!calib_disciplined()) {
+        sfm.started = 0u;
+        join_offset_tk = timebase_us_to_ticks(RADIO_JOIN_OFFSET_US);
+        return 0;
+    }
+
     if (!gridmaster_service(&sfm, timebase_now(), timebase_us_to_ticks(SUPERFRAME_US))) {
         /* The bootstrap pass still has to leave a usable offset behind. */
         if (!started)
