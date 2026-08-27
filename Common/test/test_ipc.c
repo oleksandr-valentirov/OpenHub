@@ -68,8 +68,10 @@ int main(void) {
           offsetof(ipc_afc_raw_t, slot) + IPC_AFC_RING);
     CHECK(offsetof(ipc_afc_raw_t, rssi) ==
           offsetof(ipc_afc_raw_t, gain) + IPC_AFC_RING);
-    CHECK(offsetof(ipc_afc_raw_t, afc_hz) ==
+    CHECK(offsetof(ipc_afc_raw_t, rssi_end) ==
           offsetof(ipc_afc_raw_t, rssi) + IPC_AFC_RING);
+    CHECK(offsetof(ipc_afc_raw_t, afc_hz) ==
+          offsetof(ipc_afc_raw_t, rssi_end) + IPC_AFC_RING);
     CHECK(sizeof(ipc_afc_raw_t) ==
           offsetof(ipc_afc_raw_t, afc_hz) + 4u * IPC_AFC_RING);
     /* Hertz below the seam, so nothing above it holds an RFM69 register unit.

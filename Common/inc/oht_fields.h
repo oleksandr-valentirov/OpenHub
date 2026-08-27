@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "00bf858bd9eb8cdb"
+#define OHT_SCHEMA_DIGEST  "499422dfb515e473"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -119,14 +119,15 @@
 
 /* frame: One received frame from the AFC ring - the per-frame scatter, not a mean.
  * radio_devices_docs/open_hub/network/telemetry.md */
-#define OHT_F_FRAME_SEQ       0x4000u, OHT_T_U32
-#define OHT_F_FRAME_GRID      0x4001u, OHT_T_U8
-#define OHT_F_FRAME_SLOT      0x4002u, OHT_T_U8
-#define OHT_F_FRAME_RSSI_DBM  0x4003u, OHT_T_I8
-#define OHT_F_FRAME_LNA_GAIN  0x4004u, OHT_T_U8
-#define OHT_F_FRAME_AFC_HZ    0x4005u, OHT_T_I32
-#define OHT_F_FRAME_CRC_OK    0x4006u, OHT_T_BOOL
-#define OHT_F_FRAME_IN_FRAME  0x4007u, OHT_T_BOOL
+#define OHT_F_FRAME_SEQ           0x4000u, OHT_T_U32
+#define OHT_F_FRAME_GRID          0x4001u, OHT_T_U8
+#define OHT_F_FRAME_SLOT          0x4002u, OHT_T_U8
+#define OHT_F_FRAME_RSSI_DBM      0x4003u, OHT_T_I8
+#define OHT_F_FRAME_LNA_GAIN      0x4004u, OHT_T_U8
+#define OHT_F_FRAME_AFC_HZ        0x4005u, OHT_T_I32
+#define OHT_F_FRAME_CRC_OK        0x4006u, OHT_T_BOOL
+#define OHT_F_FRAME_IN_FRAME      0x4007u, OHT_T_BOOL
+#define OHT_F_FRAME_RSSI_END_DBM  0x4008u, OHT_T_I8
 
 /* Command argument ids: a separate space from the fields above. */
 #define OHT_A_DEV_ID     0x8000u, OHT_T_U32

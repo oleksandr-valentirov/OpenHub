@@ -320,7 +320,16 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     OHT_PUT(w, OHT_F_DEVICE_SYNC_UNPAIRED, d->sync_unpaired);
     /* Always sent: a run of zero is the fact that the device is answering. */
     OHT_PUT(w, OHT_F_DEVICE_MISSED_RUN, d->missed_run);
-    OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_LATCH_DBM, d->rssi_up);
+    /* Four readings off the one arrival last_superframe names, each on its own
+     * measured bit. radio_devices_docs/open_hub/radio/configuration.md */
+    if ((d->air_have & IPC_AIR_END_LEVEL) != 0u)
+        OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_LATCH_DBM, d->rssi_up);
+    if ((d->air_have & IPC_AIR_SYNC_LEVEL) != 0u)
+        OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_SYNC_DBM, d->rssi_up_sync);
+    if ((d->air_have & IPC_AIR_GAIN) != 0u)
+        OHT_PUT(w, OHT_F_DEVICE_LNA_GAIN, d->lna_gain);
+    if ((d->air_have & IPC_AIR_AFC) != 0u)
+        OHT_PUT(w, OHT_F_DEVICE_AFC_HZ, d->afc_hz);
     OHT_PUT(w, OHT_F_DEVICE_RSSI_DOWN_DBM, d->rssi_down);
     OHT_PUT(w, OHT_F_DEVICE_CYC_MIN_MS, d->cyc_min);
     OHT_PUT(w, OHT_F_DEVICE_CYC_N, d->cyc_n);
@@ -352,23 +361,6 @@ static int row_is_device(uint8_t opportunity, uint8_t slot) {
     return RADIO_SLOT_TO_DEVICE(opportunity) == slot;
 }
 
-static void put_device_air(oht_writer_t *w, const snap_t *s, uint8_t slot) {
-    uint8_t i;
-
-    if (!s->have_afc)
-        return;
-    for (i = 0; i < s->afc.n && i < IPC_AFC_RING; i++) {
-        if (!row_is_device(s->afc.slot[i], slot))
-            continue;
-        if ((s->afc.in_frame & (1u << i)) == 0u)
-            continue;
-        OHT_PUT(w, OHT_F_DEVICE_RSSI_UP_SYNC_DBM, s->afc.rssi[i]);
-        OHT_PUT(w, OHT_F_DEVICE_LNA_GAIN, s->afc.gain[i]);
-        OHT_PUT(w, OHT_F_DEVICE_AFC_HZ, s->afc.afc_hz[i]);
-        return;
-    }
-}
-
 /* The ring is newest first, so `total` minus the index names the sample. */
 static void put_frames(oht_writer_t *w, const snap_t *s, uint8_t slot,
                        uint32_t dev_id) {
@@ -384,6 +376,7 @@ static void put_frames(oht_writer_t *w, const snap_t *s, uint8_t slot,
         OHT_PUT(w, OHT_F_FRAME_GRID, s->afc.grid[i]);
         OHT_PUT(w, OHT_F_FRAME_SLOT, s->afc.slot[i]);
         OHT_PUT(w, OHT_F_FRAME_RSSI_DBM, s->afc.rssi[i]);
+        OHT_PUT(w, OHT_F_FRAME_RSSI_END_DBM, s->afc.rssi_end[i]);
         OHT_PUT(w, OHT_F_FRAME_LNA_GAIN, s->afc.gain[i]);
         OHT_PUT(w, OHT_F_FRAME_AFC_HZ, s->afc.afc_hz[i]);
         OHT_PUT(w, OHT_F_FRAME_CRC_OK, (s->afc.crc_ok & (1u << i)) != 0u);
@@ -442,7 +435,6 @@ static int send_snapshot(void) {
         if (!fetch(IPC_REQ_GET_DEVICE_INFO, i, &d, sizeof(d)))
             break;
         put_device(&w, &d);
-        put_device_air(&w, &s, d.slot);
         put_frames(&w, &s, d.slot, d.dev_id);
         in_frame++;
 

@@ -906,6 +906,7 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
         char age[24];
         char supply[12];
         char temp[20];
+        char up[12];
 
         rc = rfm_request(IPC_REQ_GET_DEVICE_INFO, i, NULL, 0);
         if (rc != IPC_ST_OK || rfm_reply.len < sizeof(d))
@@ -946,8 +947,14 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             snprintf(temp, sizeof(temp), "%5sC", buf);
         }
 
-        cli_out(cli, "%4u  0x%08lX  %4d/%-5d %s  %s  %s  %6lus  %lu/%lu  %s\r\n",
-                d.slot, (unsigned long)d.dev_id, d.rssi_up, d.rssi_down,
+        /* A level the register read refused is 0 dBm otherwise, which is a reading. */
+        if ((d.air_have & IPC_AIR_END_LEVEL) == 0u)
+            snprintf(up, sizeof(up), "%4s", "--");
+        else
+            snprintf(up, sizeof(up), "%4d", d.rssi_up);
+
+        cli_out(cli, "%4u  0x%08lX  %s/%-5d %s  %s  %s  %6lus  %lu/%lu  %s\r\n",
+                d.slot, (unsigned long)d.dev_id, up, d.rssi_down,
                 (d.flags & RADIO_REPORT_FLAG_RSSI_STALE) ? "stale" : "     ",
                 supply, temp, (unsigned long)d.uptime_s,
                 (unsigned long)d.frames_ok, (unsigned long)d.frames_bad, age);
@@ -1315,8 +1322,10 @@ static int cmd_device_pair(cli_data_t *cli) {
                     (unsigned long)j.levels, (unsigned long)j.tries);
         }
     }
-    cli_out(cli, "join regions %lu, beacons %lu, tx err %lu\r\n",
+    /* Refused beside sent: a suppressed beacon and one never due read alike. */
+    cli_out(cli, "join regions %lu, beacons %lu (%lu shadowed), tx err %lu\r\n",
             (unsigned long)p.join_regions, (unsigned long)p.join_beacons,
+            (unsigned long)p.join_beacon_shadow,
             (unsigned long)p.join_tx_err);
     if (p.beacon_err) {
         static const char *bwhy[] = {"-", "build", "hop prf", "retune", "tx"};
@@ -1527,15 +1536,17 @@ static int cmd_device_afcraw(cli_data_t *cli) {
     /* Total against held: a full ring is a window, not the whole history. */
     cli_out(cli, "\r\nafc raw: %lu taken, %u held, newest first\r\n",
             (unsigned long)r.total, r.n);
+    /* Two levels one frame apart, so a front end in compression is readable. */
+    cli_out(cli, "  levels are sync/end dBm, both off the same frame\r\n");
     /* Level, gain and outcome beside the correction: one line is one frame. */
     for (i = 0; i < r.n; i++) {
-        char level[16];
+        char level[24];
 
         /* A level taken after the frame ended is the floor, and says so. */
         if (((r.in_frame >> i) & 1u) != 0u)
-            snprintf(level, sizeof(level), "%4d dBm", r.rssi[i]);
+            snprintf(level, sizeof(level), "%4d/%-4d dBm", r.rssi[i], r.rssi_end[i]);
         else
-            snprintf(level, sizeof(level), "   no lvl");
+            snprintf(level, sizeof(level), "  --/%-4d dBm", r.rssi_end[i]);
         char slot[12];
 
         /* The slot the edge landed in: how long the receiver had been in RX. */

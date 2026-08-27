@@ -15,7 +15,7 @@
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
 /* 3 and 8 widened the payload, 6 and 7 moved a reply; the gate is for all four.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      8u
+#define IPC_VERSION      9u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  64u
@@ -182,6 +182,7 @@ typedef struct ipc_pair_state {
     uint32_t join_regions;   /**< join regions entered */
     uint32_t join_beacons;   /**< join beacons handed to the radio */
     uint32_t join_tx_err;    /**< ... of which the driver refused or timed out */
+    uint32_t join_beacon_shadow; /**< refused: an invitation or an exchange owned the region */
     uint32_t data_beacons;      /**< beacon attempts, so the accounting stays exact */
     uint32_t announce_beacons;
     uint32_t silent_frames;
@@ -386,6 +387,7 @@ typedef struct ipc_afc_raw {
     uint8_t  slot[IPC_AFC_RING]; /**< the opportunity it arrived in, 0xFF unplaceable */
     uint8_t  gain[IPC_AFC_RING]; /**< LnaCurrentGain in force on that frame */
     int8_t   rssi[IPC_AFC_RING]; /**< dBm at sync match, not after the frame ended */
+    int8_t   rssi_end[IPC_AFC_RING]; /**< ... and dBm at PayloadReady, off the same frame */
     int32_t  afc_hz[IPC_AFC_RING]; /**< carrier error, already in hertz below the seam */
 } __attribute__((packed)) ipc_afc_raw_t;
 
@@ -516,7 +518,11 @@ typedef struct ipc_device_report {
     uint32_t uptime_s;         /**< as the device reported it */
     uint8_t  total;            /**< live devices, so one round trip sizes the list */
     uint8_t  slot;
-    int8_t   rssi_up;          /**< dBm off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
+    int8_t   rssi_up;          /**< dBm at the end of the frame last_superframe names */
+    int8_t   rssi_up_sync;     /**< dBm at the sync edge of that same frame */
+    int32_t  afc_hz;           /**< ... and its carrier error */
+    uint8_t  lna_gain;         /**< ... and the gain in force on it */
+    uint8_t  air_have;         /**< IPC_AIR_*: which of the four were measured */
     int8_t   rssi_down;        /**< dBm, as the device heard the hub's last beacon */
     uint16_t supply_mv;
     uint8_t  report_every;
@@ -534,6 +540,13 @@ typedef struct ipc_device_report {
     uint32_t cyc_sum;          /**< ... their sum; the mean carries delivery loss too */
     uint8_t  every_now;        /**< the period the hub believes is in force, grant or acked */
 } __attribute__((packed)) ipc_device_report_t;
+
+/* Four levels off one arrival, each present or absent on its own.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+#define IPC_AIR_END_LEVEL   0x01u   /**< rssi_up was read at PayloadReady */
+#define IPC_AIR_SYNC_LEVEL  0x02u   /**< rssi_up_sync was taken inside the frame */
+#define IPC_AIR_GAIN        0x04u   /**< lna_gain came off the part */
+#define IPC_AIR_AFC         0x08u   /**< afc_hz did too */
 
 /* Request for IPC_REQ_SET_DEVICE_PARAM: one command queued for one device.
  * radio_devices_docs/radio/tdma.md */

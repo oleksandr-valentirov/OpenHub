@@ -127,6 +127,7 @@ static uint32_t pair_reqs_dropped = 0;
 static uint32_t join_regions = 0;
 static uint32_t join_beacons = 0;
 static uint32_t join_tx_err = 0;
+static uint32_t join_beacon_shadow = 0;  /* due, and the region was spoken for */
 static uint32_t data_beacons = 0;
 static uint32_t announce_beacons = 0;
 static uint32_t silent_frames = 0;
@@ -231,6 +232,7 @@ static uint8_t  afc_ring_grid[IPC_AFC_RING];
 static uint8_t  afc_ring_slot[IPC_AFC_RING];
 static uint8_t  afc_ring_gain[IPC_AFC_RING];
 static int8_t   afc_ring_rssi[IPC_AFC_RING];
+static int8_t   afc_ring_rssi_end[IPC_AFC_RING];
 static int32_t  afc_ring_afc_hz[IPC_AFC_RING];
 static uint16_t afc_ring_crc_ok;    /* bit i: ring entry i passed its CRC */
 static uint16_t afc_ring_in_frame;  /* bit i: entry i's level was taken during it */
@@ -238,6 +240,12 @@ static uint8_t  afc_ring_head;      /* where the next sample goes */
 /* One frame's level, taken at its sync match and waiting for its PayloadReady.
  * radio_devices_docs/open_hub/radio/configuration.md */
 static int8_t   sync_rssi_dbm;
+/* The arriving frame's two levels and its slot, taken once and read twice.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static int8_t   fr_rssi_sync_dbm;
+static int8_t   fr_rssi_end_dbm;
+static uint8_t  fr_slot;
+static uint8_t  fr_sync_have;
 static uint8_t  sync_slot;          /* which slot the edge landed in, 0xFF if none */
 static uint8_t  sync_rssi_have;     /* 0 once consumed, so no frame borrows another's */
 static uint16_t sync_rssi_lag_us;   /* from the DIO3 edge to the sample */
@@ -591,6 +599,10 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->total           = device_count;
     d->slot            = e->slot;
     d->rssi_up         = e->rssi_up;
+    d->rssi_up_sync    = e->rssi_up_sync;
+    d->lna_gain        = e->lna_gain;
+    d->afc_hz          = e->afc_hz;
+    d->air_have        = e->air_have;
     d->rssi_down       = e->rssi_down;
     /* Asked, granted and done are three facts; none stands in for another. */
     d->cmd_every       = (e->dl_cmd == RADIO_CMD_SET_RATE) ? e->dl_report_every : 0u;
@@ -781,6 +793,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         p.join_regions = join_regions;
         p.join_beacons = join_beacons;
         p.join_tx_err  = join_tx_err;
+        p.join_beacon_shadow = join_beacon_shadow;
         p.data_beacons = data_beacons;
         p.announce_beacons = announce_beacons;
         p.silent_frames = silent_frames;
@@ -969,6 +982,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             r.slot[i] = afc_ring_slot[k];
             r.gain[i] = afc_ring_gain[k];
             r.rssi[i] = afc_ring_rssi[k];
+            r.rssi_end[i] = afc_ring_rssi_end[k];
             r.afc_hz[i] = afc_ring_afc_hz[k];
             if ((afc_ring_crc_ok & (1u << k)) != 0u)
                 r.crc_ok = (uint16_t)(r.crc_ok | (1u << i));
@@ -1496,6 +1510,17 @@ static void sync_rssi_sample(const phy_ev_t *ev) {
         sync_rssi_lag_max_us = sync_rssi_lag_us;
 }
 
+/* Taken for every frame, including the ones afc_note refuses a row to.
+ * radio_devices_docs/open_hub/radio/configuration.md */
+static void frame_levels_take(const phy_ev_t *ev) {
+    fr_sync_have     = sync_rssi_have;
+    fr_rssi_sync_dbm = sync_rssi_have ? sync_rssi_dbm : 0;
+    fr_slot          = sync_rssi_have ? sync_slot : 0xFFu;
+    /* 0 is the contract's "no level", and phy_poll zeroes a read it could not make. */
+    fr_rssi_end_dbm  = (int8_t)ev->rssi_dbm;
+    sync_rssi_have   = 0;
+}
+
 /* A failed read is counted apart: it must not enter the fit as a zero. */
 static void afc_note(uint8_t grid, const phy_ev_t *ev) {
     int32_t hz = ev->afc_hz;
@@ -1515,14 +1540,14 @@ static void afc_note(uint8_t grid, const phy_ev_t *ev) {
     afc_ring_grid[afc_ring_head] = grid;
     afc_ring_afc_hz[afc_ring_head] = hz;
     afc_ring_gain[afc_ring_head] = ev->lna_gain;
-    /* Consumed, never left behind: no frame may report the level of the one before. */
-    afc_ring_rssi[afc_ring_head] = sync_rssi_have ? sync_rssi_dbm : 0;
-    afc_ring_slot[afc_ring_head] = sync_rssi_have ? sync_slot : 0xFFu;
-    if (sync_rssi_have)
+    /* Both ends of one frame on one row: the start level and the level at its end. */
+    afc_ring_rssi[afc_ring_head] = fr_rssi_sync_dbm;
+    afc_ring_rssi_end[afc_ring_head] = fr_rssi_end_dbm;
+    afc_ring_slot[afc_ring_head] = fr_slot;
+    if (fr_sync_have)
         afc_ring_in_frame = (uint16_t)(afc_ring_in_frame | (1u << afc_ring_head));
     else
         afc_ring_in_frame = (uint16_t)(afc_ring_in_frame & ~(1u << afc_ring_head));
-    sync_rssi_have = 0;
     afc_ring_crc_ok = (uint16_t)(afc_ring_crc_ok & ~(1u << afc_ring_head));
     afc_ring_head = (uint8_t)((afc_ring_head + 1u) % IPC_AFC_RING);
     afc_n++;
@@ -1539,6 +1564,8 @@ static void afc_note_crc_ok(void) {
 static int rx_frame_ready(const phy_ev_t *ev, uint8_t grid) {
     if (ev->kind != PHY_EV_FRAME && ev->kind != PHY_EV_CRC)
         return 0;
+    /* Before afc_note, which refuses a row when the carrier error would not read. */
+    frame_levels_take(ev);
     /* Before the CRC branch: the corrupt frames are the population AFC is for. */
     afc_note(grid, ev);
     if (ev->kind == PHY_EV_CRC) {
@@ -1896,7 +1923,15 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
                 timebase_ticks_to_us(sync_edge_tk - sync_edge_base);
         }
     }
-    d->rssi_up   = (int8_t)ev->rssi_dbm;
+    /* All four off this arrival, which last_superframe above names. ROADMAP item 14 */
+    d->rssi_up      = fr_rssi_end_dbm;
+    d->rssi_up_sync = fr_rssi_sync_dbm;
+    d->lna_gain     = ev->lna_gain;
+    d->afc_hz       = ev->afc_hz;
+    d->air_have     = (uint8_t)((fr_rssi_end_dbm != 0 ? IPC_AIR_END_LEVEL : 0u) |
+                                (fr_sync_have ? IPC_AIR_SYNC_LEVEL : 0u) |
+                                (ev->lna_gain != PHY_LNA_UNKNOWN ? IPC_AIR_GAIN : 0u) |
+                                (ev->afc_valid ? IPC_AIR_AFC : 0u));
     /* Cleared here too: a frame in its own superframe outruns the score. */
     d->missed_run = 0;
     d->rssi_down = rpt.rssi_down;
@@ -1932,6 +1967,26 @@ static int pair_region_owned(void) {
     if (ex_state == RADIO_EX_IDLE || ex_state == RADIO_EX_ACCEPTED)
         return 0;
     return (uint32_t)(sfm.g.counter - ex_req_frame) < RADIO_PAIR_REGIONS;
+}
+
+/* 1 while this superframe's join region belongs to an invitation or an exchange.
+ * radio_devices_docs/radio/joining.md */
+static int join_beacon_shadowed(void) {
+    if (pi_superframe != 0u && pi_superframe == sfm.g.counter)
+        return 1;
+    return pair_region_owned();
+}
+
+/* 1 when a beacon is due here and nothing else has claimed the region.
+ * radio_devices_docs/radio/joining.md */
+static int join_beacon_due(void) {
+    if ((sfm.g.counter % JOIN_BEACON_EVERY) != 0u)
+        return 0;
+    if (join_beacon_shadowed()) {
+        join_beacon_shadow++;
+        return 0;
+    }
+    return 1;
 }
 
 /* The staged turn, at the offset a joining device listens on. ADR-0026 */
@@ -2320,9 +2375,8 @@ static void join_region_service(void) {
         if (device_count == 0u && pair_state == RADIO_PAIR_LISTEN) {
             if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0)
                 return;
-            join_beacon_pending = ((sfm.g.counter % JOIN_BEACON_EVERY) == 0u);
-        } else if ((sfm.g.counter % JOIN_BEACON_EVERY) == 0u &&
-                   pi_superframe != sfm.g.counter && !pair_region_owned()) {
+            join_beacon_pending = (uint8_t)join_beacon_due();
+        } else if (join_beacon_due()) {
             RFM_send_join_beacon();
         } else if (phy_tune(slot_hz(RADIO_JOIN_SLOT)) != 0) {
             return;
@@ -2343,8 +2397,11 @@ static void join_region_service(void) {
 
     jp_passes++;
 
-    if (join_beacon_pending && pair_region_owned())
-        join_beacon_pending = 0;        /* the region belongs to the exchange */
+    /* Re-checked here: CM7 can key an invitation after the region was opened. */
+    if (join_beacon_pending && join_beacon_shadowed()) {
+        join_beacon_pending = 0;
+        join_beacon_shadow++;
+    }
 
     if (join_beacon_pending &&
         timebase_elapsed(sfm.g.start + join_offset_tk)) {

@@ -28,7 +28,11 @@ typedef struct dev_entry {
     uint32_t uptime_s;
     uint16_t supply_mv;
     int16_t  temp_c_x10;        /**< as the device measured its own die */
-    int8_t   rssi_up;           /**< off the RSSI latch, which nothing here triggers. ROADMAP item 14 */
+    int8_t   rssi_up;           /**< dBm at the end of the last accepted frame */
+    int8_t   rssi_up_sync;      /**< dBm at the sync edge of that same frame */
+    int32_t  afc_hz;            /**< ... and its carrier error */
+    uint8_t  lna_gain;          /**< ... and the gain in force on it */
+    uint8_t  air_have;          /**< IPC_AIR_*: which of the four were measured */
     uint32_t arrival_us;        /**< into the superframe the report claimed */
     uint32_t arrival_sync_us;   /**< the same off the DIO3 edge, or IPC_ARRIVAL_SYNC_NONE */
     uint16_t sync_unpaired;     /**< this device's share of the hub-wide refusals */
