@@ -118,8 +118,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/cli.c
     Core/Src/hubipc.c
+    Core/Src/hubipc_str.c
     Core/Src/pairing.c
     Core/Src/keystore.c
+    Core/Src/keystore_str.c
     Core/Src/cfgflash.c
     Core/Src/cfgstore.c
     Core/Src/erasetest.c

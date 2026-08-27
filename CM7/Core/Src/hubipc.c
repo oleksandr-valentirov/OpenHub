@@ -49,18 +49,3 @@ int hub_ipc_call(uint8_t type, uint8_t arg, const void *payload, uint8_t len,
     osMutexRelease(ipc_lock);
     return result;
 }
-
-const char *hub_ipc_str(int rc) {
-    switch (rc) {
-    case IPC_ST_OK:            return "ok";
-    case IPC_ST_UNKNOWN_REQ:   return "CM4 does not know this request";
-    case IPC_ST_BAD_ARG:       return "CM4 refused the arguments";
-    case IPC_ST_RADIO_ERR:     return "CM4 reached the radio and it failed";
-    case HUB_IPC_NO_REPLY:     return "CM4 did not answer inside the timeout";
-    case HUB_IPC_ERR_ARG:      return "malformed on this core; CM4 was not asked";
-    case HUB_IPC_ERR_INIT:     return "the mailbox was never initialised";
-    case HUB_IPC_ERR_BUSY:     return "another CM7 caller held the mailbox";
-    case HUB_IPC_ERR_SEND:     return "the mailbox would not take the request";
-    default:                   return "an unknown status";
-    }
-}

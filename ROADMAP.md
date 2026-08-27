@@ -127,6 +127,27 @@ quoted as one for two days. What separates the regimes is that `none_due` cannot
 be zero when the roster's periods say most opportunities are addressed to nobody;
 after the fix it read **75 of 157**.
 
+The tenth, 2026-08-27, retired **item 69** — two failure renderers with nothing
+testing that their words differ — and it is the first entry of **phase 1** rather
+than a cleaning of the queue. `ks_fail_str()` and `hub_ipc_str()` moved to
+`CM7/Core/Src/keystore_str.c` and `CM7/Core/Src/hubipc_str.c`, which include
+their own header and nothing else; `keystore.c` pulls in `main.h` for the flash
+and `hubipc.c` pulls in `cmsis_os.h` for the mutex, which is what had kept both
+functions out of reach of a host suite. `Common/test/test_failstr.c` compiles the
+two units and pins **159 checks**: ten store conditions and nine mailbox statuses
+render non-empty, no two share a word — pairwise, so a failure names *which two* —
+and neither falls through to its own unknown fallback.
+
+**Three mutations were made red before the arms were kept**: every store case
+collapsed to one sentence, two mailbox cases given identical words, and a named
+case set to the fallback's own string. **The second of them found a defect in the
+suite rather than in the renderers** — the summary printed `9 cases, all distinct`
+beside the collision it had just reported, because it was a `printf` at the end of
+the arm and not a verdict. That is this item's own lesson one level up, in the
+instrument written to catch it. Reasoning on
+[`open_hub/arch/ipc.md`](../radio_devices_docs/open_hub/arch/ipc.md) § a renderer
+that cannot separate its cases.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -1137,23 +1158,6 @@ normal case.
 It wants its own line, printed pass or fail, ahead of anything unbounded.
 
 `../radio_devices_docs/open_hub/security/self-tests.md`.
-
-### 69. Two failure renderers give distinct words and nothing tests that they do — `debt`
-
-`ks_fail_str()` and `hub_ipc_str()` exist because four store conditions shared one
-number and two IPC failures shared another. Both now name their case — and **a
-build that returned one string for every code would print a plausible sentence and
-pass every check there is.**
-
-Neither body needs the HAL or CMSIS; the files they sit in do. Split them into
-pure translation units and one host test covers both. It is the cheap half of the
-lesson the store cost a day for: an instrument that cannot separate its own cases
-belongs with the other prerequisites, not after them.
-
-`../radio_devices_docs/open_hub/arch/ipc.md`,
-`../radio_devices_docs/open_hub/arch/keystore.md`.
-
----
 
 ### 100. Beacon lateness moved 17 us later and has no like-for-like arm — `debt`
 

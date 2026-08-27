@@ -721,22 +721,6 @@ void ks_retire(void) {
 
 int ks_retired(void) { return retired; }
 
-const char *ks_fail_str(ks_fail_t f) {
-    switch (f) {
-    case KS_FAIL_NONE:       return "none";
-    case KS_FAIL_NOT_READY:  return "the store was never initialised";
-    case KS_FAIL_LATCHED:    return "an earlier write failed and latched it shut";
-    case KS_FAIL_LOG_FULL:   return "both sectors are used; only an erase reclaims";
-    case KS_FAIL_UNLOCK:     return "HAL_FLASH_Unlock refused";
-    case KS_FAIL_PROGRAM:    return "HAL_FLASH_Program refused";
-    case KS_FAIL_LOCK:       return "the record landed and HAL_FLASH_Lock refused";
-    case KS_FAIL_CACHE_FULL: return "flash took it; the RAM cache is full";
-    case KS_FAIL_SCAN_OVER:  return "boot found more device ids than the cache fits";
-    case KS_FAIL_RETIRED:    return "retired: the configuration store owns these sectors";
-    }
-    /* A value from a build that knew more reasons than this one. */
-    return "unknown";
-}
 uint32_t ks_stale_format(void) { return stale_format; }
 
 uint8_t ks_exhausted(void) {
