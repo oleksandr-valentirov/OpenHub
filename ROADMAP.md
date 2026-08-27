@@ -242,6 +242,67 @@ entry to commemorate itself. The rule the next harness needs is on
 `open_hub/testing/host-tests.md` § one of these suites was not in the repository,
 which is where somebody adding one will be.
 
+The fourteenth, 2026-08-27, retired **items 14 and 7** together, because they
+ship as one image, and with them **phase 1 is complete**.
+
+**Item 14 — the two RSSI fields had no common population.** Its headline had
+stopped being true before it was worked: `handle_uplink_frame()` takes
+`ev->rssi_dbm`, filled at `PAYLOAD_READY` inside the packet's own window, which
+*is* a provenance — and the entry's original prescription would have collapsed
+two measurements into one. **A prescription is a second claim and does not
+inherit its diagnosis's evidence.** What was actually wrong is that
+`rssi_up_sync_dbm` came from one row of the nine-row AFC ring shared by every
+device while `rssi_up_latch_dbm` came from the roster entry, so the two routinely
+described different frames.
+
+`frame_levels_take()` takes the pair once per arrival in `rx_frame_ready()` and
+two consumers read it: the ring row, which the `frame` object and `device afcraw`
+render, and the roster entry, which now carries the device object's level, gain
+and correction. `last_superframe` names that arrival. Each of the four is present
+or absent on its own through `air_have`, and all four are `sample: true`, so
+absence means *not measured* and never *carry the previous frame forward*.
+`ipc_afc_raw_t` and `ipc_device_report_t` both moved, so `IPC_VERSION` is **9**,
+and `frame.rssi_end_dbm` moved `OHT_SCHEMA_DIGEST` `00bf858b…` -> `499422df…`.
+
+**The take used to sit inside `afc_note()`, which returns early when the carrier
+error will not read** — so a frame whose AFC read failed left its sync sample for
+the next frame to claim, under a comment reading *consumed, never left behind*.
+Taking it in the caller is what makes that sentence true.
+
+**Verified across the mailbox, not within one side of it.** The device object's
+tuple `(sync, latch, gain, afc)` from `/api/devices/<id>` must appear as a tuple
+on one row of `device afcraw`, which CM4 fills from the ring and which does not
+pass through `put_device`. Ten device-reads over five samples: **every one joined
+to a row of its own device and none to the other's**, whose level sits ~15 dB
+away — the control that says the join can discriminate. Two of the ten carried an
+**unequal** pair, -37/-39 and -37/-38, each matching exactly one of four rows,
+and those are the ones that pin a frame; an equal pair matches several rows and
+proves only that the two came from the same device. **`afc_hz` reads 0 on every
+row with AFC off (ADR-0033), so it contributed nothing to the join** — said
+before the run rather than after it.
+
+**Item 7 — a join beacon still shared the first invitation's superframe.** Both
+suppression rules now live in `join_beacon_due()` and every branch that can
+radiate asks it, including the `device_count == 0` branch a hub with nothing
+paired takes. A deferred beacon is asked again at the region offset, because CM7
+can key an invitation after the region has opened. `join_beacon_shadow` counts
+every refusal, so a suppressed beacon and one that was never due stop reading
+alike.
+
+**Measured on the paired branch over one 60 s window**, opened for an id no
+device holds and removed after, touching neither node's pairing: **30 join
+regions, 8 beacons sent, 7 shadowed, 0 tx err**, against 7 invitation superframes
+the join probe counted independently. Every number reconciles — a beacon is due
+every second superframe, so 15 of 30, and all 7 invitation superframes are even,
+so 15 − 7 = 8. The predicted ratio was *shadowed near beacons* and it read 7:8.
+
+**What that arm does not show is item 7's own branch**, and the entry it leaves
+behind says so: the paired branch had both rules already, so this measures the
+refactor and the counter, not the fix. `device_count == 0` cannot be reached with
+two nodes paired — CM7 re-installs the roster into CM4 at boot, so a reset does
+not empty it — and emptying the roster is the device session's word to give.
+That arm is **item 102** below and a bullet on item 28.
+
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
 behind on its page; the entry here just goes.
@@ -871,27 +932,6 @@ offers `pair_window` for the same reason.
 `radio_devices_docs/open_hub/radio/pairing.md`, `bench/journal/2026-08-25-architect.md`.
 
 
-### 7. A join beacon still shares the first invitation's superframe — `defect`
-
-`PAIR_INIT` targets round up to `RADIO_PAIR_INIT_EVERY` (4) and the join beacon
-runs every `JOIN_BEACON_EVERY` (2), so **every** invitation lands on a beacon
-superframe. Both are keyed at `join_offset_tk`, about 8 ms apart.
-
-**Half guarded, and the unguarded half is the case that matters.** In
-`join_region_service()` the paired branch now refuses the beacon when
-`pi_superframe == frame_counter` or the region is owned by an exchange. The
-`device_count == 0` branch — a hub that has never paired anything, which *is* the
-first-pairing case — instead defers the beacon as `join_beacon_pending`, and that
-pending flag is cleared only by `pair_region_owned()`, which is false until a
-request has already arrived. So on the invitation superframe itself the beacon
-still goes out.
-
-By name the fault ADR-0021 records: the device heard 15 beacons and no invitations
-until the beacon was suppressed. **Found by reading, not on air**, so what it costs
-a receiver is still unmeasured.
-
-`CM4/Core/Src/radio.c` -> `join_region_service`, the `device_count == 0` branch.
-
 ### 8. The LSE measurement is unexplained at the window level — `defect`
 
 The mean is sound — it matched a host-clock measurement to 51 ppm over ten
@@ -901,53 +941,6 @@ telescopes to two timestamps. Averaged over ~32 s it does not block the grid.
 `RCC_BDCR.LSEDRV` is at its lowest reset default and is the untested lever.
 
 `open_hub/radio/timebase.md`.
-
-### 14. The two RSSI fields have no common population — `defect`
-
-**Rewritten 2026-08-27. The headline was `rssi_up` is read from an untriggered
-latch, and its first sentence had stopped being true.** `handle_uplink_frame()`
-does not call `rfm69_get_rssi()`; it takes `ev->rssi_dbm`, which
-`CM4/Core/Src/phy_rfm69.c` fills at `PAYLOAD_READY` — inside the packet's own
-window, before the receiver re-arms, which *is* a provenance. The entry's
-prescription, *stash the sync-match sample for the frame just delivered*, was
-written against the older code and would now collapse two measurements into one.
-
-**What is actually wrong is that the two fields cannot be compared.**
-`rssi_up_sync_dbm` comes from **one row of the AFC ring** — `put_device_air()`
-walks it newest-first and returns on the first row belonging to this device — and
-the ring is nine rows shared by every device. `rssi_up_latch_dbm` is
-`d->rssi_up`, from this device's most recent accepted frame. **So the two numbers
-routinely describe different frames**, and nothing on the wire says whether they
-describe the same one.
-
-**Measured 2026-08-27, six reads twenty seconds apart, two nodes**, through
-`openhub-server` on `03410b3`:
-
-    node A  latch/sync  -37/-37  -36/-37  -36/-37  -39/-37  -37/-37  -38/-36
-    node B  latch/sync  -53/-53  -49/-49  -52/-50  -50/-51  -52/-52  -49/-49
-
-They differ by 0..2 dB. **That reading cannot be used**, and the reason is the
-point: *two moments inside one frame differ* and *two different frames differ*
-predict the identical spread, and the collection cannot separate them. A
-discriminator whose variable is not varied independently of the thing it is meant
-to distinguish.
-
-**So the work is to give them one population before either is quoted**, not to
-delete one of them. Two levels taken at the start and at the end of the same
-frame are a real second instrument — the AGC and a front end in compression make
-them disagree in a way that is diagnostic — but only frame by frame. The cheapest
-shape is the ring carrying both, since it already carries `in_frame`, the gain
-and the slot for exactly one arrival.
-
-**Nothing may quote either field against the other until then**, and no K2
-argument may rest on their agreement. `rssi_up_sync_dbm` alone is still sound
-within its own limits, which the schema states.
-
-`CM4/Core/Src/radio.c` -> `afc_note`, `handle_uplink_frame`;
-`CM7/Core/Src/telemetry.c` -> `put_device_air`;
-`openhub-server/schema/telemetry.yaml` 0x1010 and 0x1011, whose comment names
-this entry as the reason the two fields exist.
-`open_hub/radio/configuration.md`.
 
 ### 31. The two sides' boundary lag disagree in a direction that cannot happen — `contract` `defect`
 
@@ -1708,8 +1701,39 @@ not assuming.
 - **Warning before the next hub reset**, so node B is parked and instrumented
   when it happens. Park-and-wait recovery is built on their side; an unannounced
   reset spends the one honest test of it on nobody watching.
+- **An empty roster for one pairing window**, so the hub's first-pairing branch
+  runs once — `device remove` on both nodes, a `device add` for one of them, and
+  the device side reading whether it hears invitations or only beacons. It costs
+  both pairings and a `release` on each board, which is why it is asked rather
+  than taken. Item 102.
 
 `open_hub/testing/sdr.md`.
+
+### 102. The first-pairing branch has never radiated — `debt` `device`
+
+`join_beacon_due()` guards both branches since `11d75a3`, and only the paired one
+has been on air: 30 join regions, 8 beacons, 7 shadowed over a 60 s window on
+2026-08-27. **That branch had both rules before the change**, so the measurement
+covers the refactor and the counter and not the fix.
+
+The branch a hub takes with `device_count == 0` is the first-pairing case, it
+carries the only deferred beacon in the firmware — `join_beacon_pending` and its
+re-check at the region offset — and **neither has executed once on this bench**.
+An instrument that has never passed cannot be read in either direction, and the
+same is true of a branch.
+
+**It cannot be reached with two nodes paired.** `pairing_push()` re-installs the
+roster into CM4 at every boot, so a reset does not empty `device_count`; only
+`device remove` on both nodes does, and that spends both pairings. **The ask is
+on item 28** and it is the device session's to grant.
+
+What to read when it is taken: `join regions`, `beacons` and `shadowed` on
+`device pair` over one window, with `join probe`'s `invited` count as the
+independent denominator, and the device side hearing invitations rather than
+15 beacons and none — which is the fault ADR-0021 records.
+
+`CM4/Core/Src/radio.c` -> `join_region_service`, `join_beacon_due`.
+`radio/joining.md`.
 
 ### 76. The beacon's air time is 48 % over what the payload predicts — `defect`
 
