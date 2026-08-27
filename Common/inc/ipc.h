@@ -13,15 +13,26 @@
  */
 
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
-/* 3 widened the payload, 6 and 7 moved a reply; the gate is for all three.
+/* 3 and 8 widened the payload, 6 and 7 moved a reply; the gate is for all four.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      7u
+#define IPC_VERSION      8u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  64u
-/* Was 64. SRAM4 pays 3 rings x 8 slots for every byte of it.
+/* Was 64, then 96, which ipc_timing_t filled exactly.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_PAYLOAD_MAX  96u
+#define IPC_PAYLOAD_MAX  128u
+
+/* Without a margin term a `<=` passes hardest at exactly zero spare.
+ * radio_devices_docs/open_hub/arch/ipc.md */
+#define IPC_PAYLOAD_MARGIN  8u
+
+/* One rule, one place: a payload must fit its slot and leave the margin spare. */
+#define IPC_PAYLOAD_FITS(t)                                                   \
+    _Static_assert(sizeof(t) + IPC_PAYLOAD_MARGIN <= IPC_PAYLOAD_MAX,         \
+                   #t " leaves less than IPC_PAYLOAD_MARGIN spare in the slot");
+
+/* The list is at the foot of this file, once every payload is defined. */
 
 /* requests, CM7 -> CM4 */
 enum {
@@ -186,11 +197,6 @@ typedef struct ipc_store_state {
     uint32_t unreserved;  /**< superframes the radio stayed silent to avoid reuse */
 } __attribute__((packed)) ipc_store_state_t;
 
-/* A reply that outgrows its slot is truncated on the wire, not refused here.
- * radio_devices_docs/open_hub/arch/ipc.md */
-_Static_assert(sizeof(ipc_timing_t)     <= IPC_PAYLOAD_MAX, "ipc_timing_t too large");
-_Static_assert(sizeof(ipc_pair_state_t) <= IPC_PAYLOAD_MAX, "ipc_pair_state_t too large");
-_Static_assert(sizeof(ipc_store_state_t) <= IPC_PAYLOAD_MAX, "ipc_store_state_t too large");
 /* IPC_EVT_PAIR_REQ: what CM4 pulled out of an already-checked PAIR_REQ. */
 typedef struct ipc_pair_req_evt {
     uint32_t dev_id;
@@ -283,7 +289,6 @@ typedef struct ipc_pair_init {
     uint8_t  len;
     uint8_t  frame[RADIO_PAIR_INIT_MAX];
 } __attribute__((packed)) ipc_pair_init_t;
-_Static_assert(sizeof(ipc_pair_init_t) <= IPC_PAYLOAD_MAX, "ipc_pair_init_t too large");
 
 /* Reply for IPC_REQ_GET_PAIR_INIT: every way one can fail to reach the air. */
 typedef struct ipc_pair_init_state {
@@ -297,8 +302,6 @@ typedef struct ipc_pair_init_state {
     uint32_t frf;            /**< read back off the part after the transmit */
     uint8_t  payload_len;
 } __attribute__((packed)) ipc_pair_init_state_t;
-_Static_assert(sizeof(ipc_pair_init_state_t) <= IPC_PAYLOAD_MAX,
-               "ipc_pair_init_state_t too large");
 
 /* Reply for IPC_REQ_GET_SYNCTIME: where a frame's sync word landed.
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
@@ -321,7 +324,6 @@ typedef struct ipc_synctime {
     int32_t  calib_ppm;      /**< the scale in force when it was converted */
 } __attribute__((packed)) ipc_synctime_t;
 
-_Static_assert(sizeof(ipc_synctime_t) <= IPC_PAYLOAD_MAX, "ipc_synctime_t too large");
 
 /* Reply for IPC_REQ_GET_SYNCSTATS: sums, so a spread is reported, not a range.
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
@@ -344,7 +346,6 @@ typedef struct ipc_syncstats {
     uint32_t edges;          /**< the DIO3 counter itself, so what coalesced is readable here */
 } __attribute__((packed)) ipc_syncstats_t;
 
-_Static_assert(sizeof(ipc_syncstats_t) <= IPC_PAYLOAD_MAX, "ipc_syncstats_t too large");
 
 /* Reply for IPC_REQ_GET_AFC: the correction AFC applied to each frame received.
  * radio_devices_docs/open_hub/radio/configuration.md */
@@ -362,7 +363,6 @@ typedef struct ipc_afc {
     int64_t  sum_gh;
 } __attribute__((packed)) ipc_afc_t;
 
-_Static_assert(sizeof(ipc_afc_t) <= IPC_PAYLOAD_MAX, "ipc_afc_t too large");
 
 /* Parallel arrays, not an array of pairs: an inner struct does not inherit packed.
  * radio_devices_docs/open_hub/radio/configuration.md */
@@ -393,7 +393,6 @@ _Static_assert(IPC_AFC_RING <= 16u,
  * radio_devices_docs/open_hub/radio/sync-timestamp.md */
 #define IPC_ARRIVAL_SYNC_NONE  0xFFFFFFFFu
 
-_Static_assert(sizeof(ipc_afc_raw_t) <= IPC_PAYLOAD_MAX, "ipc_afc_raw_t too large");
 
 /* Reply for IPC_REQ_GET_JOINPROBE: whether the receiver was on, and what reached it.
  * radio_devices_docs/radio/pairing.md */
@@ -413,7 +412,6 @@ typedef struct ipc_join_probe {
     uint8_t  last_op;      /**< RegOpMode as read, never as written */
     uint8_t  reserved[3];
 } __attribute__((packed)) ipc_join_probe_t;
-_Static_assert(sizeof(ipc_join_probe_t) <= IPC_PAYLOAD_MAX, "ipc_join_probe_t too large");
 
 /* Reply for IPC_REQ_GET_EVT_LAT: both terms on CM4's clock. ROADMAP item 2
  * radio_devices_docs/open_hub/arch/ipc.md */
@@ -432,8 +430,6 @@ typedef struct ipc_evt_latency {
     uint32_t slack_us;          /**< what the deadline leaves, from the core that owns the band */
 } __attribute__((packed)) ipc_evt_latency_t;
 
-_Static_assert(sizeof(ipc_evt_latency_t) <= IPC_PAYLOAD_MAX,
-               "ipc_evt_latency_t too large");
 
 
 /* Reply for IPC_REQ_HOP_AT. The key travels with the answer, so two sides can
@@ -448,7 +444,6 @@ typedef struct ipc_hop_at {
     uint8_t  count;          /**< the hop set this deck was built over */
     uint8_t  deck[32];       /**< the permutation itself, not a channel from it */
 } __attribute__((packed)) ipc_hop_at_t;
-_Static_assert(sizeof(ipc_hop_at_t) <= IPC_PAYLOAD_MAX, "ipc_hop_at_t too large");
 
 /* Reply payload for IPC_REQ_GET_DOWNLINK. */
 typedef struct ipc_downlink_state {
@@ -469,8 +464,6 @@ typedef struct ipc_downlink_state {
     uint32_t nonce_refused;  /**< seals refused because the tuple was not new */
     uint32_t none_due;       /**< no installed device opens a window in that superframe */
 } __attribute__((packed)) ipc_downlink_state_t;
-_Static_assert(sizeof(ipc_downlink_state_t) <= IPC_PAYLOAD_MAX,
-               "ipc_downlink_state_t too large");
 
 /**
  * @brief Reply for IPC_REQ_DL_NONCE_PROBE: the guard's verdict, with nothing sealed.
@@ -485,8 +478,6 @@ typedef struct ipc_dl_nonce_probe {
     uint8_t  verdict_next;   /**< ... and at last_sf + 1: must be 1 */
     uint8_t  verdict_prev;   /**< ... and at last_sf - 1: must be 0 */
 } __attribute__((packed)) ipc_dl_nonce_probe_t;
-_Static_assert(sizeof(ipc_dl_nonce_probe_t) <= IPC_PAYLOAD_MAX,
-               "ipc_dl_nonce_probe_t too large");
 
 /* Reply payload for IPC_REQ_SPI_LOOP. */
 typedef struct ipc_spi_loop {
@@ -502,7 +493,6 @@ typedef struct ipc_spi_loop {
     uint32_t io_err;
     uint32_t spi_hz;         /**< read out of the peripheral, not from the prescaler */
 } __attribute__((packed)) ipc_spi_loop_t;
-_Static_assert(sizeof(ipc_spi_loop_t) <= IPC_PAYLOAD_MAX, "ipc_spi_loop_t too large");
 
 /* Reply for IPC_REQ_GET_VECTORS: a consumer of the digests that can fail.
  * radio_devices_docs/open_hub/arch/build-and-generation.md */
@@ -542,9 +532,6 @@ typedef struct ipc_device_report {
     uint8_t  every_now;        /**< the period the hub believes is in force, grant or acked */
 } __attribute__((packed)) ipc_device_report_t;
 
-_Static_assert(sizeof(ipc_pair_req_evt_t)  <= IPC_PAYLOAD_MAX, "ipc_pair_req_evt_t too large");
-_Static_assert(sizeof(ipc_pair_rsp_evt_t)  <= IPC_PAYLOAD_MAX, "ipc_pair_rsp_evt_t too large");
-_Static_assert(sizeof(ipc_pair_conf_evt_t) <= IPC_PAYLOAD_MAX, "ipc_pair_conf_evt_t too large");
 /* Request for IPC_REQ_SET_DEVICE_PARAM: one command queued for one device.
  * radio_devices_docs/radio/tdma.md */
 typedef struct ipc_device_cmd {
@@ -555,12 +542,6 @@ typedef struct ipc_device_cmd {
     uint8_t  repeats;        /**< downlinks it rides: nothing acknowledges it */
 } __attribute__((packed)) ipc_device_cmd_t;
 
-_Static_assert(sizeof(ipc_device_cmd_t) <= IPC_PAYLOAD_MAX, "ipc_device_cmd_t too large");
-_Static_assert(sizeof(ipc_device_keys_t)   <= IPC_PAYLOAD_MAX, "ipc_device_keys_t too large");
-_Static_assert(sizeof(ipc_device_report_t) <= IPC_PAYLOAD_MAX, "ipc_device_report_t too large");
-_Static_assert(sizeof(ipc_exchange_state_t) <= IPC_PAYLOAD_MAX, "ipc_exchange_state_t too large");
-_Static_assert(sizeof(ipc_vectors_t) <= IPC_PAYLOAD_MAX, "ipc_vectors_t too large");
-_Static_assert(sizeof(ipc_rx_diag_t) <= IPC_PAYLOAD_MAX, "ipc_rx_diag_t too large");
 
 typedef struct ipc_msg {
     uint16_t seq;                     /**< echoed by the reply */
@@ -707,3 +688,46 @@ uint32_t ipc_stale_replies(void);
  * @param tail  receives the consumer's index
  */
 void ipc_ring_state(const ipc_ring_t *r, uint32_t *head, uint32_t *tail);
+
+
+/* --- every payload the mailbox carries ---------------------------------- */
+
+/**
+ * @brief The one list of payload types, so nothing can disagree with it.
+ *
+ * The fit asserts below are generated from it, and Common/test/test_ipc.c
+ * computes the largest payload from the same list. When they were two lists the
+ * test named ipc_afc_raw_t as the largest at 90 of 96 while ipc_timing_t sat at
+ * 96 of 96 - a fullness instrument reporting spare room there was none of, and
+ * a missing name reads exactly like a smaller mailbox. ROADMAP item 87
+ * radio_devices_docs/open_hub/arch/ipc.md
+ */
+#define IPC_PAYLOADS(X) \
+    X(ipc_timing_t) \
+    X(ipc_pair_state_t) \
+    X(ipc_store_state_t) \
+    X(ipc_pair_init_t) \
+    X(ipc_pair_init_state_t) \
+    X(ipc_synctime_t) \
+    X(ipc_syncstats_t) \
+    X(ipc_afc_t) \
+    X(ipc_afc_raw_t) \
+    X(ipc_join_probe_t) \
+    X(ipc_evt_latency_t) \
+    X(ipc_hop_at_t) \
+    X(ipc_downlink_state_t) \
+    X(ipc_dl_nonce_probe_t) \
+    X(ipc_spi_loop_t) \
+    X(ipc_pair_req_evt_t) \
+    X(ipc_pair_rsp_evt_t) \
+    X(ipc_pair_conf_evt_t) \
+    X(ipc_device_cmd_t) \
+    X(ipc_device_keys_t) \
+    X(ipc_device_report_t) \
+    X(ipc_exchange_state_t) \
+    X(ipc_vectors_t) \
+    X(ipc_rx_diag_t)
+
+/* A reply that outgrows its slot is truncated on the wire, not refused here.
+ * radio_devices_docs/open_hub/arch/ipc.md */
+IPC_PAYLOADS(IPC_PAYLOAD_FITS)

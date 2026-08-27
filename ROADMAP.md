@@ -173,6 +173,43 @@ above, and the state already has two northbound witnesses — `superframe` stops
 [`open_hub/radio/timebase.md`](../radio_devices_docs/open_hub/radio/timebase.md)
 § the grid is not held on an undisciplined clock.
 
+The twelfth, 2026-08-27, retired **item 87** — `ipc_timing_t` full at 96 of 96 —
+because item 37 needed a field and this was what stood in front of it.
+`IPC_PAYLOAD_MAX` is **128** and `IPC_VERSION` is **8**. The cost was measured
+rather than argued: SRAM4 pays three rings of eight slots per byte, so `ipc_msg_t`
+went 104 → 136 and RAM_D3 went **3368 → 4392 bytes of 64 KB, 6.7 %** — which is
+why the widening beat splitting the struct, whose price was a second request type
+and a second round trip on a 45 ms path. `IPC_PAYLOAD_FITS(t)` carries an
+8-byte `IPC_PAYLOAD_MARGIN`, so a payload that exactly fills its slot fails at
+itself instead of at whoever adds the next field.
+
+**The fullness instrument had been naming the wrong payload.** `test_ipc.c`
+printed `largest reply 90 of 96` for `ipc_afc_raw_t` while `ipc_timing_t` sat at
+96 of 96 — **a mailbox with no room reporting six bytes spare**, because
+"largest" was written down rather than computed. Both the asserts and the report
+read one `IPC_PAYLOADS(X)` list in `ipc.h` now, and the count is pinned: **the
+first repair kept two lists and the mutation walked straight through it**, since
+deleting `ipc_timing_t` from the test's copy restored the old wrong answer with
+nothing red. It is red now.
+
+**Flashed BOTH CORES 2026-08-27 13:23** — the ABI moves, so CM7 old against CM4
+new is the state that must never exist — announced first, ended on `-hardRst`,
+`boot_id 0x84c20fef`. The mailbox round-trips on the new width: `ipc_ready` true,
+`ipc_stale_replies` **0**, `evt_lost` **0**, `uplink_ok == uplink_frames`, both
+devices back with `missed_run 0` at the same `last_superframe`, `dl_sent`
+climbing against a growing `none_due`.
+
+**And the arm found something it was not looking for.** `evt_rtt_last_us` and
+`evt_rtt_max_us` both read **639 µs across four snapshots** while
+`uplink_frames` went 13 → 19. The write is per reply and unconditional, so the
+counter is live — the quantity is not. `evt_sent_tk` is stamped where the event
+enters the ring and the reply is checked once per superloop pass, so the span is
+bounded by where those two points sit in the pass. **A column that never once
+disagrees is quantised, not stable.** It stays a valid ceiling on CM7's half, and
+it is not a measurement of CM7's handling time. On
+[`open_hub/arch/ipc.md`](../radio_devices_docs/open_hub/arch/ipc.md)
+§ the mailbox has room again.
+
 **Nothing was added for the `.gitignore` defect found in the same hour**, and
 that is deliberate. `CM4/test/Makefile` was absent from `HEAD`, so a clone could
 not run RG-H-9 at all; it is tracked now, and a fixed defect does not get a queue
@@ -1022,30 +1059,6 @@ Found 2026-08-25 by comparing two checkers over the same files: three findings
 were the hub's alone and all three were generated vector headers.
 
 `../radio_stack/ROADMAP.md` item 3.
-
-
-### 87. `ipc_timing_t` is full at 96 of 96, so the next field silently does not fit — `debt`
-
-Measured 2026-08-25, not recalled: `sizeof(ipc_timing_t)` is **96** and
-`IPC_PAYLOAD_MAX` is **96**. The `_Static_assert` beside it passes at exact
-equality, which is correct and is also the point at which it stops carrying
-information — the next reading CM4 wants to send CM7 does not fit, and what a
-reader sees is a failed assert rather than a reason.
-
-**It has already cost one instrument a reader.** `timebase_scale_refused()`
-counts scale writes refused as unrepresentable; the host suite reads it and
-nothing on the board does, because the `timing` line would need a field here.
-That is left as a tripwire with a host-side consumer rather than paid for with a
-field somewhere else, and the reasoning is on
-`open_hub/radio/timebase.md` § the refusal has no board-side reader.
-
-Two ways out and neither is free: raise `IPC_PAYLOAD_MAX`, which touches the ring
-both cores compile and every other payload's headroom; or split the struct, which
-costs a second request type and a second round trip on a path that already costs
-45 ms (item 40). **Worth deciding before the next field, not after the assert
-fails.**
-
-`../radio_devices_docs/open_hub/arch/ipc.md`.
 
 ### 9. Every timing figure assumes HSE is the ST-Link MCO — `debt`
 
