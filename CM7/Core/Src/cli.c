@@ -1256,10 +1256,15 @@ static int cmd_device_pair(cli_data_t *cli) {
     {
         static const char *why[] = {"-", "version", "type", "length", "ids",
                                     "no window", "busy",
-                                    "net id", "hub id", "dev id"};
+                                    "net id", "hub id", "dev id", "ipc"};
         cli_out(cli, "join reqs %lu seen, %lu dropped (last: %s)\r\n",
                 (unsigned long)p.reqs_seen, (unsigned long)p.reqs_dropped,
                 p.reqs_drop_last < RADIO_DROP_COUNT ? why[p.reqs_drop_last] : "?");
+        /* Counted apart from the requests: one receiver, two frame types.
+         * radio_devices_docs/radio/pairing.md */
+        cli_out(cli, "join confs %lu seen, %lu dropped (last: %s)\r\n",
+                (unsigned long)p.confs_seen, (unsigned long)p.confs_dropped,
+                p.confs_drop_last < RADIO_DROP_COUNT ? why[p.confs_drop_last] : "?");
     }
     /* Below the frame layer; the three counters together are the diagnosis.
      * radio_devices_docs/open_hub/radio/configuration.md */

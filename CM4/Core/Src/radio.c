@@ -124,6 +124,8 @@ static uint32_t quiesce_last_end = (uint32_t)(0u - RADIO_QUIESCE_MIN_GAP);
 static uint32_t quiesce_refused = 0;
 static uint32_t pair_reqs_seen = 0;
 static uint32_t pair_reqs_dropped = 0;
+static uint32_t pair_confs_seen = 0;
+static uint32_t pair_confs_dropped = 0;
 static uint32_t join_regions = 0;
 static uint32_t join_beacons = 0;
 static uint32_t join_tx_err = 0;
@@ -303,7 +305,7 @@ static int16_t  rx_rssi_peak_x2 = -32768;   /* strongest sample seen */
 static int16_t  rx_rssi_floor_x2 = 32767;   /* weakest */
 /* Peak and floor read 0 for two different faults; this separates them. */
 static uint32_t rx_rssi_samples;
-static uint8_t  beacon_err_last, reqs_drop_last;
+static uint8_t  beacon_err_last, reqs_drop_last, confs_drop_last;
 
 /* The uplink region is one long receive: the grid separates devices, not the hub.
  * radio_devices_docs/radio/tdma.md */
@@ -802,6 +804,9 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         p.beacon_err_last = beacon_err_last;
         p.reqs_drop_last  = reqs_drop_last;
         p.quiesce_lost    = quiesce_lost;
+        p.confs_seen      = pair_confs_seen;
+        p.confs_dropped   = pair_confs_dropped;
+        p.confs_drop_last = confs_drop_last;
         (void)ipc_send_reply(req, IPC_ST_OK, &p, (uint8_t)sizeof(p));
         return;
     }
@@ -2243,17 +2248,18 @@ static void handle_join_frame(const phy_ev_t *ev) {
         radio_pair_conf_t c;
         ipc_pair_conf_evt_t e;
 
+        pair_confs_seen++;
         /* Only while waiting, and only from the device the exchange belongs to. */
         if (ex_state != RADIO_EX_SENT_RSP || len < sizeof(c)) {
-            pair_reqs_dropped++;
-            reqs_drop_last = (len < sizeof(c)) ? RADIO_DROP_LEN : RADIO_DROP_BUSY;
+            pair_confs_dropped++;
+            confs_drop_last = (len < sizeof(c)) ? RADIO_DROP_LEN : RADIO_DROP_BUSY;
             return;
         }
         memcpy(&c, ev->buf, sizeof(c));
         if (c.hub_id != hub_id || c.dev_id != ex_dev_id) {
-            pair_reqs_dropped++;
-            reqs_drop_last = (c.hub_id != hub_id) ? RADIO_DROP_HUB_ID
-                                                  : RADIO_DROP_DEV_ID;
+            pair_confs_dropped++;
+            confs_drop_last = (c.hub_id != hub_id) ? RADIO_DROP_HUB_ID
+                                                   : RADIO_DROP_DEV_ID;
             reqs_drop_hub = c.hub_id;
             reqs_drop_dev = c.dev_id;
             return;
@@ -2262,6 +2268,8 @@ static void handle_join_frame(const phy_ev_t *ev) {
         e.dev_id = c.dev_id;
         memcpy(e.confirm, c.confirm, sizeof(e.confirm));
         if (ipc_send_event(IPC_EVT_PAIR_CONF, &e, (uint8_t)sizeof(e), &ex_seq) != 0) {
+            pair_confs_dropped++;
+            confs_drop_last = RADIO_DROP_IPC;
             ex_reset();
             return;
         }
@@ -2328,6 +2336,8 @@ static void handle_join_frame(const phy_ev_t *ev) {
         memcpy(e.pubkey, req.pubkey, sizeof(e.pubkey));
 
         if (ipc_send_event(IPC_EVT_PAIR_REQ, &e, (uint8_t)sizeof(e), &ex_seq) != 0) {
+            pair_reqs_dropped++;
+            reqs_drop_last = RADIO_DROP_IPC;
             ex_reset();
             return;
         }

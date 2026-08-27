@@ -15,7 +15,7 @@
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
 /* 3 and 8 widened the payload, 6 and 7 moved a reply; the gate is for all four.
  * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      9u
+#define IPC_VERSION      10u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  64u
@@ -164,9 +164,10 @@ enum {
     RADIO_DROP_BUSY,         /**< an exchange is already in flight */
     RADIO_DROP_NET_ID,
     RADIO_DROP_HUB_ID,
-    RADIO_DROP_DEV_ID
+    RADIO_DROP_DEV_ID,
+    RADIO_DROP_IPC          /**< the frame was good and the mailbox would not take it */
 };
-#define RADIO_DROP_COUNT 10u
+#define RADIO_DROP_COUNT 11u
 
 /* Reply payload for IPC_REQ_GET_PAIR_STATE. */
 typedef struct ipc_pair_state {
@@ -189,6 +190,9 @@ typedef struct ipc_pair_state {
     uint32_t quiesce_refused;   /**< asked for one inside the minimum gap */
     uint32_t beacon_err;        /**< beacons the radio would not put on air */
     uint32_t quiesce_lost;      /**< valid PAIR_REQs that won no clear air */
+    uint32_t confs_seen;        /**< PAIR_CONF frames received on the join channel */
+    uint32_t confs_dropped;     /**< ... and rejected, counted apart from the requests */
+    uint8_t  confs_drop_last;   /**< RADIO_DROP_* */
 } __attribute__((packed)) ipc_pair_state_t;
 
 /* Reply for IPC_REQ_GET_STORE: the durable superframe ceiling and its margin. */
