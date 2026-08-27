@@ -1752,10 +1752,23 @@ explained node B's absence, node A's count and C6's median of **17.92 ms against
 guard, did not split them** — 34 bursts of >= 15 ms either way. The energy is
 continuous across that span.
 
+**And it reproduces against the baseline, which is what kills the gain
+hypothesis outright.** `2026-08-25-2`'s own attribution table reads
+**hub 309, device 0 29, device 1 1** — the same one burst for node B, in a
+capture taken at gain **25** where 284 of 485 bursts were **clipping**. An
+over-driven capture and a clean one, two firmwares apart, both hold node B once.
+**No gain sits between those two that would have shown it**, and this run could
+not have established that alone: the control is the baseline and it only became
+one by comparison.
+
+The third signature reproduces with them: node A's uplink median air time was
+**18.18 ms** against 8.00 predicted in the baseline and **17.92 ms** here, while
+the beacon reads 4.61 against 4.00 and the downlink 8.70 against 8.00. Only the
+position where two transmitters sit adjacent is over by a factor, in both runs.
+
 So two readings have to be reconciled and neither is established: node B's frames
 are inside those bursts with no gap the detector can find, or node B does not
-reach the dongle at all. **A gain argument decides neither**, since a louder
-device is present at the same gain.
+reach the dongle at all.
 
 What would: a capture with node A held silent, which makes any burst at the
 uplink phase node B's by construction; and the geometry written down, which this
@@ -1774,6 +1787,11 @@ read across superframes, which is why that run's grid tier is unquotable.
 **Superframe 55 is also the single disagreement in C5b, 37 of 38** — beacon ch 4
 against downlink ch 13. One superframe, two independent checks, and the second
 names the same channel the first says repeated.
+
+**It is not a one-off.** `2026-08-25-2` failed C0 with the identical verdict —
+*no cycle boundary explains **1** repeat* — on different firmware, a different
+gain and a clipped capture, and its C5b was 33 of 34 with the disagreement in the
+superframe C0 named, exactly as here. One repeat in ~299 superframes, twice.
 
 That is either the tool's superframe solving slipping by one cycle boundary or
 the hub's own bookkeeping, and **the invariant cannot say which** — it is a free
