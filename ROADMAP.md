@@ -21,7 +21,7 @@ runs' records survive (`../bench/runs/README.md`). Items 60, 63, 76 and 99 carry
 the marking at their own sites. Nothing here was retired by it — an item whose
 evidence went with the samples is *less* sourced, not closed.
 
-**Cleaned nine times.** The first pass retired four closed entries, moved the front-end
+**Cleaned ten times.** The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
@@ -349,6 +349,16 @@ reasoning; this one keeps the queue.
 
 ---
 
+The tenth, 2026-08-27, retired **one** and it was the head of *Blocking*.
+**Item 1 - three opportunities a superframe - is gone because the opportunities
+are.** [ADR-0036](../radio_devices_docs/radio/decisions/0036-variant-1-carries-no-asynchronous-events.md)
+removes asynchronous events from this stack entirely, so `RADIO_SLOT_OPPS` is 1,
+no frame leaves a device outside its own slot, and the PER run at the new rate
+that item owed is a single-opportunity measurement like every one this bench has
+already taken. Its reasoning stays on `radio/tdma.md` § the event deadline, which
+is marked as variant 2's, and the capacity it was holding down is the return:
+`RADIO_DEVICE_MAX` goes from 64 to **194**.
+
 ## The acceptance criteria
 
 > An unpaired device listens. The hub sends it a pairing invitation. The device
@@ -366,11 +376,14 @@ reading would change what gets built:
 - **Slots are never chosen by an operator.** The hub assigns the base slot and
   the other two opportunities are derived by contract constants, so no operator
   picks any of the three.
-- **Irregular messages are out and a deadline is in.** No contention windows and
-  no transmit outside the grid; instead delivery *and* hub-side processing within
-  1 s, which the grid as built does not yet meet.
+- **Irregular messages are out**, and on 2026-08-27 the deadline went with them
+  **for this stack**. No contention windows and no transmit outside the grid still
+  holds and is now the whole rule: every frame a device sends is its scheduled
+  report. The *event at a sensor within 1 s* clause is carried by variant 2
+  ([ADR-0036](../radio_devices_docs/radio/decisions/0036-variant-1-carries-no-asynchronous-events.md)),
+  so it is not a clause this tree is failing - it is not one this tree has.
 
-Five of the nine clauses are done and verified on air, three are partial and one —
+Of the **eight** clauses this stack now carries - the ninth, the event deadline, left with ADR-0036 - five are done and verified on air, two are partial and one —
 *both survive a reboot and restore the link* — has been exercised and failed. What
 is left is below. The system-level statement of the same thing, with the evidence
 behind each clause, is
@@ -379,39 +392,6 @@ behind each clause, is
 ---
 
 ## Blocking
-
-### 1. Three opportunities a superframe, built and not yet on air — `blocking` `contract`
-
-One opportunity a superframe made an event wait up to **2 s — twice the
-deadline** — and the contention windows that were the plan are forbidden by the
-same decision that set the deadline. **Three per superframe are the minimum**:
-two bottom out at exactly 1000 ms, which fails for any positive air time.
-
-Landed as `feat(grid): 50 kbps, three opportunities a superframe, and a duty
-cycle that fits` with `feat(wire): link_v4` — 194 slots of 9400 µs, stride 65,
-exactly 64 devices, the 1400 µs guard untouched, largest gap 778 ms and
-210 750 µs left for the hub.
-
-**What is left is the part no assert can do.** A PER run at the new rate is the
-acceptance evidence, not the host tests. Sensitivity is ~3 dB worse plus about a
-dB for the h = 1 demod penalty, and neither side has read the datasheet row.
-
-**The link half is measured and it is no longer the obstacle.** Through
-2026-08-24 the reading was two thirds of the device's frames not arriving — two
-600 s windows at 38 sent and 13 accepted each, 47 of 76 never reaching sync — and
-every one of those windows ran with the hub's AFC measuring an empty channel.
-With `AfcAutoOn` off, ADR-0033, the same measurement reads **171 of 171 across
-three opportunities** and 731 of 731 at one, at −44 to −57 dBm.
-`../radio_devices_docs/open_hub/known-defects.md`.
-
-**What still must not be quoted together is a grid figure and a link figure.**
-The 778 ms worst-case gap is the *grid*, and a delivery fraction is the *link*;
-they were combined once when the link was dropping three frames in five, and the
-rule survives the link improving. The AFC-off figures are also at a different
-input level from the old ones — there is no measurement at −17 dBm with the
-register off, and item 12 records a separate failure there.
-
-`radio/tdma.md` § the event deadline, § what k = 3 breaks.
 
 ### 3. The application payload has room and no application — `blocking`
 
@@ -1095,7 +1075,14 @@ needs no instruments, just `timing` and a host clock.
 The hub trusts its schedule rather than counting its own air time, so any
 slot-timing change must be re-measured with the SDR.
 
-**k = 3 promotes this from tidiness.** A device using all three opportunities
+**k = 3 promoted this from tidiness, and ADR-0036 takes that back.** With one
+opportunity per device and `report_every` 8 a device spends 500 ppm against a
+10 000 ppm ceiling, so nothing here needs a governor to stay legal and this is a
+debt again rather than a prerequisite. **It becomes load-bearing in variant 2**,
+where polite spectrum access accounts cumulative on-time per 200 kHz. The
+paragraph below is the reading that stood while this stack carried events.
+
+A device using all three opportunities
 every superframe sits at **1.200 %** at 50 kbps, so the deadline caps the
 sustained event rate as well as costing capacity — and nothing in either firmware
 would refuse, every individual frame being legal. The device's bound is a budget
