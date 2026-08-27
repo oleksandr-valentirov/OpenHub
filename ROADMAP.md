@@ -303,6 +303,31 @@ two nodes paired — CM7 re-installs the roster into CM4 at boot, so a reset doe
 not empty it — and emptying the roster is the device session's word to give.
 That arm is **item 102** below and a bullet on item 28.
 
+The fifteenth, 2026-08-27, retired **item 102** on the day it was opened, because
+regression run `2026-08-27-1`'s setup step reached the branch for free. The plan
+drops both pairings with `release` and rebuilds them, so between the two
+`device remove`s and the first `device add` the roster was **empty on both
+cores** — which is the only state `join_region_service()`'s `device_count == 0`
+branch runs in, and the only path with a deferred join beacon.
+
+Predicted before the window opened: *shadowed near beacons, ratio near 1*, by the
+same arithmetic as the paired branch. Read over 31 join regions: **8 beacons, 7
+shadowed, 0 tx err**, against 7 invitation superframes the join probe counted
+independently — 7:8, and the identical ratio the paired branch gave an hour
+earlier on the same firmware.
+
+**And the device-side witness ADR-0021 asks for was taken in the window after
+it.** Node A paired from that branch on the **first** window, `join reqs 1 seen,
+0 dropped`, where the fault the decision records is a node hearing 15 beacons and
+no invitations. The second suppression rule showed itself too: once the exchange
+owned the region the shadow count ran past the sent count, 15 and 15 over 61
+regions.
+
+The first window of the two produced no pairing and that is recorded rather than
+dropped — node A's 600 s enrolment window had closed before the hub's opened, the
+hub's receiver was in RX on every probe (`not in RX 0 of 30`), so it was the node
+not listening and not the hub not inviting. `bench/runs/2026-08-27-1/`.
+
 An item leaves this file when it is done, not when it is understood. A defect
 that turned out to matter for a reason worth remembering leaves a paragraph
 behind on its page; the entry here just goes.
@@ -1701,39 +1726,62 @@ not assuming.
 - **Warning before the next hub reset**, so node B is parked and instrumented
   when it happens. Park-and-wait recovery is built on their side; an unannounced
   reset spends the one honest test of it on nobody watching.
-- **An empty roster for one pairing window**, so the hub's first-pairing branch
-  runs once — `device remove` on both nodes, a `device add` for one of them, and
-  the device side reading whether it hears invitations or only beacons. It costs
-  both pairings and a `release` on each board, which is why it is asked rather
-  than taken. Item 102.
 
 `open_hub/testing/sdr.md`.
 
-### 102. The first-pairing branch has never radiated — `debt` `device`
+### 105. One capture cannot see both nodes, and the reason is not known — `debt`
 
-`join_beacon_due()` guards both branches since `11d75a3`, and only the paired one
-has been on air: 30 join regions, 8 beacons, 7 shadowed over a 60 s window on
-2026-08-27. **That branch had both rules before the change**, so the measurement
-covers the refactor and the counter and not the fix.
+Regression run `2026-08-27-1`, 600 s at 4 Msps and gain 20, rails clean at
+**0 of 499 bursts over 0.01 %**. `dutycycle.py`'s per-transmitter attribution:
 
-The branch a hub takes with `device_count == 0` is the first-pairing case, it
-carries the only deferred beacon in the firmware — `join_beacon_pending` and its
-re-check at the region offset — and **neither has executed once on this bench**.
-An instrument that has never passed cannot be read in either direction, and the
-same is true of a branch.
+| transmitter | bursts | expected |
+|---|---|---|
+| hub | 338 | ~375 |
+| node A, slot 0 | **34** | ~37 |
+| node B, slot 1 | **1** | ~37 |
 
-**It cannot be reached with two nodes paired.** `pairing_push()` re-installs the
-roster into CM4 at every boot, so a reset does not empty `device_count`; only
-`device remove` on both nodes does, and that spends both pairings. **The ask is
-on item 28** and it is the device session's to grant.
+**Node A is there in full and node B is not**, while node B reads only 16 dB
+below node A at the *hub's* antenna and the hub accepted both nodes' frames all
+window with `uplink_bad_tag`, `uplink_bad_slot` and `uplink_replay` all 0.
 
-What to read when it is taken: `join regions`, `beacons` and `shadowed` on
-`device pair` over one window, with `join probe`'s `invited` count as the
-independent denominator, and the device side hearing invitations rather than
-15 beacons and none — which is the fault ADR-0021 records.
+**The obvious explanation was tested and withdrawn.** Adjacent uplink slots are
+1.4 ms apart (`RADIO_SLOT_US` 9400 = 8000 air + 1400 guard) and `hops.py` bridges
+fragments closer than 5.0 ms, so two frames merging into one 17.4 ms burst
+explained node B's absence, node A's count and C6's median of **17.92 ms against
+8.00 predicted** in one stroke. Re-running at `--bridge-ms 1.0`, **below the
+guard, did not split them** — 34 bursts of >= 15 ms either way. The energy is
+continuous across that span.
 
-`CM4/Core/Src/radio.c` -> `join_region_service`, `join_beacon_due`.
-`radio/joining.md`.
+So two readings have to be reconciled and neither is established: node B's frames
+are inside those bursts with no gap the detector can find, or node B does not
+reach the dongle at all. **A gain argument decides neither**, since a louder
+device is present at the same gain.
+
+What would: a capture with node A held silent, which makes any burst at the
+uplink phase node B's by construction; and the geometry written down, which this
+bench has never recorded for either node.
+
+`bench/runs/2026-08-27-1/VERDICT.md`, `dutycycle.txt`, `hops-bridge1.txt`.
+
+### 106. One superframe in three hundred breaks the deck's own invariant — `debt`
+
+Same run. `airgrid.py`'s C0 refuses the capture on **one** repeat — channel 13 at
+superframes 48 and 55, seven apart in a 28-channel deck, where a Fisher-Yates
+permutation cannot repeat inside a cycle. The tool's own words are *the
+superframe index is wrong, not the channel*, and it then declines to let C1..C6 be
+read across superframes, which is why that run's grid tier is unquotable.
+
+**Superframe 55 is also the single disagreement in C5b, 37 of 38** — beacon ch 4
+against downlink ch 13. One superframe, two independent checks, and the second
+names the same channel the first says repeated.
+
+That is either the tool's superframe solving slipping by one cycle boundary or
+the hub's own bookkeeping, and **the invariant cannot say which** — it is a free
+control on both. `airgrid.py` solves the superframe against the dongle's clock
+(measured here at 2000200 us, +100 ppm), so a slip is cheap to produce and cheap
+to rule out: re-solve with the hub's `superframe` read at the capture's start.
+
+`bench/runs/2026-08-27-1/airgrid.txt`, `airgrid-dev0.txt`.
 
 ### 76. The beacon's air time is 48 % over what the payload predicts — `defect`
 
@@ -1782,6 +1830,32 @@ This one cost time on 2026-08-24: a hub whose radio was healthy read as a stale
 device record for six minutes, and the first hypotheses were about the radio.
 
 ### 79. The northbound link takes minutes to return, and one attempt shape is unrecorded — `defect`
+
+**The unrecorded attempt shape is recorded now, 2026-08-27, and the minutes are
+not the server's.** After the hub reset that opened regression run
+`2026-08-27-1`, `telem` read `down, last reason: hello refused (another hub is
+connected)` with `connect failures 2` and `events 0 pushed, 24 dropped` — so the
+hub was reaching the server and being turned away, not failing to connect. The
+server's log dates both halves:
+
+    11:08:30  hub connected from 172.19.0.1:52433
+    11:43:05  a second hub dialled in while one is connected; refused
+    11:43:08  hub 172.19.0.1:52433 closed the connection
+    12:12:50  hub connected from 172.19.0.1:52433
+
+**The server held the dead socket for three seconds. The hub then waited about
+thirty minutes before dialling again.** Read as *the server takes minutes to
+notice*, this item has been aimed at the wrong half: shortening the server's grip
+buys three seconds of the thirty, and the retry interval is hub-side and is the
+whole cost.
+
+**And the two instruments inside the server disagreed while it happened.**
+`/api/health` read `hub_connected: false` at the same time the HELLO handler was
+refusing a new hub because one *was* connected — the readiness flag had been
+cleared and the socket had not. Either alone sends a reader to the wrong side.
+
+A second reset the same afternoon returned the link within about three minutes,
+so the thirty is not a fixed interval either. `bench/runs/2026-08-27-1/northbound-after-reset.txt`.
 
 **Seen once, on 2026-08-24, after a CM4 reflash.** The hub ran normally on its own
 console throughout — CM4 accepting frames, the grid advancing, `devices` healthy —
