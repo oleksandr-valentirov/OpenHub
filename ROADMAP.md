@@ -608,35 +608,88 @@ population the run will have.**
 
 ## Defects
 
-### 107. `devices` truncated in silence; the repair is unproven on air — `defect`
+### 107. The console's truncation note has never fired on a board — `debt`
 
-**Found by run `2026-08-28-2`, RG-A-10, REQ-N-8.** `app witness N agreed, M
-disagreed` vanished from the end of `devices` once two devices were listed. The
-output measured **1041 bytes** against a 1016-byte bound: it printed whole on an
-empty roster, cut **mid-word** at one device, and lost the line at two. The
-cause was the `uplink:` line added to the same command in the same change —
-anything a reader adds to a per-device block silently deleted something at the
-end, and nothing said so.
+**What run `2026-08-28-2` filed here is fixed and run `2026-08-28-3` measured
+it.** `devices` prints its whole tail at two devices — `app witness N agreed` on
+through `cm7: 2 req, 2 derived, 2 paired, 2 installed` and the prompt — at
+**1908 bytes**. The 1041 bytes the earlier run measured were the old bound and
+never the command's length. `app_agreed` and `app_disagreed` are hub fields
+0x0147 and 0x0148 and were read from the API during the run, which is the
+reading the console lost and a reboot then erased.
 
-**Both repairs have landed.**
+**What is left is that the announcement itself is unexercised on target.** No
+command on this hub reaches the 2040-byte cap: `?` 1118, `devices` 1908, `timing`
+502, `status` 424, `lwip` 372. Its only proof is `Common/test/test_clibuf.c` —
+25 checks and six mutation controls, each red with its rule removed — and a
+mechanism proven on the host and never fired on the board is one nobody has seen
+work where it matters.
 
-- The bound announces itself. `CM7/Core/Src/cli_buf.c` counts the bytes that did
-  not fit and writes `-- truncated, N byte(s) lost --` over the cut tail, so a
-  short output is distinguishable from a short world. It is a translation unit
-  of its own for the reason `hubipc_str.c` is: `cli.c` reaches the HAL and
-  cannot be driven past its own end on a PC. `Common/test/test_clibuf.c`, 25
-  checks, **six mutation controls, all red**.
-- **The witness verdict is northbound**, `app_agreed` 0x0147 and `app_disagreed`
-  0x0148 on the hub object. Console-only made the console their only reader, and
-  it broke; a hub reboot then zeroed them, so the run's one comparison is gone.
+**The margin is under one device row.** `devices` sits **132 bytes** below the
+cap and each device costs about 150, so the third device paired to this hub fires
+it, and that is the first time anyone will see it. Either arrange to see it
+before then, or accept that the first firing is in front of whoever is debugging
+something else.
 
-`CLI_RX_BUF_LEN` is 2048 rather than 1024, which is headroom and not the fix:
-the command is per-device and unbounded, so above about eight devices it
-truncates again — and now says so. The buffer is in RAM_D1, at 31%.
+`rng` cannot be used for it: `cmd_rng` clamps to 1..32 and substitutes its
+default 4 for anything outside, so `rng 200` drew four words — **the third
+instance on this hub of the defensive default that hides a wrong argument by
+making it a plausible one**, after `device quiesce` and `device spiloop`.
 
-**What is owed is the air half.** RG-A-10 has never passed with the counters
-recoverable, and the first green is a first proof.
-`bench/runs/2026-08-28-2/VERDICT.md`.
+`CM7/Core/Src/cli_buf.c`, `bench/runs/2026-08-28-3/VERDICT.md`.
+
+
+### 108. The hub emits neither `OHT_EVT_CMD_DELIVERED` nor `OHT_EVT_CMD_LOST` — `defect`
+
+**Found by run `2026-08-28-3`, RG-A-10, REQ-N-8.** `OHT_EVT_CMD_DELIVERED = 3`
+and `OHT_EVT_CMD_LOST` are in `Common/inc/oht_proto.h`, and **no source in either
+core names either of them.** The server holds the handler that would act on them
+— `hublink.py:250` moves the command to `delivered` or `lost` — and its own
+comment documents the lifecycle as `pending -> sent -> {acked, queued, failed} ->
+delivered/lost`.
+
+So **every device-scoped command sits at `queued` for ever.** The `dev_app`
+posted in this run was applied by the device, echoed, compared by the hub and
+counted `app_agreed 1`, and the API's command record still read `state: queued`
+three minutes later. An operator watching the lifecycle sees *not delivered*
+while three other instruments say it was delivered.
+
+**A receiver with no sender**, which is the mirror of the counter with one
+reader that filed item 107. The compiler cannot warn: the enum member is used
+nowhere, and `queued` is a legal state.
+
+The hub already knows both answers — `dl_cmd_acked` and `dl_cmd_lost` are
+counted in `ipc_downlink_state_t` and go north as 0x0144 and 0x0145 — so what is
+missing is the per-command event, not the knowledge.
+
+`bench/runs/2026-08-28-3/VERDICT.md`.
+
+
+### 109. A stale server does not refuse the hub, and this workspace says it does — `defect` `contract`
+
+**Found by run `2026-08-28-3`.** `strict_schema` defaults to **false**
+(`openhub-server/openhub_server/config.py:52`), so `hublink.py:153`'s refusal is
+off and a digest mismatch is taken. At 18:30:25 a hub on `456d226a54a85aea`
+connected to a server on `790148fdb770d727`, the link came up, `/api/health` read
+`schema_agrees_with_hub: false`, and the TLV codec carried the unknown fields
+through — which is the codec working as designed.
+
+**The claim is written in at least two places and is wrong in both directions.**
+`radio_devices_docs/specs/03-roadmap.md` says the digest *binds the hub to the
+server, which refuses it at HELLO otherwise*, and this bench's ledger has
+repeated it on every flash row that moved a digest.
+
+The consequence is not the mismatch — the codec handles that — it is that
+**every "both images move together" argument that leaned on the refusal was
+leaning on nothing.** A firmware flashed against a stale server produces a
+half-populated API and no error anywhere except one boolean nobody polls.
+
+Two ways out and they are different decisions: turn `strict_schema` on and make
+the sentence true, or keep it off and make `schema_agrees_with_hub` loud —
+an event, not a field. **The second is the one this project's own rules argue
+for**, since a flag with one reader is what item 107 was about.
+
+`bench/runs/2026-08-28-3/VERDICT.md`.
 
 
 ### 8. The LSE measurement is unexplained at the window level — `defect`
