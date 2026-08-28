@@ -22,7 +22,7 @@ the marking at their own sites; items 60 and 63 carried it until they were
 retired on 2026-08-28 by a run taken after the baseline. Nothing here was retired by it — an item whose
 evidence went with the samples is *less* sourced, not closed.
 
-**Cleaned seventeen times, and the count above was six passes stale until 2026-08-28.** The notes below are the record; this line is derived from them and is re-derived by re-reading them, not trusted. **Two of them were both numbered *the tenth*** — item 69's and item 1's — which is the same defect this file warns about for entry numbers arriving at pass numbers: the ordinal was read off the previous note rather than counted. Item 1's is the sixteenth and is renumbered; nothing cites either by ordinal. The first pass retired four closed entries, moved the front-end
+**Cleaned nineteen times, and the count above was six passes stale until 2026-08-28.** The notes below are the record; this line is derived from them and is re-derived by re-reading them, not trusted. **Two of them were both numbered *the tenth*** — item 69's and item 1's — which is the same defect this file warns about for entry numbers arriving at pass numbers: the ordinal was read off the previous note rather than counted. Item 1's is the sixteenth and is renumbered; nothing cites either by ordinal. The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
@@ -400,6 +400,37 @@ What was exercised on the bench instead is the procedure that item forced —
 
 `../radio_devices_docs/radio/pairing.md`.
 
+The nineteenth, 2026-08-28, retired **items 3, 25 and 39 together**, because they
+are one wire change seen from three sides:
+[ADR-0037](../radio_devices_docs/radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md).
+Item 3 was the payload with no application, item 25 was the RSSI and the counter
+designed for it, and item 39 was `dev_app` refused at the far end. All three are
+built, on `radio_stack d0c7213`, `wl55_device 4a3926d`, `openhub-server 2968290`
+and this tree.
+
+**The uplink's answer is that it has no application field.** `app_len` and
+`app[2]` became `up_seq` and one reserved byte, so item 25's counter landed and
+item 3 closed by decision rather than by filling: the emptiness is a stated
+property now. `RADIO_LINK_VERSION` is **7**, and that is the load-bearing half —
+the two layouts are the same sixteen sealed bytes at the same offsets, so a v6
+frame read as v7 takes `up_seq`'s low byte for `app_len`. `test_link` asserts it:
+the length matches, the type matches, only the version refuses.
+
+**Item 25's RSSI arrived as a command rather than as payload bytes.**
+`RADIO_CMD_LINK` rides the keepalive where the level is fresh, at no byte cost,
+which is why item 25 closed in halves rather than as one field.
+
+**Item 39 closed by building, and everything above the radio already was.**
+`OHT_CMD_DEV_APP` stops answering `not_implemented`; the device holds the bytes
+and answers with their 8-bit sum in `ack_arg`, the field that had run end to end
+for weeks with nothing ever writing it.
+
+**Both cores move together and neither has been flashed yet.** `IPC_VERSION` is
+**11** because both device structs widened, so CM7 old against CM4 new is a state
+that must not exist; the schema digest is `456d226a54a85aea`. What is checked so
+far is three host suites, the two library profiles, and both cores building —
+**no air**. The acceptance run is what turns that into evidence.
+
 ## The acceptance criteria
 
 > An unpaired device listens. The hub sends it a pairing invitation. The device
@@ -433,29 +464,6 @@ behind each clause, is
 ---
 
 ## Blocking
-
-### 3. The application payload has room and no application — `blocking`
-
-The wire change landed: both sealed bodies are 16 bytes, frames are 39, and
-`app_len` with `app[4]` uplink and `app[6]` downlink sit inside the air budget
-the slot already paid for. `link_v6` pins both directions and both firmwares
-compile the same digest.
-
-**Nothing writes into it.** `app_len` is 0 on every frame, so "exchanging
-messages" is still telemetry plus a command byte. This is an application question
-now rather than a wire one, and the last blocking item that does not depend on
-the radio.
-
-**`link_v6` halved the uplink's half of it**, to `app[2]`, to make room for
-`temp_c_x10` — a first-class device measurement rather than an application one.
-The downlink's `app[6]` is untouched. That was the cheaper of the two ways to
-find two bytes: the other was 320 µs per slot across 194 slots and a re-measured
-grid.
-
-After it the slot has **four spare flag bits and nothing else**; the next byte
-costs a grid change and a re-measurement.
-
-`Common/inc/radio_protocol.h`, `radio/tdma.md` § slot budget.
 
 ### 5. A device that loses the counter cannot find the hub — `blocking` `device`
 
@@ -1039,18 +1047,6 @@ covers the setting not persisting rather than not being reported.
 
 ## Design agreed but unbuilt
 
-### 25. RSSI and a sequence number in the sealed payload — `debt` `contract`
-
-Costed and designed, not written. Both belong in the **encrypted payload, not the
-header**: RSSI leaks physical position and a sequence number leaks activity
-pattern, and the header is authenticated but readable. Two of sixteen payload
-bytes. The hub's RSSI report rides the downlink, never the beacon. If a counter
-is added it must be named `tx_seq`, not `counter`.
-
-Blocked behind item 3, which is the same wire change.
-
-`radio/tdma.md` § planned RSSI and a sequence number.
-
 ### 26. TLS on the northbound interface — `debt`
 
 Nothing is implemented, and there is now a link to protect: telemetry and
@@ -1315,16 +1311,6 @@ place**, and only then split the repository. The mailbox is the second and large
 seam and is not this item's.
 
 `../radio_devices_docs/radio/phy-seam.md`.
-
-### 39. A device command still cannot say anything the wire has no word for — `debt` `contract`
-
-`dev_app` reaches the firmware end to end and is refused there with
-`not_implemented`: the downlink's `app[6]` is unwritten, which is *item 3* seen
-from the north side. Everything above the radio is built, so agreeing the payload
-with the WL55 session is the only work left and it lands as one commit in
-`radio.c`.
-
-`open_hub/network/telemetry.md`, `radio/tdma.md` § slot budget.
 
 ---
 
