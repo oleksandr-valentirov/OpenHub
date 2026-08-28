@@ -78,6 +78,7 @@ open_hub/testing/on-target.md:radio_init          # listed as naming nothing
 open_hub/testing/on-target.md:rfm_ms_counter      # listed as naming nothing
 open_hub/testing/on-target.md:STMicroelectronics_STLINK  # the console's by-id path
 open_hub/testing/sdr.md:find_bursts  # iqfile.py in the sdr skill's tools; also used by decode/dutycycle/carrier/spectrum
+open_hub/testing/sdr.md:seal_uplink  # inject.py in the sdr skill's tools, the forgery ladder's control rung
 open_hub/testing/sdr.md:find_sync  # gfsk.py in the sdr skill's tools, called from decode.py
 open_hub/testing/sdr.md:rtl_sdr  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
 open_hub/testing/sdr.md:rtl_test  # an external RTL-SDR binary, named in sdrdev.py in the sdr skill's tools
