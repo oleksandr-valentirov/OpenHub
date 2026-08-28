@@ -607,6 +607,33 @@ population the run will have.**
 
 ## Defects
 
+### 107. `devices` truncates its own tail, and it ate the witness counter — `defect`
+
+**Found by run `2026-08-28-2`, RG-A-10, REQ-N-8.** `app witness N agreed, M
+disagreed` is missing from the end of `devices` once two devices are listed. The
+command's whole output measures **1041 bytes**; the line printed on an empty
+roster, printed cut **mid-word** at one device plus a queued command, and
+vanished at two. A byte bound, not a dropped line.
+
+**The cause is the line added to this command in the same change.** `uplink: N
+accepted here, M attempted there` prints once per device, so a two-device roster
+pushes the downlink block past the bound. Anything a reader adds to a per-device
+block silently deletes something at the end of the command, and nothing says so.
+
+**Two repairs, and the second is the one that matters.**
+
+- The bound has to refuse rather than truncate, or say that it truncated. A
+  console that stops mid-word is an instrument that reports a shorter world.
+- **`app_agreed` and `app_disagreed` need a northbound field.** They were left
+  console-only on the argument that they are a hub-internal diagnostic, which
+  made the console their **only** reader — and it broke. They are also reset by
+  a hub reboot, so the one comparison this run performed is unrecoverable:
+  `ack_arg` survived north and the hub's verdict on it did not.
+
+The counters are `CM4/Core/Src/radio.c`, carried in `ipc_downlink_state_t`,
+printed at `CM7/Core/Src/cli.c`. `bench/runs/2026-08-28-2/VERDICT.md`.
+
+
 ### 8. The LSE measurement is unexplained at the window level — `defect`
 
 The mean is sound — it matched a host-clock measurement to 51 ppm over ten
