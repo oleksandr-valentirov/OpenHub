@@ -13,9 +13,9 @@
  */
 
 #define IPC_MAGIC        0x4F484231u   /* 'OHB1' - both cores must agree */
-/* 3 and 8 widened the payload, 6 and 7 moved a reply; the gate is for all four.
- * radio_devices_docs/open_hub/arch/ipc.md */
-#define IPC_VERSION      10u
+/* 3 and 8 widened the payload, 6 and 7 moved a reply, 11 widened both device
+ * structs. radio_devices_docs/open_hub/arch/ipc.md */
+#define IPC_VERSION      11u
 #define IPC_RING_SLOTS   8u            /* power of two */
 /* Buffer for a PAIR_INIT; radio_protocol.h owns the frame's real size. */
 #define RADIO_PAIR_INIT_MAX  64u
@@ -472,6 +472,7 @@ typedef struct ipc_downlink_state {
     uint32_t cmd_lost;       /**< every repeat spent and no echo ever came */
     uint32_t nonce_refused;  /**< seals refused because the tuple was not new */
     uint32_t none_due;       /**< no installed device opens a window in that superframe */
+    uint32_t link_sent;      /**< keepalives that carried a level instead of a NOP */
 } __attribute__((packed)) ipc_downlink_state_t;
 
 /**
@@ -543,6 +544,7 @@ typedef struct ipc_device_report {
     uint16_t cyc_n;            /**< gaps measured, so the mean has a stated n */
     uint32_t cyc_sum;          /**< ... their sum; the mean carries delivery loss too */
     uint8_t  every_now;        /**< the period the hub believes is in force, grant or acked */
+    uint16_t up_seq;           /**< uplinks the device says it attempted; frames_ok's denominator */
 } __attribute__((packed)) ipc_device_report_t;
 
 /* Four levels off one arrival, each present or absent on its own.
@@ -560,6 +562,8 @@ typedef struct ipc_device_cmd {
     uint8_t  report_every;   /**< SET_RATE only; 0 leaves the grant alone */
     uint16_t arg;
     uint8_t  repeats;        /**< downlinks it rides: nothing acknowledges it */
+    uint8_t  app_len;        /**< APP only; bytes of app below that the device is to hold */
+    uint8_t  app[6];         /**< ... and those bytes, which this hub never interprets */
 } __attribute__((packed)) ipc_device_cmd_t;
 
 

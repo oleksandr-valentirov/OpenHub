@@ -12,7 +12,7 @@
 /* The live set: a self-test pinned to a retired one stops moving with the wire.
  * radio_devices_docs/radio/crypto/wire-crypto.md */
 #include "pair_v4.h"
-#include "link_v6.h"
+#include "link_v7.h"
 
 extern CRYP_HandleTypeDef hcryp;
 
@@ -217,7 +217,7 @@ int aead_selftest(void) {
             return -9;
     }
 
-    /* Sizes did not move v4 -> v5, so only the version sees a stale set.
+    /* Sizes did not move v4 -> v5 or v6 -> v7: only the version sees a stale set.
      * radio_devices_docs/radio/crypto/wire-crypto.md */
     _Static_assert(LINK_VECTORS_VERSION == RADIO_LINK_VERSION,
                    "the link vectors are not the wire this build speaks");

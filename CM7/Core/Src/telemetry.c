@@ -337,6 +337,8 @@ static void put_device(oht_writer_t *w, const ipc_device_report_t *d) {
     OHT_PUT(w, OHT_F_DEVICE_CMD_STATE, d->cmd_state);
     OHT_PUT(w, OHT_F_DEVICE_CMD_EVERY, d->cmd_every);
     OHT_PUT(w, OHT_F_DEVICE_ACK_ARG, d->ack_arg);
+    /* Always sent: it is the denominator frames_ok is a numerator over. ADR-0037 */
+    OHT_PUT(w, OHT_F_DEVICE_UP_SEQ, d->up_seq);
     /* Sent only when the flag says it was measured; a stale rail is not a reading. */
     if ((d->flags & RADIO_REPORT_FLAG_SUPPLY_STALE) == 0u)
         OHT_PUT(w, OHT_F_DEVICE_SUPPLY_MV, d->supply_mv);
@@ -518,6 +520,29 @@ static uint8_t do_device_cmd(uint32_t target, uint8_t radio_cmd, uint8_t every,
     return OHT_RES_QUEUED;
 }
 
+/* The only device command with a payload, so it gets its own door. ADR-0037 */
+static uint8_t do_device_app(uint32_t target, const uint8_t *app, uint8_t app_len,
+                             const uint8_t *body, uint16_t len, uint8_t *detail) {
+    ipc_device_cmd_t c;
+    int rc;
+
+    memset(&c, 0, sizeof(c));
+    c.dev_id  = target;
+    c.cmd     = RADIO_CMD_APP;
+    c.repeats = arg_repeats(body, len);
+    c.app_len = app_len;
+    memcpy(c.app, app, app_len);
+
+    rc = hub_ipc_call(IPC_REQ_SET_DEVICE_PARAM, 0, &c, (uint8_t)sizeof(c), &reply);
+    *detail = (uint8_t)((rc < 0) ? 0xFFu : rc);
+    if (rc == IPC_ST_BAD_ARG)
+        return OHT_RES_NO_SUCH_DEVICE;
+    if (rc != IPC_ST_OK)
+        return OHT_RES_RADIO_ERR;
+    /* Queued, never ok: nothing on the wire has acknowledged it yet. */
+    return OHT_RES_QUEUED;
+}
+
 static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
                           uint16_t len, uint8_t *detail) {
     uint8_t u8v = 0;
@@ -614,10 +639,16 @@ static uint8_t handle_cmd(const oht_cmd_hdr_t *h, const uint8_t *body,
     case OHT_CMD_DEV_NOP:
         return do_device_cmd(h->target, RADIO_CMD_NOP, 0, body, len, detail);
 
-    case OHT_CMD_DEV_APP:
-        /* No wire for app[6] yet; it binds the WL55. ROADMAP item 3,
-         * radio_devices_docs/radio/tdma.md */
-        return OHT_RES_NOT_IMPLEMENTED;
+    case OHT_CMD_DEV_APP: {
+        oht_field_t f;
+
+        /* Absent and empty are different asks, and neither is a default here. */
+        if (oht_find(body, len, 0x8006u, &f) != 1)
+            return OHT_RES_BAD_ARGS;
+        if (f.len > sizeof(((radio_downlink_cmd_t *)0)->app))
+            return OHT_RES_BAD_ARGS;
+        return do_device_app(h->target, f.raw, (uint8_t)f.len, body, len, detail);
+    }
 
     default:
         return OHT_RES_UNKNOWN_CMD;

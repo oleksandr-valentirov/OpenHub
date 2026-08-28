@@ -108,6 +108,9 @@ radio/decisions/0030-radio-stack-is-the-link-layer-and-the-session-layer-is-a-se
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:crypto_pair_derive  # likewise, decision 5
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:ipc_  # the prefix the reference count is over, not an identifier
 radio/decisions/0031-the-link-layer-is-a-rule-with-two-roles-and-the-session-layer-stays-on-cm7.md:test_period  # a suite in wl55_device, quoted for the figures that did not move
+radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md:dev_app  # the northbound command, defined in openhub-server/schema/telemetry.yaml
+radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md:not_implemented  # a schema result name; this tree spells the macro OHT_RES_NOT_IMPLEMENTED
+radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md:tools/gen_protocol.py  # openhub-server's generator, which writes into this tree
 radio/decisions/README.md:radio_stack  # the index quotes ADR-0030's one-line summary, which names it
 radio/hopping.md:hop_slot_to_grid  # this page names it once, to say it is gone and what replaced it
 radio/joining.md:find_bursts  # iqfile.py in the sdr skill's tools

@@ -180,6 +180,8 @@ static uint32_t evt_rtt_last_us, evt_rtt_min_us, evt_rtt_max_us;
 static uint64_t evt_rtt_sum_us;
 /* Sent, acked, lost: an echo names the command, so silence is countable. */
 static uint32_t dl_cmd_sent, dl_cmd_replaced, dl_cmd_acked, dl_cmd_lost;
+/* The keepalive that carried a level rather than nothing. ADR-0037 */
+static uint32_t dl_link_sent;
 static uint8_t  net_hop_key_set;
 static uint8_t  report_every_grant = RADIO_REPORT_EVERY_DEFAULT;
 static int      aead_selftest_rc = 1;   /* until it has actually run */
@@ -623,6 +625,7 @@ static void fill_report(ipc_device_report_t *d, const dev_entry_t *e) {
     d->arrival_us      = e->arrival_us;
     d->arrival_sync_us = e->arrival_sync_us;
     d->sync_unpaired   = e->sync_unpaired;
+    d->up_seq          = e->up_seq;
 }
 
 /* A dropped notification and a silent device look alike, so count the drop. */
@@ -1196,6 +1199,7 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.last_superframe = dl_last_sf;
         d.next_slot     = dl_next_slot;
         d.cmd_sent      = dl_cmd_sent;
+        d.link_sent     = dl_link_sent;
         d.cmd_replaced  = dl_cmd_replaced;
         d.cmd_acked     = dl_cmd_acked;
         d.cmd_lost      = dl_cmd_lost;
@@ -1277,6 +1281,9 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         }
         memcpy(&c, req->payload, sizeof(c));
         status = IPC_ST_BAD_ARG;
+        /* A length past its own array is refused here, not clamped at the seal. */
+        if (c.app_len > sizeof(c.app))
+            break;
         for (i = 0; i < RADIO_MAX_DEVICES; i++) {
             if (!devices[i].used || devices[i].dev_id != c.dev_id)
                 continue;
@@ -1287,6 +1294,9 @@ static void RFM_serve_request(const ipc_msg_t *req) {
             devices[i].dl_report_every = c.report_every;
             devices[i].dl_arg          = c.arg;
             devices[i].dl_repeats      = c.repeats;
+            /* Held whatever the command, so a stale APP cannot ride a later one. */
+            devices[i].dl_app_len      = (c.cmd == RADIO_CMD_APP) ? c.app_len : 0u;
+            memcpy(devices[i].dl_app, c.app, sizeof(devices[i].dl_app));
             /* Wraps past RADIO_CMD_SEQ_NONE: a zero on the wire is silence. */
             devices[i].dl_cmd_seq++;
             if (devices[i].dl_cmd_seq == RADIO_CMD_SEQ_NONE)
@@ -1944,6 +1954,9 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
     d->supply_mv = rpt.supply_mv;
     d->temp_c_x10 = rpt.temp_c_x10;
     d->uptime_s  = rpt.uptime_s;
+    /* The device's own attempt count, which this side has no other way to know.
+     * radio_devices_docs/radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md */
+    d->up_seq    = rpt.up_seq;
     uplink_notify(d);
 }
 
@@ -2053,6 +2066,17 @@ static void pair_init_service(void) {
     pi_len = 0u;
 }
 
+/* Measured, and no older than two of this device's own cycles. ADR-0037 */
+static int link_level_fresh(const dev_entry_t *d) {
+    uint32_t every = (d->every_now != 0u) ? d->every_now : d->report_every;
+
+    if (d->frames_ok == 0u || (d->air_have & IPC_AIR_END_LEVEL) == 0u)
+        return 0;
+    if (every == 0u)
+        every = 1u;
+    return (uint32_t)(sfm.g.counter - d->last_superframe) <= 2u * every;
+}
+
 /* The hub's half of the periodic exchange: downlink region, hop channel, half rate,
  * sealed. radio_devices_docs/open_hub/radio/superloop.md */
 static void downlink_service(void) {
@@ -2061,7 +2085,7 @@ static void downlink_service(void) {
     uint8_t nonce[AEAD_NONCE_BYTES];
     dev_entry_t *d = NULL;
     uint8_t slot, hop_idx;
-    uint8_t carried = 0;
+    uint8_t carried = 0, link = 0;
 
     if (!sfm.started || pair_state == RADIO_PAIR_QUIESCE || device_count == 0u)
         return;
@@ -2107,7 +2131,18 @@ static void downlink_service(void) {
         body.report_every = d->dl_report_every;
         body.arg          = d->dl_arg;
         body.cmd_seq      = d->dl_cmd_seq;
+        /* Only the command they were queued with carries them. ADR-0037 */
+        if (d->dl_cmd == RADIO_CMD_APP) {
+            body.app_len = d->dl_app_len;
+            memcpy(body.app, d->dl_app, sizeof(body.app));
+        }
         carried = 1;
+    } else if (link_level_fresh(d)) {
+        /* The keepalive with something in it: the level the device cannot read.
+         * radio_devices_docs/radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md */
+        body.cmd = RADIO_CMD_LINK;
+        body.arg = RADIO_LINK_ARG_FROM_DBM(d->rssi_up);
+        link = 1;
     } else {
         body.cmd = RADIO_CMD_NOP;
     }
@@ -2148,6 +2183,8 @@ static void downlink_service(void) {
         return;
     }
     dl_sent++;
+    if (link)
+        dl_link_sent++;
     if (carried) {
         d->dl_repeats--;
         dl_cmd_sent++;

@@ -959,6 +959,12 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
                 supply, temp, (unsigned long)d.uptime_s,
                 (unsigned long)d.frames_ok, (unsigned long)d.frames_bad, age);
 
+        /* Two epochs: frames_ok since this hub booted, up_seq since the device did.
+         * radio_devices_docs/radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md */
+        cli_out(cli, "      uplink: %lu accepted here, %u attempted there;"
+                     " a gap is loss only while neither end has reset\r\n",
+                (unsigned long)d.frames_ok, d.up_seq);
+
         /* Granted against observed, never a grant restated as a measurement.
          * radio_devices_docs/open_hub/cli.md */
         {
@@ -1049,6 +1055,9 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             cli_out(cli, "  cmds %lu sent, %lu acked, %lu lost, %lu replaced\r\n",
                     (unsigned long)dl.cmd_sent, (unsigned long)dl.cmd_acked,
                     (unsigned long)dl.cmd_lost, (unsigned long)dl.cmd_replaced);
+            /* A keepalive that carried a level; the rest of them carried nothing. */
+            cli_out(cli, "  %lu keepalive(s) carried rssi_up back to the device\r\n",
+                    (unsigned long)dl.link_sent);
             /* The channel: every counter above reads success on a wrong one. */
             if (dl.sent)
                 cli_out(cli, "last downlink sf %lu on %lu Hz (%lu prf err)\r\n",

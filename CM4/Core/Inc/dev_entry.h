@@ -44,6 +44,8 @@ typedef struct dev_entry {
     uint8_t  dl_cmd_seq;        /**< names the command, so an ack can refer to it */
     uint8_t  dl_acked;          /**< the device echoed this seq back */
     uint8_t  dl_ack_arg;        /**< ... and what it said it applied, never what was asked */
+    uint8_t  dl_app_len;        /**< APP only; bytes of dl_app the queued command carries */
+    uint8_t  dl_app[6];         /**< ... and those bytes, held per device like the rest of it */
     uint32_t dl_nonce_sf;       /**< the superframe of the last downlink sealed for it */
     uint8_t  dl_nonce_used;     /**< ... and whether there was one, since 0 is a real one */
     uint16_t missed_run;        /**< report opportunities closed in a row with nothing */
@@ -51,4 +53,5 @@ typedef struct dev_entry {
     uint16_t cyc_min;           /**< its shortest gap: what the device's cadence is */
     uint16_t cyc_n;
     uint32_t cyc_sum;           /**< ... against the mean, which also carries loss */
+    uint16_t up_seq;            /**< the device's own count of what it attempted */
 } dev_entry_t;

@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "499422dfb515e473"
+#define OHT_SCHEMA_DIGEST  "456d226a54a85aea"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -87,6 +87,7 @@
 #define OHT_F_DEVICE_CMD_STATE          0x1030u, OHT_T_U8
 #define OHT_F_DEVICE_CMD_EVERY          0x1031u, OHT_T_U8
 #define OHT_F_DEVICE_ACK_ARG            0x1032u, OHT_T_U8
+#define OHT_F_DEVICE_UP_SEQ             0x1033u, OHT_T_U16
 
 /* rxdiag: What the receiver hears below the frame layer, hub-wide.
  * radio_devices_docs/open_hub/network/telemetry.md */
@@ -151,7 +152,7 @@ enum {
     OHT_CMD_DEV_SET_RATE       = 0x1001u,
     OHT_CMD_DEV_REJOIN         = 0x1002u,
     OHT_CMD_DEV_NOP            = 0x1003u,
-    OHT_CMD_DEV_APP            = 0x1004u,   /**< transport only: the radio end is unagreed */
+    OHT_CMD_DEV_APP            = 0x1004u,
 };
 
 /** @brief A CMD_ACK's verdict. `queued` is not `ok`: nothing has flown yet. */
