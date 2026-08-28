@@ -1679,13 +1679,41 @@ this item sent a reader to are both the wrong instrument.** Found 2026-08-25.
   (1 873 600). `edges - up_frames` therefore subtracts an uplink-scoped number
   from a two-region one, and the remainder is not a loss.
 
-**The instrument is built and waits on a flash.** `ipc_syncstats_t` carries
-`up_n`, `join_n` and `edges` — the two regions and the DIO3 counter that bounds
-them — and `device syncstats` prints `by region: uplink N, join N, of N edges
-(N coalesced)`, so the pooling is visible and the coalescing has its own number
-rather than hiding inside the split. Both cores build, all three host suites and
-both checkers pass; it is not on the board yet, so **nothing below the total has
-been measured with it.**
+**The instrument is on the board as of 2026-08-28 and has been read.**
+`ipc_syncstats_t` carries `up_n`, `join_n` and `edges` — the two regions and the
+DIO3 counter that bounds them — and `device syncstats` prints
+`by region: uplink N, join N, of N edges (N coalesced)`, so the pooling is
+visible and the coalescing has its own number rather than hiding inside the
+split. It reached the board with the `1676bd6` flash, and the pooling this item
+complained about is gone from the reading: `paired edges 2568, by region: uplink
+2552, join 16, of 2568 edges (0 coalesced)`.
+
+**First split taken with it, and every level agrees.** One bracket of 218
+superframes, both nodes at `every 8`, nothing typed at either:
+
+| | |
+|---|---|
+| transmitted, the two nodes' own `reports` | **56** |
+| uplink-region edges, DIO3 hardware | **56** |
+| uplink frames | **56** |
+| accepted | **56** |
+| join-region edges in the same window | 0 |
+
+**Never reached sync: 0. Sync but no payload: 0. Frame but refused: 0.**
+
+**The confirming read is what makes that true, and the first close would have
+reported a residual.** Read at 09:17:27 the bracket showed 54 edges against 52
+frames and would have been written up as *two frames matched sync and produced
+no payload* — the exact shape at the head of this item. Read again 20 s later,
+both were 56: the two were **in flight**, an edge being counted before its
+payload completes. A bracket is not closed until it has stopped moving, and here
+the difference between a finding and an artefact was one extra read.
+
+**What this does not do is repeat the observation at the head of the item.** That
+residual was measured with the node transmitting **every superframe**; this window
+is `every 8`, so it is a different duty cycle and a much smaller population. The
+arm still owed is `every 1` with this instrument, which is now a fifteen-minute
+run rather than a blocked one.
 
 What is still honest without it is the total, which is uplink-scoped on both
 sides: a node's own `reports` against that device's `ok`. Measured with AFC off
@@ -1713,6 +1741,16 @@ comparisons —
 it makes each of them **conservative**, since the true sync share is at least what
 `up_sync` reports. But a single figure quoted from `up_sync` is a floor and not a
 count, and nothing in the output says so.
+
+**Confirmed against the hardware counter on 2026-08-28**, which is the first time
+the two could be compared region for region. Over one 218-superframe bracket the
+DIO3 uplink-region edges and `up_sync` both read **56**, and `uplink_frames` read
+56 as well — so on this window the floor is tight and the difference this item
+exists for is zero. **That is a window without loss, not a repaired counter**: the
+mechanism is unchanged, `up_sync` is still read in the superloop, and it will
+still under-count the moment two edges land inside one pass. What the reading
+establishes is that a split built on `up_sync` is currently vacuous rather than
+wrong — item 94's own measurement now uses the hardware counter instead.
 
 `open_hub/radio/superloop.md`.
 
