@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "cli.h"
+#include "cli_buf.h"
 #include "build_id.h"
 #include "networking.h"
 #include "hsem_table.h"
@@ -125,24 +126,13 @@ static const cli_cmd_t commands[] = {
 /* Appends to the response buffer, always leaving room for the prompt. */
 static int cli_out(cli_data_t *cli, const char *fmt, ...) {
     va_list args;
-    int room = CLI_RX_BUF_LEN - CLI_PROMPT_RESERVE - cli->response_len;
-    int written = 0;
-
-    if (room <= 1)
-        return 0;
+    int before = cli->response_len;
 
     va_start(args, fmt);
-    written = vsnprintf(cli->response_buffer + cli->response_len, (size_t)room, fmt, args);
+    cli->response_len = (int16_t)cli_buf_putv(cli->response_buffer, CLI_RESP_CAP,
+                                              before, &cli->dropped, fmt, args);
     va_end(args);
-
-    if (written < 0)
-        return 0;
-    /* vsnprintf reports what it wanted to write, not what it wrote */
-    if (written >= room)
-        written = room - 1;
-
-    cli->response_len += (int16_t)written;
-    return written;
+    return cli->response_len - before;
 }
 
 /* Splits the line in place. Returns argc, capped at CLI_MAX_ARGS. */
@@ -2394,9 +2384,11 @@ void CLI_Task(void *argument) {
  * @retval 1 - ignore
  */
 uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
+    const char *prompt;
     uint8_t res = 0;
 
     cli->response_len = 0;
+    cli->dropped = 0u;
     switch (c) {
         case '\n':
         case '\r':
@@ -2405,10 +2397,13 @@ uint8_t CLI_ProcessCmd(cli_data_t *cli, char c) {
             memset(cli->cmd_buffer, 0, CLI_CMD_BUF_LEN);
             cli->cmd_len = 0;
 
-            if (cli->response_len)
-                cli_out(cli, ">>> ");
-            else
-                cli_out(cli, "\r\n>>> ");
+            /* A console that stops mid-word reports a shorter world. Item 107 */
+            cli->response_len = (int16_t)cli_buf_note(cli->response_buffer, CLI_RESP_CAP,
+                                                      cli->response_len, cli->dropped);
+            /* The prompt spends the reserve the response may not touch. */
+            prompt = cli->response_len ? ">>> " : "\r\n>>> ";
+            cli->response_len = (int16_t)cli_buf_put(cli->response_buffer, CLI_RX_BUF_LEN,
+                                                     cli->response_len, NULL, "%s", prompt);
             break;
         case '\t':
             /* try to print available commands based on the current input */

@@ -50,6 +50,7 @@ Common/test/test_ipc
 Common/test/test_oht
 Common/test/test_cfg
 Common/test/test_failstr
+Common/test/test_clibuf
 CM4/test/test_phy
 CM4/test/test_timebase
 CM4/test/test_dlsched

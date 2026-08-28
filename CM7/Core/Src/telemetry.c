@@ -259,6 +259,8 @@ static void put_hub(oht_writer_t *w, const snap_t *s) {
         OHT_PUT(w, OHT_F_HUB_DL_CMD_ACKED, s->dl.cmd_acked);
         OHT_PUT(w, OHT_F_HUB_DL_CMD_LOST, s->dl.cmd_lost);
         OHT_PUT(w, OHT_F_HUB_DL_NONCE_REFUSED, s->dl.nonce_refused);
+        OHT_PUT(w, OHT_F_HUB_APP_AGREED, s->dl.app_agreed);
+        OHT_PUT(w, OHT_F_HUB_APP_DISAGREED, s->dl.app_disagreed);
     }
     if (s->have_lat) {
         OHT_PUT(w, OHT_F_HUB_EVT_RTT_LAST_US, s->lat.rtt_last_us);

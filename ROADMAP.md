@@ -425,11 +425,12 @@ which is why item 25 closed in halves rather than as one field.
 and answers with their 8-bit sum in `ack_arg`, the field that had run end to end
 for weeks with nothing ever writing it.
 
-**Both cores move together and neither has been flashed yet.** `IPC_VERSION` is
-**11** because both device structs widened, so CM7 old against CM4 new is a state
-that must not exist; the schema digest is `456d226a54a85aea`. What is checked so
-far is three host suites, the two library profiles, and both cores building —
-**no air**. The acceptance run is what turns that into evidence.
+**Both cores move together.** `IPC_VERSION` is **11** because both device structs
+widened, so CM7 old against CM4 new is a state that must not exist. **Flown on
+2026-08-28**, run `2026-08-28-2`: clauses 2, 3 and 4 measured, the level equal at
+both ends of the antenna, and two defects of this change's own — items 89 and 107
+above. The schema digest is `790148fdb770d727` since the witness verdict went
+northbound, so this hub and that deployment go together.
 
 ## The acceptance criteria
 
@@ -607,31 +608,35 @@ population the run will have.**
 
 ## Defects
 
-### 107. `devices` truncates its own tail, and it ate the witness counter — `defect`
+### 107. `devices` truncated in silence; the repair is unproven on air — `defect`
 
 **Found by run `2026-08-28-2`, RG-A-10, REQ-N-8.** `app witness N agreed, M
-disagreed` is missing from the end of `devices` once two devices are listed. The
-command's whole output measures **1041 bytes**; the line printed on an empty
-roster, printed cut **mid-word** at one device plus a queued command, and
-vanished at two. A byte bound, not a dropped line.
+disagreed` vanished from the end of `devices` once two devices were listed. The
+output measured **1041 bytes** against a 1016-byte bound: it printed whole on an
+empty roster, cut **mid-word** at one device, and lost the line at two. The
+cause was the `uplink:` line added to the same command in the same change —
+anything a reader adds to a per-device block silently deleted something at the
+end, and nothing said so.
 
-**The cause is the line added to this command in the same change.** `uplink: N
-accepted here, M attempted there` prints once per device, so a two-device roster
-pushes the downlink block past the bound. Anything a reader adds to a per-device
-block silently deletes something at the end of the command, and nothing says so.
+**Both repairs have landed.**
 
-**Two repairs, and the second is the one that matters.**
+- The bound announces itself. `CM7/Core/Src/cli_buf.c` counts the bytes that did
+  not fit and writes `-- truncated, N byte(s) lost --` over the cut tail, so a
+  short output is distinguishable from a short world. It is a translation unit
+  of its own for the reason `hubipc_str.c` is: `cli.c` reaches the HAL and
+  cannot be driven past its own end on a PC. `Common/test/test_clibuf.c`, 25
+  checks, **six mutation controls, all red**.
+- **The witness verdict is northbound**, `app_agreed` 0x0147 and `app_disagreed`
+  0x0148 on the hub object. Console-only made the console their only reader, and
+  it broke; a hub reboot then zeroed them, so the run's one comparison is gone.
 
-- The bound has to refuse rather than truncate, or say that it truncated. A
-  console that stops mid-word is an instrument that reports a shorter world.
-- **`app_agreed` and `app_disagreed` need a northbound field.** They were left
-  console-only on the argument that they are a hub-internal diagnostic, which
-  made the console their **only** reader — and it broke. They are also reset by
-  a hub reboot, so the one comparison this run performed is unrecoverable:
-  `ack_arg` survived north and the hub's verdict on it did not.
+`CLI_RX_BUF_LEN` is 2048 rather than 1024, which is headroom and not the fix:
+the command is per-device and unbounded, so above about eight devices it
+truncates again — and now says so. The buffer is in RAM_D1, at 31%.
 
-The counters are `CM4/Core/Src/radio.c`, carried in `ipc_downlink_state_t`,
-printed at `CM7/Core/Src/cli.c`. `bench/runs/2026-08-28-2/VERDICT.md`.
+**What is owed is the air half.** RG-A-10 has never passed with the counters
+recoverable, and the first green is a first proof.
+`bench/runs/2026-08-28-2/VERDICT.md`.
 
 
 ### 8. The LSE measurement is unexplained at the window level — `defect`

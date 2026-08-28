@@ -10,13 +10,16 @@
  */
 
 #define CLI_CMD_BUF_LEN     128
-/* Holds a full `status` dump, so it is sized by task count, not by line length. */
-#define CLI_RX_BUF_LEN      1024
+/* Sized for `devices` at the bench's roster; above about eight it truncates and says so. */
+#define CLI_RX_BUF_LEN      2048
 /* Kept free at the end of the response for the trailing prompt. */
 #define CLI_PROMPT_RESERVE  8
+/* What a command may write, the prompt's reserve excluded. */
+#define CLI_RESP_CAP        (CLI_RX_BUF_LEN - CLI_PROMPT_RESERVE)
 
 typedef struct cli_data {
     int16_t response_len;
+    uint16_t dropped;           /**< bytes this command's output did not fit; ROADMAP item 107 */
     uint8_t cmd_len;
     uint8_t new_data_flag;
     char cmd_buffer[CLI_CMD_BUF_LEN];

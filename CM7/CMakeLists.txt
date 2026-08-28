@@ -117,6 +117,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/cli.c
+    Core/Src/cli_buf.c
     Core/Src/hubipc.c
     Core/Src/hubipc_str.c
     Core/Src/pairing.c

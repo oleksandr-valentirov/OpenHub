@@ -34,6 +34,10 @@ test_oht: test_oht.c ../src/oht_codec.c ../inc/oht_proto.h ../inc/oht_fields.h $
 test_cfg: test_cfg.c ../src/cfgjournal.c ../inc/cfgjournal.h ../inc/cfgstore.h
 	$(CC) $(CFLAGS) -o $@ test_cfg.c ../src/cfgjournal.c
 
+# The console's bound, which only a host can be made to write past. Item 107
+test_clibuf: test_clibuf.c ../../CM7/Core/Src/cli_buf.c ../../CM7/Core/Inc/cli_buf.h
+	$(CC) $(CFLAGS) $(CM7INC) -o $@ test_clibuf.c ../../CM7/Core/Src/cli_buf.c
+
 test_failstr: test_failstr.c ../../CM7/Core/Src/keystore_str.c \
               ../../CM7/Core/Src/hubipc_str.c ../../CM7/Core/Inc/keystore.h \
               ../../CM7/Core/Inc/hubipc.h
@@ -41,11 +45,12 @@ test_failstr: test_failstr.c ../../CM7/Core/Src/keystore_str.c \
 	    ../../CM7/Core/Src/keystore_str.c ../../CM7/Core/Src/hubipc_str.c
 
 .PHONY: check clean
-check: test_ipc test_oht test_cfg test_failstr
+check: test_ipc test_oht test_cfg test_clibuf test_failstr
 	./test_ipc
 	./test_oht
 	./test_cfg
+	./test_clibuf
 	./test_failstr
 
 clean:
-	rm -f test_ipc test_oht test_cfg test_failstr
+	rm -f test_ipc test_oht test_cfg test_clibuf test_failstr

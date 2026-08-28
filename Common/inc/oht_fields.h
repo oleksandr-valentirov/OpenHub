@@ -8,7 +8,7 @@
  */
 
 /* The digest the hub sends in HELLO; the server compares it with its own. */
-#define OHT_SCHEMA_DIGEST  "456d226a54a85aea"
+#define OHT_SCHEMA_DIGEST  "790148fdb770d727"
 #define OHT_SCHEMA_VERSION 1u
 
 /* Object codes: which table a record's fields are read out of. */
@@ -53,6 +53,8 @@
 #define OHT_F_HUB_DL_CMD_ACKED       0x0144u, OHT_T_U32
 #define OHT_F_HUB_DL_CMD_LOST        0x0145u, OHT_T_U32
 #define OHT_F_HUB_DL_NONCE_REFUSED   0x0146u, OHT_T_U32
+#define OHT_F_HUB_APP_AGREED         0x0147u, OHT_T_U32
+#define OHT_F_HUB_APP_DISAGREED      0x0148u, OHT_T_U32
 #define OHT_F_HUB_IPC_STALE_REPLIES  0x0150u, OHT_T_U32
 #define OHT_F_HUB_IPC_STALE_EVENTS   0x0151u, OHT_T_U32
 #define OHT_F_HUB_EVT_RTT_LAST_US    0x0152u, OHT_T_U32
