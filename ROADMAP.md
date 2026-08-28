@@ -426,11 +426,15 @@ and answers with their 8-bit sum in `ack_arg`, the field that had run end to end
 for weeks with nothing ever writing it.
 
 **Both cores move together.** `IPC_VERSION` is **11** because both device structs
-widened, so CM7 old against CM4 new is a state that must not exist. **Flown on
-2026-08-28**, run `2026-08-28-2`: clauses 2, 3 and 4 measured, the level equal at
-both ends of the antenna, and two defects of this change's own — items 89 and 107
-above. The schema digest is `790148fdb770d727` since the witness verdict went
-northbound, so this hub and that deployment go together.
+widened, so CM7 old against CM4 new is a state that must not exist. **Flown twice
+on 2026-08-28.** Run `2026-08-28-2` measured clauses 2, 3 and 4 and found two
+defects of this change's own; run `2026-08-28-3` measured clause 1 with both
+fixed — the counter restarting at **1** on the air, and the witness verdict read
+from the API rather than from a console that had truncated it away. What is left
+of the pair is item 107 above, now a debt. The schema digest is
+`790148fdb770d727` since the witness verdict went northbound, so this hub and
+that deployment go together — though **not because the server would refuse
+otherwise**, which is item 109.
 
 ## The acceptance criteria
 
