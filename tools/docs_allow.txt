@@ -54,6 +54,7 @@ open_hub/arch/config-store.md:SCB_InvalidateDCache  # CMSIS cache maintenance, f
 open_hub/arch/ipc.md:ipc_poll_event_reply  # the filtering poll, described as removed
 open_hub/arch/keystore.md:SCB_InvalidateDCache      # same call, same reason, on the page that found it
 open_hub/decisions/0011-mbedtls-on-cm7-only.md:CM7/Core/Src/cmox_low_level.c  # ADR record
+open_hub/network/telemetry.md:bad_args          # schema result, OHT_RES_BAD_ARGS here
 open_hub/network/telemetry.md:dev_app           # schema command, OHT_CMD_DEV_APP here
 open_hub/network/telemetry.md:not_implemented   # schema result, OHT_RES_NOT_IMPLEMENTED here
 open_hub/network/telemetry.md:report_flags  # schema field, RADIO_REPORT_FLAG_* on this side
@@ -70,6 +71,7 @@ open_hub/security/self-tests.md:crypto_pair_init_key  # the page names the funct
 open_hub/security/self-tests.md:crypto_pair_init_mac  # same passage: named as what outlived the design uncalled and was removed 2026-08-23
 # openhub-server/schema/telemetry.yaml, which is not in this tree; the header it
 # openhub-server/schema/telemetry.yaml, which this tree does not contain; the
+open_hub/testing/acceptance-plan.md:dev_app  # schema command, OHT_CMD_DEV_APP here
 open_hub/testing/on-target.md:cdc_acm  # the kernel's CDC ACM driver, not a symbol here
 open_hub/testing/on-target.md:pairing_arm_invite  # listed as naming nothing
 open_hub/testing/on-target.md:radio_init          # listed as naming nothing
