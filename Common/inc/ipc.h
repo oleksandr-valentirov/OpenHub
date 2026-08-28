@@ -473,6 +473,8 @@ typedef struct ipc_downlink_state {
     uint32_t nonce_refused;  /**< seals refused because the tuple was not new */
     uint32_t none_due;       /**< no installed device opens a window in that superframe */
     uint32_t link_sent;      /**< keepalives that carried a level instead of a NOP */
+    uint32_t app_agreed;     /**< APP acks whose witness matched this hub's own sum */
+    uint32_t app_disagreed;  /**< ... and those that did not, which is a parse split */
 } __attribute__((packed)) ipc_downlink_state_t;
 
 /**

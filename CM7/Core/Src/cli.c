@@ -1058,6 +1058,10 @@ static int cmd_devices(cli_data_t *cli, int argc, char **argv) {
             /* A keepalive that carried a level; the rest of them carried nothing. */
             cli_out(cli, "  %lu keepalive(s) carried rssi_up back to the device\r\n",
                     (unsigned long)dl.link_sent);
+            /* Both counts, always: agreed alone cannot say the check ever ran. */
+            cli_out(cli, "  app witness %lu agreed, %lu disagreed%s\r\n",
+                    (unsigned long)dl.app_agreed, (unsigned long)dl.app_disagreed,
+                    dl.app_disagreed ? "  <- the two sides parse differently" : "");
             /* The channel: every counter above reads success on a wrong one. */
             if (dl.sent)
                 cli_out(cli, "last downlink sf %lu on %lu Hz (%lu prf err)\r\n",

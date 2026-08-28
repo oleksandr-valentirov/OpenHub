@@ -182,6 +182,8 @@ static uint64_t evt_rtt_sum_us;
 static uint32_t dl_cmd_sent, dl_cmd_replaced, dl_cmd_acked, dl_cmd_lost;
 /* The keepalive that carried a level rather than nothing. ADR-0037 */
 static uint32_t dl_link_sent;
+/* Both sides' sums over the same sealed bytes, agreeing and not. ADR-0037 */
+static uint32_t dl_app_agreed, dl_app_disagreed;
 static uint8_t  net_hop_key_set;
 static uint8_t  report_every_grant = RADIO_REPORT_EVERY_DEFAULT;
 static int      aead_selftest_rc = 1;   /* until it has actually run */
@@ -1200,6 +1202,8 @@ static void RFM_serve_request(const ipc_msg_t *req) {
         d.next_slot     = dl_next_slot;
         d.cmd_sent      = dl_cmd_sent;
         d.link_sent     = dl_link_sent;
+        d.app_agreed    = dl_app_agreed;
+        d.app_disagreed = dl_app_disagreed;
         d.cmd_replaced  = dl_cmd_replaced;
         d.cmd_acked     = dl_cmd_acked;
         d.cmd_lost      = dl_cmd_lost;
@@ -1911,8 +1915,15 @@ static void handle_uplink_frame(const phy_ev_t *ev) {
         rpt.ack_seq == d->dl_cmd_seq && rpt.ack_cmd == d->dl_cmd) {
         d->dl_acked   = 1;
         d->dl_repeats = 0;
-        /* Recorded, never compared until the device fills it in. ROADMAP item 32 */
         d->dl_ack_arg = rpt.ack_arg;
+        /* Compared, not merely recorded: a witness nothing checks is decoration.
+         * radio_devices_docs/radio/decisions/0037-the-application-payload-is-the-downlinks-and-the-frame-does-not-grow.md */
+        if (d->dl_cmd == RADIO_CMD_APP) {
+            if (rpt.ack_arg == radio_app_witness(d->dl_app, d->dl_app_len))
+                dl_app_agreed++;
+            else
+                dl_app_disagreed++;
+        }
         dl_cmd_acked++;
     }
     /* Every report carries it, so a restarted hub relearns rather than assumes.
