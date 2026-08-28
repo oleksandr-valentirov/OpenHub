@@ -22,7 +22,7 @@ the marking at their own sites; items 60 and 63 carried it until they were
 retired on 2026-08-28 by a run taken after the baseline. Nothing here was retired by it — an item whose
 evidence went with the samples is *less* sourced, not closed.
 
-**Cleaned ten times.** The first pass retired four closed entries, moved the front-end
+**Cleaned seventeen times, and the count above was six passes stale until 2026-08-28.** The notes below are the record; this line is derived from them and is re-derived by re-reading them, not trusted. **Two of them were both numbered *the tenth*** — item 69's and item 1's — which is the same defect this file warns about for entry numbers arriving at pass numbers: the ordinal was read off the previous note rather than counted. Item 1's is the sixteenth and is renumbered; nothing cites either by ordinal. The first pass retired four closed entries, moved the front-end
 experiment the device session had been carrying to
 `open_hub/radio/configuration.md`, and re-filed every item under the heading its
 tag names. The second retired **six** — the carrier arm, CM4's watchdog refresh,
@@ -350,7 +350,7 @@ reasoning; this one keeps the queue.
 
 ---
 
-The tenth, 2026-08-27, retired **one** and it was the head of *Blocking*.
+The sixteenth, 2026-08-27, retired **one** and it was the head of *Blocking*. *(Written as "the tenth"; corrected 2026-08-28 — see the preamble.)*
 **Item 1 - three opportunities a superframe - is gone because the opportunities
 are.** [ADR-0036](../radio_devices_docs/radio/decisions/0036-variant-1-carries-no-asynchronous-events.md)
 removes asynchronous events from this stack entirely, so `RADIO_SLOT_OPPS` is 1,
@@ -360,7 +360,7 @@ already taken. Its reasoning stays on `radio/tdma.md` § the event deadline, whi
 is marked as variant 2's, and the capacity it was holding down is the return:
 `RADIO_DEVICE_MAX` goes from 64 to **194**.
 
-The sixteenth, 2026-08-28, retired **items 60 and 63 together**, because they
+The seventeenth, 2026-08-28, retired **items 60 and 63 together**, because they
 were always one mechanism and it is now measured rather than inferred. Run
 `../bench/runs/2026-08-28-1/` is the reversion arm ADR-0033 ran for the uplink
 and neither pairing leg had: `RADIO_AFC_AUTO` off, on, off, eight valid trials
@@ -383,6 +383,22 @@ Their reasoning moves to
 same register*, and the exchange-geometry hypotheses they carried are **unneeded
 rather than disproved** — nothing in that run measured them, and a defect there
 would not present as a frame that produced no sync word.
+
+The eighteenth, 2026-08-28, retired **item 86** — `device add` refusing the
+command that re-pairs while offering one that could not. **Both halves the item
+named as sufficient are built.** `device window` sends `IPC_REQ_ADD_DEVICE`
+before it calls `pairing_arm_init()`, so it opens CM4's ears and CM7's
+invitation sender rather than half the hub (`CM7/Core/Src/cli.c:1971`); and the
+refusal on `device add` now names `device remove ... first if you mean to
+re-enrol` beside the window it used to offer alone.
+
+**This is a source retirement and says so.** What the item asserted is which IPC
+request a command sends, which the tree answers; no bench arm was taken for it.
+What was exercised on the bench instead is the procedure that item forced —
+`release`, `device remove`, `device add`, twenty-five times in run
+`2026-08-28-1` with no refusal and no lost identity.
+
+`../radio_devices_docs/radio/pairing.md`.
 
 ## The acceptance criteria
 
@@ -583,34 +599,6 @@ population the run will have.**
 
 ## Defects
 
-### 86. `device add` refuses the one command that re-pairs, and offers one that cannot — `defect`
-
-**Two commands, and the CLI has them the wrong way round.** `cfg_enrol()` is
-idempotent by design: on a known id it keeps the slot, bumps `key_gen`, wipes
-`root_key` and `session_key`, and returns OK — that **is** the re-pair. And
-`device add` is the only path that reaches `RFM_open_pairing()`, whose single
-caller is `IPC_REQ_ADD_DEVICE`, so it is the only command that opens **CM4's**
-ears.
-
-The CLI refuses it on a paired device — *"would discard its session key"* — and
-points at `device window`, which calls `pairing_arm_init()` and arms **CM7's
-invitation sender** alone. So invitations go on air while CM4 drops every
-`PAIR_REQ` answering them, and the operator sees a window that is open and a
-device that will not pair.
-
-**Cost, measured 2026-08-25:** six enrolment windows in a batch executed neither
-command and read as six failed pairings. `device remove` then `device add` is
-the way through and is what the bench procedure does now.
-
-The guard is not wrong to exist — discarding a working session key by accident
-is worth refusing. What is wrong is that the refusal names a replacement that
-does not do the job. Either `device window` opens CM4's ears too, or the message
-says `device remove` first. **Agree with the server session**: its enrolment UI
-offers `pair_window` for the same reason.
-
-`radio_devices_docs/open_hub/radio/pairing.md`, `bench/journal/2026-08-25-architect.md`.
-
-
 ### 8. The LSE measurement is unexplained at the window level — `defect`
 
 The mean is sound — it matched a host-clock measurement to 51 ppm over ten
@@ -663,45 +651,21 @@ the receiver "parks until a signal arrives". Until this is fixed the level witne
 below the sync word is the SDR, not the hub.
 
 
-#### 2026-08-24: the first air-side denominator, and proximity ruled out
+**Re-filed 2026-08-28: this is K5's, not K2's.** It sat in K2's column because
+it is the instrument that could not say at what level a missed pairing frame
+arrived, and that question is answered — the loss was `AfcAutoOn`, run
+`../bench/runs/2026-08-28-1/`. What is left here is a blind instrument, which is
+what K5 is: *rows that cannot name their regime*. It is cheap and it is not
+blocking anything.
 
-Every arm above differenced two counters. Runs `2026-08-24-1` and `2026-08-24-2`
-counted the requests **on the air** instead, on a bladeRF over the join channel,
-so the denominator is no longer the device's own claim. **Their captures were
-deleted on 2026-08-26 and only the records survive**, so the table below can be
-read and cannot be recomputed.
+**The paragraphs that used to close this entry were item 63's**, duplicated into
+both when they shared a suspect, and they went with item 63 on 2026-08-28. The
+surviving reason to fix this is unchanged and is above: `rx level: peak/floor`
+for the join region rests on about 75 samples out of ~95 000 calls, so it
+measures the band and not the frame.
 
-| window | requests radiated | hub registered |
-|---|---|---|
-| 2026-08-24-1, boards adjacent | 8 | **0** |
-| 2026-08-24-2 window 1, boards apart | 4 | **2** |
-| 2026-08-24-2 window 2, boards apart | 4 | **0** |
-
-**A nearby transmitter desensitising the receiver was the standing hypothesis and
-it is dead.** 2 of 8 against 0 of 8 is Fisher **p = 0.47**. The first window alone
-reads 2 of 4, p = 0.09, and quoting it would have closed this item as fixed —
-**one window is not a measurement here**, which is why both are in the table.
-
-Two things the air added that no counter could. The hub's own `pair_init` counter
-and the capture agree to the frame on the invitation leg — 14 built, 14 sent, 14
-on air — which is the control that says the capture saw everything radiated.
-And the device's `invites seen 4 of 7` is **its listening duty cycle, not path
-loss**: its retry gap is ~8.5 s against an 8.0 s invitation period, so it answers
-every other invitation, and it answered every one it was awake for.
-
-Level, for the record, from the same hub in the same minutes: node A's uplinks
-read **-44/-48 dBm** and decode 11 of 11; node B's requests read **-56/-57 dBm**
-and decode 2 of 8. Both far above the hub's reported floor of -91 dBm.
-
-**A counting hole on this path.** After `pair_reqs_seen++`, every early return
-increments `pair_reqs_dropped` **except** a failed
-`ipc_send_event(IPC_EVT_PAIR_REQ, ...)`, which does `ex_reset(); return;` and
-counts nothing. Not the cause of any zero above — those never reached the counter
-— but a blind spot on the path being debugged.
-
-`../radio_devices_docs/radio/pairing.md` § the request that reached the antenna.
-
----
+`../radio_devices_docs/radio/pairing.md` § the level instrument cannot answer the
+next question.
 
 ### 101. The recovery park has no channel preference and can wait on a busy one — `defect`
 
